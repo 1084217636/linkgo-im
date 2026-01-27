@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>LinkGo IM 调试台 (v2.0)</title>
+    <style>
+        body { background-color: #1e1e1e; color: #ddd; font-family: 'Consolas', monospace; padding: 20px; }
+        h2 { color: #61dafb; border-bottom: 2px solid #333; padding-bottom: 10px; }
+        
+        .panel { background: #2d2d2d; border: 1px solid #444; border-radius: 8px; padding: 15px; margin-bottom: 20px; }
+        
+        input { background: #3d3d3d; border: 1px solid #555; color: #fff; padding: 8px; border-radius: 4px; width: 200px; }
+        button { cursor: pointer; padding: 8px 15px; border: none; border-radius: 4px; font-weight: bold; margin-left: 10px; transition: 0.2s; }
+        
+        /* 按钮颜色 */
+        .btn-connect { background-color: #28a745; color: white; }
+        .btn-connect:hover { background-color: #218838; }
+        .btn-disconnect { background-color: #dc3545; color: white; }
+        .btn-send { background-color: #007bff; color: white; }
+        
+        /* 日志区域 */
+        #log { 
+            height: 400px; 
+            overflow-y: scroll; 
+            background: #000; 
+            border: 1px solid #555; 
+            padding: 10px; 
+            font-size: 13px; 
+            line-height: 1.5;
+        }
+        
+        .log-item { margin-bottom: 4px; border-bottom: 1px dashed #333; padding-bottom: 2px; }
+        .log-time { color: #888; margin-right: 10px; }
+        
+        .status-ok { color: #55ff55; }   /* 绿色: 成功 */
+        .status-err { color: #ff5555; }  /* 红色: 错误 */
+        .status-info { color: #55ffff; } /* 青色: 消息 */
+        .status-heart { color: #ffff55; } /* 黄色: 心跳 */
+    </style>
+</head>
+<body>
+
+    <h2>🚀 LinkGo IM 终极调试台</h2>
+
+    <div class="panel">
+        <label>我是谁 (User ID): </label>
+        <input type="text" id="userId" value="UserA" placeholder="UserA">
+        <button onclick="connect()" class="btn-connect">🔌 上线 (连接)</button>
+        <button onclick="disconnect()" class="btn-disconnect">❌ 下线 (断开)</button>
+        <span id="connectionStatus" style="margin-left: 15px; color: #888;">🔴 未连接</span>
+    </div>
+
+    <div class="panel">
+        <label>发给谁 (Target): </label>
+        <input type="text" id="toUser" value="UserB" placeholder="目标ID">
+        <br><br>
+        <label>内容 (Content): </label>
+        <input type="text" id="msgContent" value="Hello World" style="width: 300px;">
+        <button onclick="sendMsg()" class="btn-send">📨 发送消息</button>
+    </div>
+
+    <div id="log"></div>
+
+<script>
+    let ws = null;
+    let heartbeatTimer = null;
+
+    // --- 日志辅助函数 ---
+    function log(msg, type = '') {
+        const logDiv = document.getElementById('log');
+        const item = document.createElement('div');
+        item.className = `log-item ${type}`;
+        
+        const timeStr = new Date().toLocaleTimeString();
+        item.innerHTML = `<span class="log-time">[${timeStr}]</span>${msg}`;
+        
+        logDiv.appendChild(item);
+        logDiv.scrollTop = logDiv.scrollHeight; // 自动滚动到底部
+    }
+
+    // --- 1. 连接函数 ---
+    function connect() {
+        const uid = document.getElementById('userId').value.trim();
+        if (!uid) return alert("必须填写 User ID 才能上线！");
+
+        if (ws) {
+            log("⚠️ 当前已连接，请先断开再重连", "status-info");
+            return;
+        }
+
+        // 【关键修复点】 URL 必须带上 ?user_id=xxx
+        // 修改后 (试试这个)
+        const wsUrl = `ws://localhost:8090/ws?user_id=${uid}`;        
+        log(`🔄 正在连接 Gateway: ${wsUrl} ...`);
+        ws = new WebSocket(wsUrl);
+        
+        // 设置为 ArrayBuffer 以便后续接收二进制流 (Protobuf)
+        ws.binaryType = "arraybuffer"; 
+
+        ws.onopen = function() {
+            log(`✅ 连接成功！身份认证: ${uid}`, "status-ok");
+            updateStatus(true);
+            startHeartbeat(); // 连接成功后，启动心跳
+        };
+
+        ws.onmessage = function(evt) {
+            // 如果收到的是文本 (Gateway 发回的心跳 PONG)
+            if (typeof evt.data === 'string') {
+                if (evt.data === "PONG") {
+                    log(`💓 收到服务器 PONG (连接健康)`, "status-heart");
+                } else {
+                    log(`📩 收到文本消息: ${evt.data}`, "status-info");
+                }
+                return;
+            }
+
+            // 如果收到的是二进制 (聊天消息)
+            // 暂时只打印长度，Day 14 我们会加上 Protobuf 解析
+            log(`📩 收到二进制消息 (长度: ${evt.data.byteLength} bytes)`, "status-info");
+        };
+
+        ws.onclose = function(e) {
+            log(`❌ 连接已断开 (Code: ${e.code})`, "status-err");
+            ws = null;
+            updateStatus(false);
+            stopHeartbeat();
+        };
+
+        ws.onerror = function(e) {
+            log(`💥 发生网络错误 (请检查 Gateway 是否启动)`, "status-err");
+        };
+    }
+
+    // --- 2. 断开函数 ---
+    function disconnect() {
+        if (ws) {
+            ws.close(); // 这会触发 onclose
+            log("🛑 用户主动断开", "status-err");
+        }
+    }
+
+    // --- 3. 发送消息 ---
+    function sendMsg() {
+        if (!ws) return alert("请先上线！");
+        
+        const content = document.getElementById('msgContent').value;
+        
+        // 注意：目前这里发送的是纯文本，用于测试连通性
+        // 真正的 Logic 服务解析时如果按照 Protobuf 解析可能会报错，
+        // 但这一步只要 Transfer 那边能收到消息长度，就算测试通过。
+        ws.send(content); 
+        log(`📤 发送数据: ${content}`, "status-info");
+    }
+
+    // --- 4. 心跳保活逻辑 (Day 13 核心) ---
+    function startHeartbeat() {
+        stopHeartbeat(); // 防止重复开启
+        log("⏰ 心跳定时器已启动 (每10秒一次)", "status-heart");
+        
+        heartbeatTimer = setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send("PING"); // 发送心跳包
+                // log("💓 发送 PING...", "status-heart"); // 想看发送日志可以取消注释
+            }
+        }, 10000); // 10秒一次
+    }
+
+    function stopHeartbeat() {
+        if (heartbeatTimer) {
+            clearInterval(heartbeatTimer);
+            heartbeatTimer = null;
+        }
+    }
+
+    function updateStatus(isOnline) {
+        const span = document.getElementById('connectionStatus');
+        if (isOnline) {
+            span.innerText = "🟢 在线";
+            span.style.color = "#55ff55";
+        } else {
+            span.innerText = "🔴 未连接";
+            span.style.color = "#888";
+        }
+    }
+</script>
+</body>
+</html>

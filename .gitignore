@@ -1,0 +1,11 @@
+# 忽略 IDE 配置
+.idea/
+.vscode/
+
+# 忽略编译出来的二进制文件
+*.exe
+*.dll
+
+# 【重要】忽略数据文件和敏感配置
+mysql_data/
+configs/config.yaml  # 如果里面有密码，先忽略，或者提交一个 config.example.yaml

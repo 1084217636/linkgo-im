@@ -1,0 +1,54 @@
+syntax = "proto3";
+package api;
+option go_package = "./api";
+
+// 定义消息类型枚举
+enum MsgType {
+    NORMAL = 0;    // 普通消息
+    HEARTBEAT = 1; // 心跳包
+}
+
+message ChatMessage {
+    string from_user_id = 1;
+    string to_user_id = 2; // 如果是群聊，这个字段可以留空，或者忽略
+    string content = 3;
+    int64  seq = 4;
+    MsgType type = 5; 
+    
+    // 【新增】群ID
+    string group_id = 6; 
+}
+
+// --- Logic 服务接口 (Gateway -> Logic) ---
+message PushMsgReq {
+    string user_id = 1; // 谁发的
+    bytes  content = 2; // 原始内容
+}
+
+message PushMsgReply {}
+message UserLoginReq {
+    string user_id = 1;
+}
+
+message UserLoginReply {}
+service Logic {
+    // 之前写过的：处理上行消息
+    rpc PushMessage (PushMsgReq) returns (PushMsgReply);
+    // 【新增】用户上线通知
+    rpc UserLogin (UserLoginReq) returns (UserLoginReply);
+}
+
+// --- 【新增】Gateway 服务接口 (Logic -> Gateway) ---
+// Logic 告诉 Gateway：把这条消息推给某个人
+message SendToUserReq {
+    string target_user_id = 1; // 发给谁
+    bytes  content = 2;        // 发什么
+}
+
+message SendToUserReply {
+    bool success = 1; // 必须有这一行
+}
+
+service Gateway {
+    rpc PushToUser (SendToUserReq) returns (SendToUserReply);
+}
