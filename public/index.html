@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>LinkGo-IM 企业级演示</title>
+    <style>
+        body { font-family: sans-serif; background: #f4f7f9; display: flex; justify-content: center; padding: 20px; }
+        .chat-card { width: 450px; background: white; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.1); padding: 20px; }
+        .log-area { height: 350px; border: 1px solid #eee; overflow-y: auto; margin: 15px 0; padding: 10px; background: #fafafa; border-radius: 8px; }
+        .msg { margin-bottom: 8px; font-size: 14px; }
+        .sys { color: #999; text-align: center; font-size: 12px; }
+        .in { color: #2563eb; } .out { color: #059669; }
+    </style>
+</head>
+<body>
+    <div class="chat-card">
+        <h3>LinkGo-IM 终端</h3>
+        <div style="margin-bottom: 10px;">
+            我的ID: <input id="uid" value="1001" style="width:40px">
+            Token: <input id="token" value="abc" style="width:60px">
+            <button onclick="connect()">上线</button>
+        </div>
+        <div id="log" class="log-area"></div>
+        <div>
+            发送给: <input id="to" placeholder="目标ID" style="width:50px">
+            内容: <input id="msg" style="width:150px">
+            <button onclick="send()">发送</button>
+        </div>
+    </div>
+
+    <script>
+        let ws;
+        let pingInterval;
+
+        function connect() {
+            const uid = document.getElementById('uid').value;
+            const token = document.getElementById('token').value;
+            // 使用 localhost 兼容 WSL2
+            ws = new WebSocket(`ws://localhost:8090/ws?user_id=${uid}&token=${token}`);
+
+            ws.onopen = () => {
+                addLog("系统", "连接已建立", "sys");
+                // 解决自动断开：每 20 秒发一次 PING 心跳
+                if (pingInterval) clearInterval(pingInterval);
+                pingInterval = setInterval(() => ws.send("PING"), 20000);
+            };
+
+            ws.onmessage = (e) => {
+                if (e.data === "PONG") return; // 忽略心跳回包
+                addLog("收到", e.data, "in");
+            };
+
+            ws.onclose = () => {
+                addLog("系统", "连接已断开", "sys");
+                clearInterval(pingInterval);
+            };
+        }
+
+        function send() {
+            const to = document.getElementById('to').value;
+            const content = document.getElementById('msg').value;
+            if (!to || !content) return alert("请填写目标ID和内容");
+            
+            // 工业级做法：封装 JSON 载荷
+            const payload = JSON.stringify({ to: to, msg: content });
+            ws.send(payload);
+            addLog("我发", content, "out");
+            document.getElementById('msg').value = '';
+        }
+
+        function addLog(role, text, cls) {
+            const l = document.getElementById('log');
+            l.innerHTML += `<div class="msg ${cls}"><b>${role}:</b> ${text}</div>`;
+            l.scrollTop = l.scrollHeight;
+        }
+    </script>
+</body>
+</html>

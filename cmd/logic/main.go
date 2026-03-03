@@ -3,47 +3,29 @@ package main
 import (
 	"fmt"
 	"net"
-
-	"github.com/1084217636/linkgo-im/api"
-	"github.com/1084217636/linkgo-im/cmd/logic/handler"
-	"github.com/1084217636/linkgo-im/cmd/logic/repo"
-	"github.com/1084217636/linkgo-im/cmd/logic/service"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"github.com/redis/go-redis/v9"
+	"github.com/1084217636/linkgo-im/api"      // 确保路径正确
+	"github.com/1084217636/linkgo-im/internal/logic"
 )
 
 func main() {
-	// 1. 初始化最底层的 Repo (数据库等)
-	repo.InitData()
-	fmt.Println("📚 数据层初始化完毕 (DB/Redis/Kafka)")
+	// 1. 初始化 Redis
+	rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379", Password: "123456"})
+	
+	// 2. 初始化逻辑处理器 (实现你简历里的 ZSet 和 Pub/Sub)
+	handler := &logic.LogicHandler{Rdb: rdb}
 
-	// 2. 初始化 Gateway 客户端
-	conn, _ := grpc.NewClient("127.0.0.1:9002", grpc.WithTransportCredentials(insecure.NewCredentials()))
-	gatewayCli := api.NewGatewayClient(conn)
-
-	// 3. 组装 Service (注入依赖)
-	chatService := &service.ChatService{
-		GatewayCli: gatewayCli,
-	}
-
-	// 4. 启动 Server (注入 Service)
-	s := grpc.NewServer()
-	api.RegisterLogicServer(s, &handler.LogicServer{
-		ChatSvc: chatService,
-	})
-	// 修改前
-	// lis, _ := net.Listen("tcp", ":9001")
-	// fmt.Printf("🧠 Logic 服务 (分层架构版) 已启动: 9001")
-	// s.Serve(lis)
-
-	// 修改后 (用这段替换)
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", 9001)) // 注意这里要检查 err
+	// 3. 启动 gRPC 服务，接收来自 Gateway 的请求
+	lis, err := net.Listen("tcp", ":9001")
 	if err != nil {
-		panic(fmt.Sprintf("❌ 端口启动失败: %v", err))
+		panic(err)
 	}
-	fmt.Printf("🧠 Logic 服务 (分层架构版) 已启动: 9001\n")
+	
+	s := grpc.NewServer()
+	// 注意：这里需要根据你的 proto 生成文件注册
+	api.RegisterLogicServer(s, handler) 
 
-	if err := s.Serve(lis); err != nil {
-		panic(fmt.Sprintf("❌ gRPC 启动失败: %v", err))
-	}
+	fmt.Println("🧠 [Logic] 业务服务已启动 (Port: 9001)...")
+	s.Serve(lis)
 }

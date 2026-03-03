@@ -2,9 +2,25 @@
 .idea/
 .vscode/
 
-# 忽略编译出来的二进制文件
+# 二进制文件
 *.exe
+*.exe~
 *.dll
+*.so
+*.dylib
+
+# 压缩包和临时文件
+*.tar.gz
+*.zip
+*.7z
+*.Identifier
+
+# 日志
+*.log
+
+# 编译后的程序
+/bin/
+main
 
 # 【重要】忽略数据文件和敏感配置
 mysql_data/

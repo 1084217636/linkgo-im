@@ -1,6 +1,0 @@
-Name: user-api
-Host: 0.0.0.0
-Port: 8888
-
-# --- 新增下面这部分 ---
-DataSource: root:123456@tcp(127.0.0.1:3306)/linkgo_im?charset=utf8mb4&parseTime=true&loc=Local
