@@ -1,14 +1,18 @@
-# 编译阶段
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25.7-alpine AS builder
 WORKDIR /app
-COPY . .
+# 设置代理，解决国内下载慢
+ENV GOPROXY=https://goproxy.cn,direct
+COPY go.mod go.sum ./
 RUN go mod download
-# 编译对应的二进制文件 (注意修改路径)
-RUN go build -o main ./cmd/gateway/main.go 
+COPY . .
+RUN go build -o gateway ./cmd/gateway/main.go
+RUN go build -o logic ./cmd/logic/main.go
 
-# 运行阶段
 FROM alpine:latest
-WORKDIR /app
-COPY --from=builder /app/main .
-EXPOSE 8090
-CMD ["./main"]
+WORKDIR /root/
+# 安装基础库
+RUN apk add --no-cache ca-certificates libc6-compat
+COPY --from=builder /app/gateway .
+COPY --from=builder /app/logic .
+# 给执行权限
+RUN chmod +x /root/gateway /root/logic
