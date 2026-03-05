@@ -16,15 +16,15 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
-
+// 全局变量区：系统的“地基”
 var (
-	rdb         *redis.Client
-	logicClient api.LogicClient
-	clients     = make(map[string]*websocket.Conn) // userId -> Conn
-	mutex       sync.RWMutex
-	upgrader    = websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
+    rdb         *redis.Client           // Redis 客户端：用于存储路由信息和订阅消息推送
+    logicClient api.LogicClient         // gRPC 客户端：Gateway 用它来“遥控” Logic 服务
+    clients     = make(map[string]*websocket.Conn) // 连接池：Key 是用户ID，Value 是长连接对象
+    mutex       sync.RWMutex            // 读写锁：保证多个协程同时操作 clients map 时不崩溃
+    upgrader    = websocket.Upgrader{   // 升级器：负责把普通的 HTTP 请求变成 WebSocket 长连接
+        CheckOrigin: func(r *http.Request) bool { return true }, // 允许跨域（面试常问）
+    }
 )
 
 // Cors 跨域中间件
@@ -54,7 +54,9 @@ func main() {
 	})
 
 	// 2. 连接 Logic RPC (注意: 如果是 Docker 运行，地址改为 logic:9001)
-	conn, err := grpc.Dial("logic:9001", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	//NewClient 是非阻塞的，它会立即返回一个连接对象，即使服务端还没启动，它也会在后台静默重试。
+	conn, err := grpc.NewClient("logic:9001", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// conn, err := grpc.Dial("logic:9001", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("连接 Logic 服务失败: %v", err)
 	}
