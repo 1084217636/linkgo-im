@@ -1,49 +1,79 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
+	"log"
 	"net"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/1084217636/linkgo-im/api"
-	"github.com/1084217636/linkgo-im/cmd/logic/handler"
-	"github.com/1084217636/linkgo-im/cmd/logic/repo"
-	"github.com/1084217636/linkgo-im/cmd/logic/service"
+	"github.com/1084217636/linkgo-im/internal/logic"
+	_ "github.com/go-sql-driver/mysql"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
+func getEnv(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
+}
+
 func main() {
-	// 1. 初始化最底层的 Repo (数据库等)
-	repo.InitData()
-	fmt.Println("📚 数据层初始化完毕 (DB/Redis/Kafka)")
+	redisAddr := getEnv("REDIS_ADDR", "127.0.0.1:6379")
+	rpcPort := getEnv("RPC_PORT", "9001")
+	dsn := getEnv("DB_DSN", "root:root@tcp(127.0.0.1:3306)/linkgo_im?charset=utf8mb4&parseTime=True")
 
-	// 2. 初始化 Gateway 客户端
-	conn, _ := grpc.NewClient("127.0.0.1:9002", grpc.WithTransportCredentials(insecure.NewCredentials()))
-	gatewayCli := api.NewGatewayClient(conn)
-
-	// 3. 组装 Service (注入依赖)
-	chatService := &service.ChatService{
-		GatewayCli: gatewayCli,
-	}
-
-	// 4. 启动 Server (注入 Service)
-	s := grpc.NewServer()
-	api.RegisterLogicServer(s, &handler.LogicServer{
-		ChatSvc: chatService,
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     redisAddr,
+		Password: "123456", 
+		DB:       0,
 	})
-	// 修改前
-	// lis, _ := net.Listen("tcp", ":9001")
-	// fmt.Printf("🧠 Logic 服务 (分层架构版) 已启动: 9001")
-	// s.Serve(lis)
 
-	// 修改后 (用这段替换)
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", 9001)) // 注意这里要检查 err
+	db, err := sql.Open("mysql", dsn)
 	if err != nil {
-		panic(fmt.Sprintf("❌ 端口启动失败: %v", err))
+		log.Fatalf("❌ MySQL 连接驱动加载失败: %v", err)
 	}
-	fmt.Printf("🧠 Logic 服务 (分层架构版) 已启动: 9001\n")
+	db.SetMaxOpenConns(100)
+	db.SetMaxIdleConns(10)
+	
+	if err := db.Ping(); err != nil {
+		log.Fatalf("❌ 无法连接到 MySQL 数据库: %v", err)
+	}
 
-	if err := s.Serve(lis); err != nil {
-		panic(fmt.Sprintf("❌ gRPC 启动失败: %v", err))
+	// 初始化 Handler
+	handler := &logic.LogicHandler{
+		Rdb: rdb,
+		DB:  db,
 	}
+
+	lis, err := net.Listen("tcp", ":"+rpcPort)
+	if err != nil {
+		log.Fatalf("❌ 监听端口失败: %v", err)
+	}
+
+	// 注册 gRPC 服务 (只要 handler 里嵌了 UnimplementedLogicServer 这里就不会报错)
+	server := grpc.NewServer()
+	api.RegisterLogicServer(server, handler)
+
+	fmt.Printf("🧠 [Logic Service] 启动成功，监听端口 :%s\n", rpcPort)
+
+	go func() {
+		if err := server.Serve(lis); err != nil {
+			log.Fatalf("❌ gRPC 服务异常停止: %v", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	server.GracefulStop()
+	db.Close()
+	rdb.Close()
+	fmt.Println("服务已安全退出。")
 }

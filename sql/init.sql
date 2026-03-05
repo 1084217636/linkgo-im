@@ -1,16 +1,11 @@
-CREATE DATABASE IF NOT EXISTS linkgo_im;
-USE linkgo_im;
-
-CREATE TABLE IF NOT EXISTS chat_histories (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    user_id VARCHAR(64) NOT NULL COMMENT '消息属于谁',
-    seq BIGINT NOT NULL COMMENT '消息序列号',
-    msg_id VARCHAR(64) NOT NULL COMMENT '消息全局唯一ID',
-    group_id VARCHAR(64) NOT NULL DEFAULT '' COMMENT '群ID',
-    cmd INT NOT NULL COMMENT '消息类型',
-    from_user_id VARCHAR(64) NOT NULL COMMENT '发送者',
-    to_user_id VARCHAR(64) NOT NULL COMMENT '接收者',
-    content BLOB NOT NULL COMMENT '消息内容(Protobuf)',
-    create_time BIGINT NOT NULL COMMENT '发送时间',
-    INDEX idx_user_seq (user_id, seq)
+CREATE TABLE IF NOT EXISTS `messages` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `session_id` varchar(255) NOT NULL COMMENT '单聊为sorted_uid_uid，群聊为群ID',
+  `from_uid` varchar(255) NOT NULL,
+  `to_id` varchar(255) NOT NULL,
+  `to_type` varchar(20) NOT NULL COMMENT 'user / group',
+  `content` text NOT NULL,
+  `create_time` bigint(20) NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_session` (`session_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

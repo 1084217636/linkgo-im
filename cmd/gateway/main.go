@@ -4,163 +4,185 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/1084217636/linkgo-im/api"
+	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// 配置
-const (
-	GatewayPort = 8090
-	RpcPort     = 9002
-	LogicAddr   = "127.0.0.1:9001"
-	RedisAddr   = "127.0.0.1:6379"
-)
-
 var (
-	userConns   sync.Map
-	logicClient api.LogicClient
 	rdb         *redis.Client
+	logicClient api.LogicClient
+	clients     = make(map[string]*websocket.Conn) // userId -> Conn
+	mutex       sync.RWMutex
 	upgrader    = websocket.Upgrader{
-		// 允许跨域 (关键)
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
 )
 
-func main() {
-	// 1. 初始化 Redis
-	rdb = redis.NewClient(&redis.Options{Addr: RedisAddr, Password: "123456"})
-	if _, err := rdb.Ping(context.Background()).Result(); err != nil {
-		log.Fatal("❌ Redis 连接失败:", err)
-	}
-	fmt.Println("📚 Redis 连接成功")
+// Cors 跨域中间件
+func Cors() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		method := c.Request.Method
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Headers", "Content-Type,AccessToken,X-CSRF-Token, Authorization, Token")
+		c.Header("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
+		c.Header("Expose-Headers", "Content-Length, Access-Control-Allow-Origin, Access-Control-Allow-Headers, Content-Type")
+		c.Header("Access-Control-Allow-Credentials", "true")
 
-	// 2. 连接 Logic
-	conn, err := grpc.NewClient(LogicAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		log.Fatal("❌ 连接 Logic 失败:", err)
-	}
-	logicClient = api.NewLogicClient(conn)
-	fmt.Println("📚 Logic 连接初始化完成")
-
-	// 3. 启动 gRPC
-	go startRpcServer()
-
-	// 4. 启动 WebSocket
-	http.HandleFunc("/ws", handleWebSocket)
-	fmt.Printf("🚪 Gateway 服务已启动 (WS: %d, RPC: %d)\n", GatewayPort, RpcPort)
-	
-	// 监听所有 IP，防止 WSL 网络问题
-	if err := http.ListenAndServe(fmt.Sprintf("0.0.0.0:%d", GatewayPort), nil); err != nil {
-		log.Fatal("❌ HTTP 服务启动失败:", err)
+		// 处理浏览器的 OPTIONS 预检请求
+		if method == "OPTIONS" {
+			c.AbortWithStatus(http.StatusNoContent)
+		}
+		c.Next()
 	}
 }
 
-func handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	// 【Debug 日志 1】请求进来了吗？
-	fmt.Printf("🔍 新连接请求: %s (来自: %s)\n", r.URL.String(), r.RemoteAddr)
+func main() {
+	// 1. 初始化 Redis (注意: 如果是 Docker 运行，地址可能需要改为 redis:6379)
+	rdb = redis.NewClient(&redis.Options{
+		Addr:     "redis:6379",
+		Password: "123456",
+		DB:       0,
+	})
 
-	userId := r.URL.Query().Get("user_id")
-	if userId == "" {
-		fmt.Println("   ❌ 拒绝连接: 缺少 user_id")
-		http.Error(w, "Missing user_id", 400)
-		return
-	}
-
-	// 升级连接
-	conn, err := upgrader.Upgrade(w, r, nil)
+	// 2. 连接 Logic RPC (注意: 如果是 Docker 运行，地址改为 logic:9001)
+	conn, err := grpc.Dial("logic:9001", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		fmt.Println("   ❌ WebSocket 升级失败:", err)
-		return
+		log.Fatalf("连接 Logic 服务失败: %v", err)
+	}
+	defer conn.Close()
+	logicClient = api.NewLogicClient(conn)
+
+	// 3. 启动后台订阅
+	go subscribeMessages()
+
+	// 4. 配置 Gin
+	router := gin.Default()
+	router.Use(Cors()) // 使用跨域中间件
+
+	v1 := router.Group("/api/v1")
+	{
+		// 新增：登录接口 (补全前端缺失的路由)
+		v1.POST("/login", func(c *gin.Context) {
+			var req struct {
+				UserID string `json:"user_id"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(400, gin.H{"error": "参数错误"})
+				return
+			}
+			// 这里简单模拟：直接返回一个 Token 即可
+			c.JSON(200, gin.H{
+				"token":   "mock_token_" + req.UserID,
+				"user_id": req.UserID,
+			})
+		})
+
+		// 拉取历史记录
+		v1.GET("/history", func(c *gin.Context) {
+			userId := c.Query("user_id")
+			targetId := c.Query("target_id")
+			reply, err := logicClient.GetHistory(context.Background(), &api.GetHistoryReq{
+				UserId:   userId,
+				TargetId: targetId,
+			})
+			if err != nil {
+				c.JSON(500, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(200, gin.H{"data": reply.Messages})
+		})
+
+		// 在 v1 路由组内修改和添加
+		v1.POST("/group/create", func(c *gin.Context) {
+			var req struct {
+				GroupID string   `json:"group_id"`
+				Members []string `json:"members"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(400, gin.H{"error": "参数错误"})
+				return
+			}
+			ctx := context.Background()
+			for _, m := range req.Members {
+				// 1. 记录群里有哪些人
+				rdb.SAdd(ctx, "group_members:"+req.GroupID, m)
+				// 2. 核心修改：记录这个人加入了哪些群（用于同步）
+				rdb.SAdd(ctx, "user_groups:"+m, req.GroupID)
+			}
+			c.JSON(200, gin.H{"msg": "群组创建成功", "group_id": req.GroupID})
+		})
+
+		// 新增：获取用户所属的所有群聊
+		v1.GET("/user/groups", func(c *gin.Context) {
+			uid := c.Query("user_id")
+			if uid == "" {
+				c.JSON(400, gin.H{"error": "缺少 user_id"})
+				return
+			}
+			groups, _ := rdb.SMembers(context.Background(), "user_groups:"+uid).Result()
+			c.JSON(200, gin.H{"groups": groups})
+		})
 	}
 
-	// 【核心修复】defer 必须放在 Upgrade 成功后的第一行！
-	// 确保无论发生什么（报错、Panic、断网），都会执行清理
+	// WebSocket 接口
+	router.GET("/ws", handleWebSocket)
+
+	fmt.Println("🚀 [Gateway] 启动成功，监听端口 :8090")
+	router.Run(":8090")
+}
+
+// WebSocket 处理及订阅函数保持不变...
+func handleWebSocket(c *gin.Context) {
+	userId := c.Query("user_id")
+	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil { return }
+	defer conn.Close()
+
+	mutex.Lock()
+	clients[userId] = conn
+	mutex.Unlock()
+	rdb.Set(context.Background(), "route:"+userId, "gateway_1", 24*time.Hour)
+
 	defer func() {
-		fmt.Printf("❌ 用户下线: %s (清理资源)\n", userId)
-		conn.Close()
-		userConns.Delete(userId)
+		mutex.Lock()
+		delete(clients, userId)
+		mutex.Unlock()
 		rdb.Del(context.Background(), "route:"+userId)
 	}()
 
-	// 1. 登记连接
-	userConns.Store(userId, conn)
-	myRpcAddr := fmt.Sprintf("127.0.0.1:%d", RpcPort)
-	rdb.Set(context.Background(), "route:"+userId, myRpcAddr, 5*time.Minute)
-	
-	fmt.Printf("✅ 用户握手成功: %s\n", userId)
-
-	// 通知 Logic (异步，不阻塞)
-	go func() {
-		_, err := logicClient.UserLogin(context.Background(), &api.UserLoginReq{UserId: userId})
-		if err != nil {
-			fmt.Printf("   ⚠️ 通知 Logic 登录失败: %v\n", err)
-		}
-	}()
-
-	// 2. 心跳与消息读取循环
-	readTimeout := 60 * time.Second
-	conn.SetReadDeadline(time.Now().Add(readTimeout))
-
 	for {
-		_, bytes, err := conn.ReadMessage()
-		if err != nil {
-			// 这里不需要打印太详细，因为断开连接是常态
-			// fmt.Println("   👋 连接读取结束:", err)
-			break 
-		}
-
-		// 续命
-		conn.SetReadDeadline(time.Now().Add(readTimeout))
-
-		if string(bytes) == "PING" {
-			conn.WriteMessage(websocket.TextMessage, []byte("PONG"))
-			fmt.Printf("💓 [%s] 心跳续命\n", userId)
-			continue
-		}
-
-		// 正常消息
-		_, err = logicClient.PushMessage(context.Background(), &api.PushMsgReq{
+		_, msg, err := conn.ReadMessage()
+		if err != nil { break }
+		logicClient.PushMessage(context.Background(), &api.PushMsgReq{
 			UserId:  userId,
-			Content: bytes,
+			Content: msg,
 		})
-		if err != nil {
-			fmt.Printf("   ⚠️ Logic 转发失败: %v\n", err)
+	}
+}
+
+func subscribeMessages() {
+	ctx := context.Background()
+	pubsub := rdb.Subscribe(ctx, "im_message_push")
+	defer pubsub.Close()
+	for msg := range pubsub.Channel() {
+		parts := strings.SplitN(msg.Payload, ":", 2)
+		if len(parts) == 2 {
+			targetId, content := parts[0], parts[1]
+			mutex.RLock()
+			conn, ok := clients[targetId]
+			mutex.RUnlock()
+			if ok {
+				conn.WriteMessage(websocket.TextMessage, []byte(content))
+			}
 		}
 	}
-}
-
-// ... gRPC Server 代码保持不变 (如果你没改动的话) ...
-func startRpcServer() {
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", RpcPort))
-	if err != nil {
-		panic(err)
-	}
-	s := grpc.NewServer()
-	api.RegisterGatewayServer(s, &gatewayServer{})
-	s.Serve(lis)
-}
-
-type gatewayServer struct {
-	api.UnimplementedGatewayServer
-}
-
-func (s *gatewayServer) PushToUser(ctx context.Context, req *api.SendToUserReq) (*api.SendToUserReply, error) {
-	val, ok := userConns.Load(req.TargetUserId)
-	if !ok {
-		return &api.SendToUserReply{Success: false}, nil
-	}
-	conn := val.(*websocket.Conn)
-	err := conn.WriteMessage(websocket.BinaryMessage, req.Content)
-	if err != nil {
-		return &api.SendToUserReply{Success: false}, err
-	}
-	return &api.SendToUserReply{Success: true}, nil
 }
