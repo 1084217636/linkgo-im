@@ -121,22 +121,23 @@
     </div>
 
     <script>
-        let ws;
+        let ws = null;
         let currentTarget = "";
-        let myId = ""; // 登录成功后从后端获取
+        let myId = ""; 
         let authToken = ""; 
         let contacts = new Set();
-        let port = "8090";
+        let heartbeatTimer = null;
+        let reconnectTimer = null;
+        let isReconnecting = false;
         let host = window.location.hostname || "localhost";
 
         // 1. 登录逻辑
         async function doLogin() {
-            port = document.getElementById('port').value;
+            const port = document.getElementById('port').value;
             const uName = document.getElementById('username').value;
             const uPwd = document.getElementById('password').value;
 
             try {
-                // 调用后端 /api/v1/login
                 const res = await fetch(`http://${host}:${port}/api/v1/login`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -152,19 +153,14 @@
                 myId = data.user_id;
                 authToken = data.token;
 
-                // 初始化 WebSocket
-                initWebSocket(authToken);
+                // 登录成功后启动连接
+                initWebSocket();
 
                 // UI 更新
-                document.getElementById('status-text').innerText = `在线: ${uName}(${myId})`;
-                document.getElementById('dot').style.background = "#52c41a";
                 document.getElementById('contact-list').innerHTML = "";
                 contacts.clear();
-
-                // 同步该用户加入的群组
                 syncGroups();
 
-                // 默认添加一个聊天示例
                 let defaultPeer = (myId === "1001") ? "1002" : "1001";
                 addTarget(defaultPeer);
 
@@ -173,43 +169,97 @@
             }
         }
 
-        function initWebSocket(token) {
-            if(ws) ws.close();
-            ws = new WebSocket(`ws://${host}:${port}/ws?user_id=${myId}&token=${token}`);
-            
-            // 增加心跳定时器
-            let heartbeat = setInterval(() => {
-                if (ws.readyState === WebSocket.OPEN) {
-                    ws.send("PING"); // 发送心跳包
-                } else {
-                    clearInterval(heartbeat);
+        // 2. WebSocket 初始化
+        function initWebSocket() {
+            const port = document.getElementById('port').value;
+
+            // 清理旧连接
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+            if (heartbeatTimer) clearInterval(heartbeatTimer);
+
+            ws = new WebSocket(`ws://${host}:${port}/ws?user_id=${myId}`);
+
+            ws.onopen = () => {
+                console.log("✅ WebSocket 已连接");
+                isReconnecting = false;
+                document.getElementById('status-text').innerText = `在线: (${myId})`;
+                document.getElementById('dot').style.background = "#52c41a";
+
+                if (reconnectTimer) {
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = null;
                 }
-            }, 30000); // 每30秒发一次
+                startHeartbeat();
+            };
 
             ws.onmessage = (e) => {
-                if (e.data === "PONG") return; // 收到心跳响应，不做处理
+                if (e.data === "PONG") {
+                    ws.lastPongTime = Date.now();
+                    return;
+                }
+
                 try {
-                    const msgObj = JSON.parse(e.data);
-                    const isGroup = msgObj.to_type === 'group';
-                    const listTargetId = isGroup ? msgObj.to : msgObj.from;
-
-                    if (listTargetId && listTargetId !== myId && !contacts.has(listTargetId)) {
-                        addTarget(listTargetId);
+                    const data = JSON.parse(e.data);
+                    // 只有消息属于当前聊天对象或是自己发的，才渲染
+                    if (data.from === currentTarget || data.to === currentTarget || data.from === myId) {
+                        renderMsg(data.from === myId ? "self" : "other", data.from, data.msg);
                     }
-
-                    if (currentTarget === listTargetId) {
-                        renderMsg("other", msgObj.from, msgObj.msg);
+                    // 如果是新联系人发来的，自动添加到列表
+                    if (data.from !== myId && !contacts.has(data.from)) {
+                        addTarget(data.from);
                     }
-                } catch(err) { console.error("解析消息失败", e.data); }
+                } catch (err) {
+                    console.error("解析消息失败", err);
+                }
             };
 
             ws.onclose = () => {
-                document.getElementById('status-text').innerText = `离线`;
+                console.warn("❌ 连接已关闭");
+                document.getElementById('status-text').innerText = `离线 (尝试重连...)`;
                 document.getElementById('dot').style.background = "#ff4d4f";
+                triggerReconnect();
+            };
+
+            ws.onerror = (err) => {
+                console.error("WS 错误", err);
             };
         }
 
-        // 2. 基础功能
+        // 建议修改后的心跳逻辑
+        function startHeartbeat() {
+            ws.lastPongTime = Date.now();
+            
+            // 缩短心跳间隔到 10 秒，方便观察
+            heartbeatTimer = setInterval(() => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    // 如果 15 秒没收到 PONG，立刻判定为断线（比心跳周期稍微长一点点）
+                    if (Date.now() - ws.lastPongTime > 15000) {
+                        console.error("心跳超时，正在断开重连...");
+                        document.getElementById('status-text').innerText = "检测到心跳异常...";
+                        ws.close(); // 触发 onclose，从而进入自动重连
+                        return;
+                    }
+                    ws.send("PING");
+                    console.log("已发送 PING");
+                }
+            }, 10000); 
+        }
+
+        // 4. 重连逻辑
+        function triggerReconnect() {
+            if (isReconnecting) return;
+            isReconnecting = true;
+            reconnectTimer = setTimeout(() => {
+                console.log("正在重连...");
+                initWebSocket();
+                isReconnecting = false;
+            }, 5000);
+        }
+
+        // 5. 业务功能
         function addTarget(id) {
             if (contacts.has(id)) return;
             contacts.add(id);
@@ -244,6 +294,7 @@
         }
 
         async function fetchHistory(targetId) {
+            const port = document.getElementById('port').value;
             try {
                 const res = await fetch(`http://${host}:${port}/api/v1/history?user_id=${myId}&target_id=${targetId}`);
                 const json = await res.json();
@@ -257,6 +308,7 @@
         }
 
         async function syncGroups() {
+            const port = document.getElementById('port').value;
             try {
                 const res = await fetch(`http://${host}:${port}/api/v1/user/groups?user_id=${myId}`);
                 const data = await res.json();
@@ -266,7 +318,7 @@
 
         function renderMsg(type, senderId, content) {
             const container = document.getElementById('msg-list');
-            if(container.innerHTML.includes("未选择") || container.innerHTML.includes("暂无")) container.innerHTML = "";
+            if(container.innerText.includes("未选择") || container.innerText.includes("暂无")) container.innerHTML = "";
             const row = document.createElement('div');
             row.className = `msg-row ${type}`;
             row.innerHTML = `
@@ -293,7 +345,6 @@
             el.value = "";
         }
 
-        // 绑定 Enter 键
         document.getElementById('input-msg').onkeydown = (e) => {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
         };
@@ -307,6 +358,7 @@
         function closeGroupModal() { document.getElementById('group-modal').style.display = 'none'; }
 
         async function submitCreateGroup() {
+            const port = document.getElementById('port').value;
             const gid = document.getElementById('g-id').value.trim();
             const members = document.getElementById('g-members').value.split(',').map(s=>s.trim());
             const res = await fetch(`http://${host}:${port}/api/v1/group/create`, {

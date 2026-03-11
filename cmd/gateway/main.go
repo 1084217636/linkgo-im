@@ -136,33 +136,47 @@ func handleUserGroups(c *gin.Context) {
 	c.JSON(200, gin.H{"groups": groups})
 }
 
-// WebSocket 处理及订阅函数保持不变...
 func handleWebSocket(c *gin.Context) {
-	userId := c.Query("user_id")
-	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
-	if err != nil { return }
-	defer conn.Close()
+    userId := c.Query("user_id")
+    conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+    if err != nil { return }
+    defer conn.Close()
 
-	mutex.Lock()
-	clients[userId] = conn
-	mutex.Unlock()
-	rdb.Set(context.Background(), "route:"+userId, "gateway_1", 24*time.Hour)
+    mutex.Lock()
+    clients[userId] = conn
+    mutex.Unlock()
 
-	defer func() {
-		mutex.Lock()
-		delete(clients, userId)
-		mutex.Unlock()
-		rdb.Del(context.Background(), "route:"+userId)
-	}()
+    // --- 修改点1: 初始有效期设短一点，比如 1 分钟 ---
+    rdb.Set(context.Background(), "route:"+userId, "gateway_1", 60*time.Second) // 实际生产建议 60*time.Second
 
-	for {
-		_, msg, err := conn.ReadMessage()
-		if err != nil { break }
-		logicClient.PushMessage(context.Background(), &api.PushMsgReq{
-			UserId:  userId,
-			Content: msg,
-		})
-	}
+    defer func() {
+        mutex.Lock()
+        delete(clients, userId)
+        mutex.Unlock()
+        rdb.Del(context.Background(), "route:"+userId)
+        fmt.Printf("❌ 用户 %s 已下线并清理路由\n", userId)
+    }()
+
+    for {
+        _, msg, err := conn.ReadMessage()
+        if err != nil { break }
+
+        // --- 修改点2: 拦截前端发来的 PING ---
+		fmt.Printf("收到消息内容: [%s], 长度: %d\n", string(msg), len(msg))
+        if string(msg) == "PING" {
+            // 收到心跳，为 Redis 里的路由信息续命 60 秒
+            rdb.Expire(context.Background(), "route:"+userId, 60*time.Second)
+            // 回复 PONG 让前端知道服务器还活着
+            conn.WriteMessage(websocket.TextMessage, []byte("PONG"))
+            continue
+        }
+
+        // 正常业务逻辑
+        logicClient.PushMessage(context.Background(), &api.PushMsgReq{
+            UserId:   userId,
+            Content:  msg,
+        })
+    }
 }
 
 func subscribeMessages() {
