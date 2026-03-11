@@ -27,119 +27,113 @@ var (
     }
 )
 
-// Cors 跨域中间件
-func Cors() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		method := c.Request.Method
-		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Headers", "Content-Type,AccessToken,X-CSRF-Token, Authorization, Token")
-		c.Header("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
-		c.Header("Expose-Headers", "Content-Length, Access-Control-Allow-Origin, Access-Control-Allow-Headers, Content-Type")
-		c.Header("Access-Control-Allow-Credentials", "true")
 
-		// 处理浏览器的 OPTIONS 预检请求
-		if method == "OPTIONS" {
-			c.AbortWithStatus(http.StatusNoContent)
-		}
-		c.Next()
-	}
-}
+
+
+
 
 func main() {
-	// 1. 初始化 Redis (注意: 如果是 Docker 运行，地址可能需要改为 redis:6379)
+	// 1. 初始化
 	rdb = redis.NewClient(&redis.Options{
 		Addr:     "redis:6379",
 		Password: "123456",
 		DB:       0,
 	})
 
-	// 2. 连接 Logic RPC (注意: 如果是 Docker 运行，地址改为 logic:9001)
-	//NewClient 是非阻塞的，它会立即返回一个连接对象，即使服务端还没启动，它也会在后台静默重试。
 	conn, err := grpc.NewClient("logic:9001", grpc.WithTransportCredentials(insecure.NewCredentials()))
-	// conn, err := grpc.Dial("logic:9001", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		log.Fatalf("连接 Logic 服务失败: %v", err)
+		log.Fatalf("连接 Logic 失败: %v", err)
 	}
 	defer conn.Close()
 	logicClient = api.NewLogicClient(conn)
 
-	// 3. 启动后台订阅
 	go subscribeMessages()
 
-	// 4. 配置 Gin
+	// 2. 配置路由
 	router := gin.Default()
-	router.Use(Cors()) // 使用跨域中间件
+	router.Use(Cors())
 
+	// V1 标准路由组
 	v1 := router.Group("/api/v1")
 	{
-		// 新增：登录接口 (补全前端缺失的路由)
+		// 【修改后的标准登录逻辑】
 		v1.POST("/login", func(c *gin.Context) {
 			var req struct {
-				UserID string `json:"user_id"`
+				Username string `json:"username"`
+				Password string `json:"password"`
 			}
 			if err := c.ShouldBindJSON(&req); err != nil {
 				c.JSON(400, gin.H{"error": "参数错误"})
 				return
 			}
-			// 这里简单模拟：直接返回一个 Token 即可
-			c.JSON(200, gin.H{
-				"token":   "mock_token_" + req.UserID,
-				"user_id": req.UserID,
-			})
-		})
 
-		// 拉取历史记录
-		v1.GET("/history", func(c *gin.Context) {
-			userId := c.Query("user_id")
-			targetId := c.Query("target_id")
-			reply, err := logicClient.GetHistory(context.Background(), &api.GetHistoryReq{
-				UserId:   userId,
-				TargetId: targetId,
+			// 调用 Logic 服务进行数据库验证
+			reply, err := logicClient.Login(context.Background(), &api.LoginReq{
+				Username: req.Username,
+				Password: req.Password,
 			})
+
 			if err != nil {
-				c.JSON(500, gin.H{"error": err.Error()})
+				c.JSON(401, gin.H{"error": "登录失败: " + err.Error()})
 				return
 			}
-			c.JSON(200, gin.H{"data": reply.Messages})
+
+			// 返回 Logic 生成的真实 Token
+			c.JSON(200, gin.H{
+				"token":   reply.Token,
+				"user_id": reply.UserId,
+			})
 		})
 
-		// 在 v1 路由组内修改和添加
-		v1.POST("/group/create", func(c *gin.Context) {
-			var req struct {
-				GroupID string   `json:"group_id"`
-				Members []string `json:"members"`
-			}
-			if err := c.ShouldBindJSON(&req); err != nil {
-				c.JSON(400, gin.H{"error": "参数错误"})
-				return
-			}
-			ctx := context.Background()
-			for _, m := range req.Members {
-				// 1. 记录群里有哪些人
-				rdb.SAdd(ctx, "group_members:"+req.GroupID, m)
-				// 2. 核心修改：记录这个人加入了哪些群（用于同步）
-				rdb.SAdd(ctx, "user_groups:"+m, req.GroupID)
-			}
-			c.JSON(200, gin.H{"msg": "群组创建成功", "group_id": req.GroupID})
-		})
-
-		// 新增：获取用户所属的所有群聊
-		v1.GET("/user/groups", func(c *gin.Context) {
-			uid := c.Query("user_id")
-			if uid == "" {
-				c.JSON(400, gin.H{"error": "缺少 user_id"})
-				return
-			}
-			groups, _ := rdb.SMembers(context.Background(), "user_groups:"+uid).Result()
-			c.JSON(200, gin.H{"groups": groups})
-		})
+		// 历史记录与群组管理（这些接口以后可以考虑加 .Use(middleware.Auth())）
+		v1.GET("/history", handleHistory)
+		v1.POST("/group/create", handleGroupCreate)
+		v1.GET("/user/groups", handleUserGroups)
 	}
 
-	// WebSocket 接口
+	// WebSocket 接口（通常单独放，或者也放入带有鉴权中间件的组）
 	router.GET("/ws", handleWebSocket)
 
 	fmt.Println("🚀 [Gateway] 启动成功，监听端口 :8090")
 	router.Run(":8090")
+}
+
+// --- 抽离出来的 Handler 函数，让 main 看起来更整洁 ---
+
+func handleHistory(c *gin.Context) {
+	userId := c.Query("user_id")
+	targetId := c.Query("target_id")
+	reply, err := logicClient.GetHistory(c.Request.Context(), &api.GetHistoryReq{
+		UserId:   userId,
+		TargetId: targetId,
+	})
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"data": reply.Messages})
+}
+
+func handleGroupCreate(c *gin.Context) {
+	var req struct {
+		GroupID string   `json:"group_id"`
+		Members []string `json:"members"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "参数错误"})
+		return
+	}
+	for _, m := range req.Members {
+		rdb.SAdd(c.Request.Context(), "group_members:"+req.GroupID, m)
+		rdb.SAdd(c.Request.Context(), "user_groups:"+m, req.GroupID)
+	}
+	c.JSON(200, gin.H{"msg": "群组创建成功", "group_id": req.GroupID})
+}
+
+func handleUserGroups(c *gin.Context) {
+	uid := c.Query("user_id")
+	groups, _ := rdb.SMembers(c.Request.Context(), "user_groups:"+uid).Result()
+	c.JSON(200, gin.H{"groups": groups})
 }
 
 // WebSocket 处理及订阅函数保持不变...
@@ -186,5 +180,22 @@ func subscribeMessages() {
 				conn.WriteMessage(websocket.TextMessage, []byte(content))
 			}
 		}
+	}
+}
+// Cors 跨域中间件
+func Cors() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		method := c.Request.Method
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Headers", "Content-Type,AccessToken,X-CSRF-Token, Authorization, Token")
+		c.Header("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
+		c.Header("Expose-Headers", "Content-Length, Access-Control-Allow-Origin, Access-Control-Allow-Headers, Content-Type")
+		c.Header("Access-Control-Allow-Credentials", "true")
+
+		// 处理浏览器的 OPTIONS 预检请求
+		if method == "OPTIONS" {
+			c.AbortWithStatus(http.StatusNoContent)
+		}
+		c.Next()
 	}
 }

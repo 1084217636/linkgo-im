@@ -9,7 +9,7 @@
         
         /* 顶部登录/控制栏 */
         .top-bar { background: #333; color: white; padding: 12px 20px; display: flex; gap: 15px; align-items: center; font-size: 14px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); z-index: 10;}
-        .top-bar input { background: #555; border: none; color: white; padding: 6px 10px; border-radius: 4px; width: 80px; outline: none; }
+        .top-bar input { background: #555; border: none; color: white; padding: 6px 10px; border-radius: 4px; width: 100px; outline: none; }
         .top-bar input::placeholder { color: #aaa; }
         .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; background: #ff4d4f; transition: 0.3s;}
         .btn { background: #555; color: white; border: none; padding: 6px 15px; border-radius: 4px; cursor: pointer; transition: 0.2s;}
@@ -20,7 +20,7 @@
         /* 主体容器 */
         .main-container { display: flex; flex: 1; overflow: hidden; width: 1000px; margin: 20px auto; box-shadow: 0 10px 30px rgba(0,0,0,0.15); border-radius: 6px; }
         
-        /* 左侧联系人列表 */
+        /* 左侧列表 */
         .side-list { width: 280px; background: var(--sidebar-bg); display: flex; flex-direction: column; border-right: 1px solid #d6d6d6; }
         .search-box { padding: 15px; display: flex; gap: 10px; }
         .search-box input { flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; outline: none; background: #fff; }
@@ -36,12 +36,11 @@
         .chat-area { flex: 1; background: var(--chat-bg); display: flex; flex-direction: column; position: relative;}
         .chat-header { height: 60px; line-height: 60px; padding: 0 20px; border-bottom: 1px solid #e7e7e7; font-size: 18px; font-weight: 500; display: flex; justify-content: space-between; align-items: center;}
         
-        /* 消息列表 */
         .message-list { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
         .msg-row { display: flex; max-width: 80%; }
         .msg-row.self { align-self: flex-end; flex-direction: row-reverse; }
         .msg-row.other { align-self: flex-start; }
-        .msg-avatar { width: 36px; height: 36px; background: #ccc; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px; margin: 0 10px; flex-shrink: 0; margin-top: 15px;}
+        .msg-avatar { width: 36px; height: 36px; background: #ccc; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px; margin: 0 10px; flex-shrink: 0; margin-top: 5px;}
         .msg-body { display: flex; flex-direction: column; }
         .msg-info { font-size: 12px; color: #b2b2b2; margin-bottom: 4px; }
         .self .msg-info { text-align: right; }
@@ -55,7 +54,6 @@
         .input-box textarea { flex: 1; border: none; padding: 15px 20px; resize: none; outline: none; font-size: 15px; font-family: inherit;}
         .toolbar { padding: 10px 20px; display: flex; justify-content: flex-end; }
         .btn-send { background: var(--theme-green); color: white; border: none; padding: 8px 24px; border-radius: 4px; cursor: pointer; font-size: 14px; }
-        .btn-send:hover { background: #06ad56; }
 
         /* 弹窗样式 */
         .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 100; justify-content: center; align-items: center; }
@@ -70,12 +68,13 @@
     <!-- 顶部状态栏 -->
     <div class="top-bar">
         <div><span id="dot" class="status-dot"></span> <span id="status-text">离线</span></div>
-        <div>本机ID: <input id="uid" value="1001" style="width: 60px;"></div>
-        <div>网关端口: <input id="port" value="8090" style="width: 50px;"></div>
+        <div>网关: <input id="port" value="8090" style="width: 50px;"></div>
+        <div>帐号: <input id="username" placeholder="用户名" value="userA"></div>
+        <div>密码: <input id="password" type="password" value="123456"></div>
         <button class="btn btn-primary" onclick="doLogin()">登录上线</button>
         
         <div style="margin-left: auto; display: flex; gap: 10px;">
-            <input id="new-target" placeholder="私聊ID (如1002)">
+            <input id="new-target" placeholder="私聊ID (如1002)" style="width: 100px;">
             <button class="btn" onclick="handleManualAdd()">发起私聊</button>
             <button class="btn" onclick="openGroupModal()">创建群聊</button>
         </div>
@@ -83,31 +82,24 @@
 
     <!-- 主体内容 -->
     <div class="main-container">
-        <!-- 左侧列表 -->
         <div class="side-list">
             <div class="search-box">
                 <input type="text" placeholder="搜索联系人 / 群组...">
             </div>
-            <div class="contact-list" id="contact-list">
-                <!-- 会话列表动态生成 -->
-            </div>
+            <div class="contact-list" id="contact-list"></div>
         </div>
         
-        <!-- 右侧聊天面板 -->
         <div class="chat-area">
             <div class="chat-header">
                 <span id="current-title">请先登录并选择左侧会话</span>
                 <span id="current-type" style="font-size: 12px; color: #888; border: 1px solid #ddd; padding: 2px 6px; border-radius: 10px; display: none;"></span>
             </div>
-            
             <div class="message-list" id="msg-list">
-                <!-- 消息动态生成 -->
                 <div style="text-align: center; color: #bbb; margin-top: 50px;">未选择聊天对象</div>
             </div>
-            
             <div class="input-box">
                 <div class="toolbar-icon">😀 📁 ✂️</div>
-                <textarea id="input-msg" placeholder="输入消息，回车发送，Shift+回车换行"></textarea>
+                <textarea id="input-msg" placeholder="输入消息，回车发送"></textarea>
                 <div class="toolbar">
                     <button class="btn-send" onclick="send()">发送 (Enter)</button>
                 </div>
@@ -120,7 +112,7 @@
         <div class="modal">
             <h3>创建群聊</h3>
             <input id="g-id" placeholder="群ID (必须以 G 开头，如 G100)">
-            <input id="g-members" placeholder="成员ID，用英文逗号隔开 (如 1001,1002,1003)">
+            <input id="g-members" placeholder="成员UID，逗号隔开 (如 1001,1002)">
             <div class="modal-btns">
                 <button class="btn" onclick="closeGroupModal()">取消</button>
                 <button class="btn btn-primary" onclick="submitCreateGroup()">创建</button>
@@ -131,96 +123,84 @@
     <script>
         let ws;
         let currentTarget = "";
-        let myId = "";
+        let myId = ""; // 登录成功后从后端获取
+        let authToken = ""; 
         let contacts = new Set();
         let port = "8090";
         let host = window.location.hostname || "localhost";
 
-        // 1. 登录 & 初始化 WebSockets
+        // 1. 登录逻辑
         async function doLogin() {
-    // 1. 获取用户配置
-    port = document.getElementById('port').value;
-    myId = document.getElementById('uid').value;
-    host = window.location.hostname || "localhost";
+            port = document.getElementById('port').value;
+            const uName = document.getElementById('username').value;
+            const uPwd = document.getElementById('password').value;
 
-    try {
-        // 2. 发起登录请求获取 Token
-        const res = await fetch(`http://${host}:${port}/api/v1/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_id: myId })
-        });
-
-        if (!res.ok) throw new Error("登录请求失败，请检查网关是否在线");
-        const data = await res.json();
-
-        if (data.token) {
-            // 3. 登录成功，初始化 WebSocket
-            initWebSocket(data.token);
-
-            // 4. 更新 UI 状态
-            document.getElementById('status-text').innerText = `在线 (${myId})`;
-            document.getElementById('dot').style.background = "#52c41a";
-
-            // 5. 清空并初始化会话列表
-            document.getElementById('contact-list').innerHTML = "";
-            contacts.clear();
-
-            // 6. [核心同步] 从后端拉取用户已经加入的群组
             try {
-                const groupRes = await fetch(`http://${host}:${port}/api/v1/user/groups?user_id=${myId}`);
-                const groupData = await groupRes.json();
-                if (groupData.groups && groupData.groups.length > 0) {
-                    groupData.groups.forEach(gid => addTarget(gid));
-                    console.log("已同步群组:", groupData.groups);
+                // 调用后端 /api/v1/login
+                const res = await fetch(`http://${host}:${port}/api/v1/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: uName, password: uPwd })
+                });
+
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.error || "登录失败");
                 }
-            } catch (err) {
-                console.warn("群组同步失败(可能是Redis连接问题):", err);
+
+                const data = await res.json();
+                myId = data.user_id;
+                authToken = data.token;
+
+                // 初始化 WebSocket
+                initWebSocket(authToken);
+
+                // UI 更新
+                document.getElementById('status-text').innerText = `在线: ${uName}(${myId})`;
+                document.getElementById('dot').style.background = "#52c41a";
+                document.getElementById('contact-list').innerHTML = "";
+                contacts.clear();
+
+                // 同步该用户加入的群组
+                syncGroups();
+
+                // 默认添加一个聊天示例
+                let defaultPeer = (myId === "1001") ? "1002" : "1001";
+                addTarget(defaultPeer);
+
+            } catch (e) {
+                alert("登录失败: " + e.message);
             }
-
-            // 7. 添加默认测试私聊对象
-            let defaultPeer = (myId === "1001") ? "1002" : "1001";
-            addTarget(defaultPeer);
-
-            // 8. 默认选中一个对话并触发历史记录加载
-            const firstTarget = Array.from(contacts)[0];
-            if (firstTarget) {
-                switchChat(firstTarget);
-            }
-
-        } else {
-            alert("登录失败：后端未返回有效 Token");
         }
-    } catch (e) {
-        console.error(e);
-        alert("登录失败！错误详情请看控制台。请确保后端网关已正确配置 Redis 容器地址。");
-    }
-}
 
         function initWebSocket(token) {
             if(ws) ws.close();
             ws = new WebSocket(`ws://${host}:${port}/ws?user_id=${myId}&token=${token}`);
             
+            // 增加心跳定时器
+            let heartbeat = setInterval(() => {
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send("PING"); // 发送心跳包
+                } else {
+                    clearInterval(heartbeat);
+                }
+            }, 30000); // 每30秒发一次
+
             ws.onmessage = (e) => {
-                if (e.data === "PONG") return;
+                if (e.data === "PONG") return; // 收到心跳响应，不做处理
                 try {
                     const msgObj = JSON.parse(e.data);
                     const isGroup = msgObj.to_type === 'group';
                     const listTargetId = isGroup ? msgObj.to : msgObj.from;
 
-                    // 自动发现新对话：如果在列表里没有，自动添加
                     if (listTargetId && listTargetId !== myId && !contacts.has(listTargetId)) {
                         addTarget(listTargetId);
                     }
 
-                    // 如果当前打开的就是这个聊天窗口，直接渲染
                     if (currentTarget === listTargetId) {
-                        // 收到别人发来的，永远是 other
                         renderMsg("other", msgObj.from, msgObj.msg);
-                    } else {
-                        // TODO: 可以在这里做红点未读提示
                     }
-                } catch(err) { console.error("解析WebSocket消息失败", e.data); }
+                } catch(err) { console.error("解析消息失败", e.data); }
             };
 
             ws.onclose = () => {
@@ -229,170 +209,112 @@
             };
         }
 
-        // 2. 会话列表管理
-        function handleManualAdd() {
-            const id = document.getElementById('new-target').value.trim();
-            if (id) {
-                addTarget(id);
-                switchChat(id);
-                document.getElementById('new-target').value = "";
-            }
-        }
-
+        // 2. 基础功能
         function addTarget(id) {
             if (contacts.has(id)) return;
             contacts.add(id);
-            
             const list = document.getElementById('contact-list');
             const item = document.createElement('div');
             item.className = 'contact-item';
             item.id = `item-${id}`;
             item.onclick = () => switchChat(id);
-            
             const isGroup = id.startsWith('G');
-            const avatarClass = isGroup ? 'avatar group' : 'avatar user';
-            const shortName = isGroup ? '群' : id.substring(0,2);
-
             item.innerHTML = `
-                <div class="${avatarClass}">${shortName}</div>
+                <div class="avatar ${isGroup?'group':'user'}">${isGroup?'群':id.substring(0,2)}</div>
                 <div style="flex:1">
                     <div style="font-size: 15px; font-weight: 500;">${id}</div>
-                    <div style="font-size: 12px; color: #999; margin-top: 4px;">${isGroup ? '群聊' : '好友'}</div>
-                </div>
-            `;
-            // 新加的插在最上面
+                    <div style="font-size: 12px; color: #999; margin-top: 4px;">${isGroup?'群聊':'好友'}</div>
+                </div>`;
             list.insertBefore(item, list.firstChild);
         }
 
         function switchChat(id) {
             currentTarget = id;
             document.querySelectorAll('.contact-item').forEach(el => el.classList.remove('active'));
-            document.getElementById(`item-${id}`).classList.add('active');
+            const targetEl = document.getElementById(`item-${id}`);
+            if(targetEl) targetEl.classList.add('active');
             
-            const isGroup = id.startsWith('G');
             document.getElementById('current-title').innerText = id;
-            
             const typeTag = document.getElementById('current-type');
             typeTag.style.display = 'inline-block';
-            typeTag.innerText = isGroup ? "群组会话" : "私聊";
+            typeTag.innerText = id.startsWith('G') ? "群组" : "私聊";
 
             document.getElementById('msg-list').innerHTML = ""; 
             fetchHistory(id);
         }
 
-        // 3. 拉取并渲染历史记录
         async function fetchHistory(targetId) {
-            if(!myId) return;
             try {
                 const res = await fetch(`http://${host}:${port}/api/v1/history?user_id=${myId}&target_id=${targetId}`);
                 const json = await res.json();
-                
-                if (json.data && json.data.length > 0) {
+                if (json.data) {
                     json.data.forEach(mStr => {
-                        try {
-                            const detail = JSON.parse(mStr);
-                            // 判断发件人是不是自己
-                            const type = (detail.from === myId) ? "self" : "other";
-                            renderMsg(type, detail.from, detail.msg);
-                        } catch {
-                            // 兼容旧纯文本数据
-                            renderMsg("other", targetId, mStr);
-                        }
+                        const detail = JSON.parse(mStr);
+                        renderMsg(detail.from === myId ? "self" : "other", detail.from, detail.msg);
                     });
-                } else {
-                    document.getElementById('msg-list').innerHTML = `<div style="text-align:center; color:#ccc; margin-top:20px;">暂无聊天记录</div>`;
                 }
             } catch (e) { console.error("获取历史失败", e); }
         }
 
+        async function syncGroups() {
+            try {
+                const res = await fetch(`http://${host}:${port}/api/v1/user/groups?user_id=${myId}`);
+                const data = await res.json();
+                if (data.groups) data.groups.forEach(gid => addTarget(gid));
+            } catch (e) { console.warn("同步群组失败"); }
+        }
+
         function renderMsg(type, senderId, content) {
             const container = document.getElementById('msg-list');
-            // 清除“暂无记录”提示
-            if(container.innerHTML.includes("暂无聊天记录")) container.innerHTML = "";
-
+            if(container.innerHTML.includes("未选择") || container.innerHTML.includes("暂无")) container.innerHTML = "";
             const row = document.createElement('div');
             row.className = `msg-row ${type}`;
-            
-            // 简单处理头像文字
-            const avatarText = senderId.substring(0,2);
-            const avatarBg = type === 'self' ? '#3498db' : '#95a5a6';
-
             row.innerHTML = `
-                <div class="msg-avatar" style="background:${avatarBg}">${avatarText}</div>
+                <div class="msg-avatar" style="background:${type==='self'?'#3498db':'#95a5a6'}">${senderId.substring(0,2)}</div>
                 <div class="msg-body">
                     <div class="msg-info">${senderId}</div>
                     <div class="msg-content">${content}</div>
-                </div>
-            `;
+                </div>`;
             container.appendChild(row);
             container.scrollTop = container.scrollHeight;
         }
 
-        // 4. 发送消息
         function send() {
             const el = document.getElementById('input-msg');
             const text = el.value.trim();
-            if (!text || !currentTarget || !ws || ws.readyState !== WebSocket.OPEN) {
-                if(!ws || ws.readyState !== WebSocket.OPEN) alert("WebSocket 未连接，请先登录！");
-                return;
-            }
-
+            if (!text || !currentTarget || !ws || ws.readyState !== WebSocket.OPEN) return;
             const payload = {
-                from: myId,
-                to: currentTarget,
+                from: myId, to: currentTarget,
                 to_type: currentTarget.startsWith('G') ? "group" : "user",
                 msg: text
             };
-            
             ws.send(JSON.stringify(payload));
-            renderMsg("self", myId, text); // 渲染到自己屏幕右侧
+            renderMsg("self", myId, text);
             el.value = "";
         }
 
-        // 监听回车发送
+        // 绑定 Enter 键
         document.getElementById('input-msg').onkeydown = (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                send();
-            }
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
         };
 
-        // 5. 群聊弹窗逻辑
-        function openGroupModal() {
-            document.getElementById('group-modal').style.display = 'flex';
+        function handleManualAdd() {
+            const id = document.getElementById('new-target').value.trim();
+            if (id) { addTarget(id); switchChat(id); }
         }
-        
-        function closeGroupModal() {
-            document.getElementById('group-modal').style.display = 'none';
-        }
+
+        function openGroupModal() { document.getElementById('group-modal').style.display = 'flex'; }
+        function closeGroupModal() { document.getElementById('group-modal').style.display = 'none'; }
 
         async function submitCreateGroup() {
             const gid = document.getElementById('g-id').value.trim();
-            const members = document.getElementById('g-members').value.split(',').map(s=>s.trim()).filter(Boolean);
-            
-            if(!gid.startsWith('G')) {
-                alert("群ID必须以大写 G 开头！"); return;
-            }
-            if(members.length === 0) {
-                alert("请输入至少一个成员ID"); return;
-            }
-
-            try {
-                const res = await fetch(`http://${host}:${port}/api/v1/group/create`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ group_id: gid, members: members })
-                });
-                const data = await res.json();
-                if(data.group_id) {
-                    alert("群组创建成功！");
-                    addTarget(gid);
-                    switchChat(gid);
-                    closeGroupModal();
-                }
-            } catch(e) {
-                alert("请求网关创建群组失败");
-            }
+            const members = document.getElementById('g-members').value.split(',').map(s=>s.trim());
+            const res = await fetch(`http://${host}:${port}/api/v1/group/create`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ group_id: gid, members: members })
+            });
+            if(res.ok) { addTarget(gid); switchChat(gid); closeGroupModal(); }
         }
     </script>
 </body>

@@ -335,6 +335,111 @@ func (x *GetHistoryReply) GetMessages() []string {
 	return nil
 }
 
+// 增加这两个结构
+type LoginReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	Password      string                 `protobuf:"bytes,2,opt,name=password,proto3" json:"password,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LoginReq) Reset() {
+	*x = LoginReq{}
+	mi := &file_api_protocol_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LoginReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LoginReq) ProtoMessage() {}
+
+func (x *LoginReq) ProtoReflect() protoreflect.Message {
+	mi := &file_api_protocol_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LoginReq.ProtoReflect.Descriptor instead.
+func (*LoginReq) Descriptor() ([]byte, []int) {
+	return file_api_protocol_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *LoginReq) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *LoginReq) GetPassword() string {
+	if x != nil {
+		return x.Password
+	}
+	return ""
+}
+
+type LoginReply struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Token         string                 `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`
+	UserId        string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LoginReply) Reset() {
+	*x = LoginReply{}
+	mi := &file_api_protocol_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LoginReply) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LoginReply) ProtoMessage() {}
+
+func (x *LoginReply) ProtoReflect() protoreflect.Message {
+	mi := &file_api_protocol_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LoginReply.ProtoReflect.Descriptor instead.
+func (*LoginReply) Descriptor() ([]byte, []int) {
+	return file_api_protocol_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *LoginReply) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
+func (x *LoginReply) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
 // --- Gateway 服务接口 ---
 type SendToUserReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -346,7 +451,7 @@ type SendToUserReq struct {
 
 func (x *SendToUserReq) Reset() {
 	*x = SendToUserReq{}
-	mi := &file_api_protocol_proto_msgTypes[6]
+	mi := &file_api_protocol_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -358,7 +463,7 @@ func (x *SendToUserReq) String() string {
 func (*SendToUserReq) ProtoMessage() {}
 
 func (x *SendToUserReq) ProtoReflect() protoreflect.Message {
-	mi := &file_api_protocol_proto_msgTypes[6]
+	mi := &file_api_protocol_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -371,7 +476,7 @@ func (x *SendToUserReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendToUserReq.ProtoReflect.Descriptor instead.
 func (*SendToUserReq) Descriptor() ([]byte, []int) {
-	return file_api_protocol_proto_rawDescGZIP(), []int{6}
+	return file_api_protocol_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *SendToUserReq) GetTargetUserId() string {
@@ -397,7 +502,7 @@ type SendToUserReply struct {
 
 func (x *SendToUserReply) Reset() {
 	*x = SendToUserReply{}
-	mi := &file_api_protocol_proto_msgTypes[7]
+	mi := &file_api_protocol_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -409,7 +514,7 @@ func (x *SendToUserReply) String() string {
 func (*SendToUserReply) ProtoMessage() {}
 
 func (x *SendToUserReply) ProtoReflect() protoreflect.Message {
-	mi := &file_api_protocol_proto_msgTypes[7]
+	mi := &file_api_protocol_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -422,7 +527,7 @@ func (x *SendToUserReply) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendToUserReply.ProtoReflect.Descriptor instead.
 func (*SendToUserReply) Descriptor() ([]byte, []int) {
-	return file_api_protocol_proto_rawDescGZIP(), []int{7}
+	return file_api_protocol_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *SendToUserReply) GetSuccess() bool {
@@ -449,7 +554,14 @@ const file_api_protocol_proto_rawDesc = "" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x1b\n" +
 	"\ttarget_id\x18\x02 \x01(\tR\btargetId\"-\n" +
 	"\x0fGetHistoryReply\x12\x1a\n" +
-	"\bmessages\x18\x01 \x03(\tR\bmessages\"O\n" +
+	"\bmessages\x18\x01 \x03(\tR\bmessages\"B\n" +
+	"\bLoginReq\x12\x1a\n" +
+	"\busername\x18\x01 \x01(\tR\busername\x12\x1a\n" +
+	"\bpassword\x18\x02 \x01(\tR\bpassword\";\n" +
+	"\n" +
+	"LoginReply\x12\x14\n" +
+	"\x05token\x18\x01 \x01(\tR\x05token\x12\x17\n" +
+	"\auser_id\x18\x02 \x01(\tR\x06userId\"O\n" +
 	"\rSendToUserReq\x12$\n" +
 	"\x0etarget_user_id\x18\x01 \x01(\tR\ftargetUserId\x12\x18\n" +
 	"\acontent\x18\x02 \x01(\fR\acontent\"+\n" +
@@ -458,8 +570,9 @@ const file_api_protocol_proto_rawDesc = "" +
 	"\aMsgType\x12\n" +
 	"\n" +
 	"\x06NORMAL\x10\x00\x12\r\n" +
-	"\tHEARTBEAT\x10\x012\xa7\x01\n" +
-	"\x05Logic\x121\n" +
+	"\tHEARTBEAT\x10\x012\xd0\x01\n" +
+	"\x05Logic\x12'\n" +
+	"\x05Login\x12\r.api.LoginReq\x1a\x0f.api.LoginReply\x121\n" +
 	"\vPushMessage\x12\x0f.api.PushMsgReq\x1a\x11.api.PushMsgReply\x123\n" +
 	"\tUserLogin\x12\x11.api.UserLoginReq\x1a\x13.api.UserLoginReply\x126\n" +
 	"\n" +
@@ -481,7 +594,7 @@ func file_api_protocol_proto_rawDescGZIP() []byte {
 }
 
 var file_api_protocol_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_api_protocol_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_api_protocol_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_api_protocol_proto_goTypes = []any{
 	(MsgType)(0),            // 0: api.MsgType
 	(*PushMsgReq)(nil),      // 1: api.PushMsgReq
@@ -490,23 +603,27 @@ var file_api_protocol_proto_goTypes = []any{
 	(*UserLoginReply)(nil),  // 4: api.UserLoginReply
 	(*GetHistoryReq)(nil),   // 5: api.GetHistoryReq
 	(*GetHistoryReply)(nil), // 6: api.GetHistoryReply
-	(*SendToUserReq)(nil),   // 7: api.SendToUserReq
-	(*SendToUserReply)(nil), // 8: api.SendToUserReply
+	(*LoginReq)(nil),        // 7: api.LoginReq
+	(*LoginReply)(nil),      // 8: api.LoginReply
+	(*SendToUserReq)(nil),   // 9: api.SendToUserReq
+	(*SendToUserReply)(nil), // 10: api.SendToUserReply
 }
 var file_api_protocol_proto_depIdxs = []int32{
-	1, // 0: api.Logic.PushMessage:input_type -> api.PushMsgReq
-	3, // 1: api.Logic.UserLogin:input_type -> api.UserLoginReq
-	5, // 2: api.Logic.GetHistory:input_type -> api.GetHistoryReq
-	7, // 3: api.Gateway.PushToUser:input_type -> api.SendToUserReq
-	2, // 4: api.Logic.PushMessage:output_type -> api.PushMsgReply
-	4, // 5: api.Logic.UserLogin:output_type -> api.UserLoginReply
-	6, // 6: api.Logic.GetHistory:output_type -> api.GetHistoryReply
-	8, // 7: api.Gateway.PushToUser:output_type -> api.SendToUserReply
-	4, // [4:8] is the sub-list for method output_type
-	0, // [0:4] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	7,  // 0: api.Logic.Login:input_type -> api.LoginReq
+	1,  // 1: api.Logic.PushMessage:input_type -> api.PushMsgReq
+	3,  // 2: api.Logic.UserLogin:input_type -> api.UserLoginReq
+	5,  // 3: api.Logic.GetHistory:input_type -> api.GetHistoryReq
+	9,  // 4: api.Gateway.PushToUser:input_type -> api.SendToUserReq
+	8,  // 5: api.Logic.Login:output_type -> api.LoginReply
+	2,  // 6: api.Logic.PushMessage:output_type -> api.PushMsgReply
+	4,  // 7: api.Logic.UserLogin:output_type -> api.UserLoginReply
+	6,  // 8: api.Logic.GetHistory:output_type -> api.GetHistoryReply
+	10, // 9: api.Gateway.PushToUser:output_type -> api.SendToUserReply
+	5,  // [5:10] is the sub-list for method output_type
+	0,  // [0:5] is the sub-list for method input_type
+	0,  // [0:0] is the sub-list for extension type_name
+	0,  // [0:0] is the sub-list for extension extendee
+	0,  // [0:0] is the sub-list for field type_name
 }
 
 func init() { file_api_protocol_proto_init() }
@@ -520,7 +637,7 @@ func file_api_protocol_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_protocol_proto_rawDesc), len(file_api_protocol_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   8,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   2,
 		},
