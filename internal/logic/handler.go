@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 	"time"
-
+	"github.com/1084217636/linkgo-im/internal/middleware" // ⚠️ 增加这一行
 	"github.com/1084217636/linkgo-im/api"
 	"github.com/redis/go-redis/v9"
 	_ "github.com/go-sql-driver/mysql"
@@ -122,4 +122,32 @@ func (h *LogicHandler) GetHistory(ctx context.Context, req *api.GetHistoryReq) (
 		res[i], res[j] = res[j], res[i]
 	}
 	return &api.GetHistoryReply{Messages: res}, nil
+}
+// Login 实现 gRPC 登录接口
+func (h *LogicHandler) Login(ctx context.Context, req *api.LoginReq) (*api.LoginReply, error) {
+    var uid string
+    var pwdInDB string
+
+    // 1. 查数据库
+    query := "SELECT user_id, password FROM users WHERE username = ? LIMIT 1"
+    err := h.DB.QueryRowContext(ctx, query, req.Username).Scan(&uid, &pwdInDB)
+    if err != nil {
+        return nil, fmt.Errorf("用户不存在")
+    }
+
+    // 2. 比对密码（实验环境用明文，生产环境用 bcrypt.CompareHashAndPassword）
+    if pwdInDB != req.Password {
+        return nil, fmt.Errorf("密码错误")
+    }
+
+    // 3. 生成 JWT（调用我们之前写的 GenerateToken）
+    token, err := middleware.GenerateToken(uid)
+    if err != nil {
+        return nil, err
+    }
+
+    return &api.LoginReply{
+        Token:  token,
+        UserId: uid,
+    }, nil
 }

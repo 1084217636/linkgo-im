@@ -19,6 +19,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	Logic_Login_FullMethodName       = "/api.Logic/Login"
 	Logic_PushMessage_FullMethodName = "/api.Logic/PushMessage"
 	Logic_UserLogin_FullMethodName   = "/api.Logic/UserLogin"
 	Logic_GetHistory_FullMethodName  = "/api.Logic/GetHistory"
@@ -28,6 +29,8 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type LogicClient interface {
+	// 用户登录
+	Login(ctx context.Context, in *LoginReq, opts ...grpc.CallOption) (*LoginReply, error)
 	// 处理上行消息
 	PushMessage(ctx context.Context, in *PushMsgReq, opts ...grpc.CallOption) (*PushMsgReply, error)
 	// 用户上线通知
@@ -42,6 +45,16 @@ type logicClient struct {
 
 func NewLogicClient(cc grpc.ClientConnInterface) LogicClient {
 	return &logicClient{cc}
+}
+
+func (c *logicClient) Login(ctx context.Context, in *LoginReq, opts ...grpc.CallOption) (*LoginReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LoginReply)
+	err := c.cc.Invoke(ctx, Logic_Login_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *logicClient) PushMessage(ctx context.Context, in *PushMsgReq, opts ...grpc.CallOption) (*PushMsgReply, error) {
@@ -78,6 +91,8 @@ func (c *logicClient) GetHistory(ctx context.Context, in *GetHistoryReq, opts ..
 // All implementations must embed UnimplementedLogicServer
 // for forward compatibility.
 type LogicServer interface {
+	// 用户登录
+	Login(context.Context, *LoginReq) (*LoginReply, error)
 	// 处理上行消息
 	PushMessage(context.Context, *PushMsgReq) (*PushMsgReply, error)
 	// 用户上线通知
@@ -94,6 +109,9 @@ type LogicServer interface {
 // pointer dereference when methods are called.
 type UnimplementedLogicServer struct{}
 
+func (UnimplementedLogicServer) Login(context.Context, *LoginReq) (*LoginReply, error) {
+	return nil, status.Error(codes.Unimplemented, "method Login not implemented")
+}
 func (UnimplementedLogicServer) PushMessage(context.Context, *PushMsgReq) (*PushMsgReply, error) {
 	return nil, status.Error(codes.Unimplemented, "method PushMessage not implemented")
 }
@@ -122,6 +140,24 @@ func RegisterLogicServer(s grpc.ServiceRegistrar, srv LogicServer) {
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&Logic_ServiceDesc, srv)
+}
+
+func _Logic_Login_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LoginReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LogicServer).Login(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Logic_Login_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LogicServer).Login(ctx, req.(*LoginReq))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _Logic_PushMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -185,6 +221,10 @@ var Logic_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "api.Logic",
 	HandlerType: (*LogicServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Login",
+			Handler:    _Logic_Login_Handler,
+		},
 		{
 			MethodName: "PushMessage",
 			Handler:    _Logic_PushMessage_Handler,

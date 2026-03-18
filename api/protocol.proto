@@ -32,12 +32,25 @@ message GetHistoryReply {
 }
 
 service Logic {
+    //用户登录
+    rpc Login (LoginReq) returns (LoginReply);
     // 处理上行消息
     rpc PushMessage (PushMsgReq) returns (PushMsgReply);
     // 用户上线通知
     rpc UserLogin (UserLoginReq) returns (UserLoginReply);
     // 【新增】拉取历史记录接口
     rpc GetHistory (GetHistoryReq) returns (GetHistoryReply);
+}
+
+// 增加这两个结构
+message LoginReq {
+    string username = 1;
+    string password = 2;
+}
+
+message LoginReply {
+    string token = 1;
+    string user_id = 2;
 }
 
 // --- Gateway 服务接口 ---
