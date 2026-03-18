@@ -147,9 +147,11 @@ func handleWebSocket(c *gin.Context) {
     mutex.Unlock()
 
     // --- 修改点1: 初始有效期设短一点，比如 1 分钟 ---
+	//redis string类型存储用户路由信息，key格式为 "route:用户ID"，value 是网关节点标识（这里暂时写死为 "gateway_1"），过期时间设为 60 秒
     rdb.Set(context.Background(), "route:"+userId, "gateway_1", 60*time.Second) // 实际生产建议 60*time.Second
 
     defer func() {
+		//删除map连接池中的连接和Redis中的路由信息
         mutex.Lock()
         delete(clients, userId)
         mutex.Unlock()

@@ -67,3 +67,18 @@ services:
       - GATEWAY_PORT=8090
       - LOGIC_ADDR=logic:9001
       - REDIS_ADDR=redis:6379
+
+  # 6. Gateway C: 第三个网关节点（增加并发承载）
+  gateway-c:
+    build: .
+    container_name: linkgo-gateway-c
+    command: ./gateway
+    ports:
+      - "8092:8090"
+    depends_on:
+      - logic
+      - redis
+    environment:
+      - GATEWAY_PORT=8090
+      - LOGIC_ADDR=logic:9001
+      - REDIS_ADDR=redis:6379

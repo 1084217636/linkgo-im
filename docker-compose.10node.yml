@@ -1,0 +1,168 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: linkgo-redis
+    ports:
+    - 6379:6379
+    command: redis-server --requirepass 123456
+  mysql:
+    image: mysql:8.0
+    container_name: linkgo-mysql
+    ports:
+    - 3306:3306
+    environment:
+    - MYSQL_ROOT_PASSWORD=root
+    - MYSQL_DATABASE=linkgo_im
+    volumes:
+    - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test:
+      - CMD
+      - mysqladmin
+      - ping
+      - -h
+      - localhost
+      timeout: 20s
+      retries: 10
+  logic:
+    build: .
+    container_name: linkgo-logic
+    command: ./logic
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+    - REDIS_ADDR=redis:6379
+    - DB_DSN=root:root@tcp(mysql:3306)/linkgo_im?charset=utf8mb4&parseTime=True&loc=Local
+  gateway-a:
+    build: .
+    container_name: linkgo-gateway-a
+    command: ./gateway
+    ports:
+    - 8090:8090
+    depends_on:
+    - logic
+    - redis
+    environment:
+    - GATEWAY_PORT=8090
+    - LOGIC_ADDR=logic:9001
+    - REDIS_ADDR=redis:6379
+  gateway-b:
+    build: .
+    container_name: linkgo-gateway-b
+    command: ./gateway
+    ports:
+    - 8091:8090
+    depends_on:
+    - logic
+    - redis
+    environment:
+    - GATEWAY_PORT=8090
+    - LOGIC_ADDR=logic:9001
+    - REDIS_ADDR=redis:6379
+  gateway-c:
+    build: .
+    container_name: linkgo-gateway-c
+    command: ./gateway
+    ports:
+    - 8092:8090
+    depends_on:
+    - logic
+    - redis
+    environment:
+    - GATEWAY_PORT=8090
+    - LOGIC_ADDR=logic:9001
+    - REDIS_ADDR=redis:6379
+  gateway-d:
+    build: .
+    container_name: linkgo-gateway-d
+    command: ./gateway
+    ports:
+    - 8093:8090
+    depends_on:
+    - logic
+    - redis
+    environment:
+    - GATEWAY_PORT=8090
+    - LOGIC_ADDR=logic:9001
+    - REDIS_ADDR=redis:6379
+  gateway-e:
+    build: .
+    container_name: linkgo-gateway-e
+    command: ./gateway
+    ports:
+    - 8094:8090
+    depends_on:
+    - logic
+    - redis
+    environment:
+    - GATEWAY_PORT=8090
+    - LOGIC_ADDR=logic:9001
+    - REDIS_ADDR=redis:6379
+  gateway-f:
+    build: .
+    container_name: linkgo-gateway-f
+    command: ./gateway
+    ports:
+    - 8095:8090
+    depends_on:
+    - logic
+    - redis
+    environment:
+    - GATEWAY_PORT=8090
+    - LOGIC_ADDR=logic:9001
+    - REDIS_ADDR=redis:6379
+  gateway-g:
+    build: .
+    container_name: linkgo-gateway-g
+    command: ./gateway
+    ports:
+    - 8096:8090
+    depends_on:
+    - logic
+    - redis
+    environment:
+    - GATEWAY_PORT=8090
+    - LOGIC_ADDR=logic:9001
+    - REDIS_ADDR=redis:6379
+  gateway-h:
+    build: .
+    container_name: linkgo-gateway-h
+    command: ./gateway
+    ports:
+    - 8097:8090
+    depends_on:
+    - logic
+    - redis
+    environment:
+    - GATEWAY_PORT=8090
+    - LOGIC_ADDR=logic:9001
+    - REDIS_ADDR=redis:6379
+  gateway-i:
+    build: .
+    container_name: linkgo-gateway-i
+    command: ./gateway
+    ports:
+    - 8098:8090
+    depends_on:
+    - logic
+    - redis
+    environment:
+    - GATEWAY_PORT=8090
+    - LOGIC_ADDR=logic:9001
+    - REDIS_ADDR=redis:6379
+  gateway-j:
+    build: .
+    container_name: linkgo-gateway-j
+    command: ./gateway
+    ports:
+    - 8099:8090
+    depends_on:
+    - logic
+    - redis
+    environment:
+    - GATEWAY_PORT=8090
+    - LOGIC_ADDR=logic:9001
+    - REDIS_ADDR=redis:6379

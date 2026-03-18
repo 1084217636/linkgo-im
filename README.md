@@ -6,7 +6,7 @@
 *   **消息可靠性**：集成 MySQL 实现消息持久化，支持离线消息拉取与历史记录查询。
 *   **自研网关**：基于 WebSocket + gRPC 架构，实现长连接管理与业务逻辑解耦。
 *   **工程化部署**：全镜像 Docker-Compose 一键编排，包含 MySQL 健康检查与自动初始化脚本。
-
+![alt text](mermaid-diagram-2026-03-11-192248.png)
 [![Go Version](https://img.shields.io/badge/Go-1.20+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![Docker](https://img.shields.io/badge/Docker-Supported-2496ED?style=flat&logo=docker)](https://www.docker.com/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
