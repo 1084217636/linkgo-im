@@ -1,5 +1,36 @@
 services:
-  # 1. Redis: 用于长连接路由、PubSub 广播、离线消息 ZSet
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.15
+    container_name: linkgo-etcd
+    command:
+      - /usr/local/bin/etcd
+      - --name=etcd0
+      - --advertise-client-urls=http://etcd:2379
+      - --listen-client-urls=http://0.0.0.0:2379
+    ports:
+      - "2379:2379"
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: linkgo-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: linkgo-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
   redis:
     image: redis:7-alpine
     container_name: linkgo-redis
@@ -7,7 +38,6 @@ services:
       - "6379:6379"
     command: redis-server --requirepass 123456
 
-  # 2. MySQL: 用于消息持久化、历史记录拉取、用户/群组元数据存储
   mysql:
     image: mysql:8.0
     container_name: linkgo-mysql
@@ -17,14 +47,12 @@ services:
       - MYSQL_ROOT_PASSWORD=root
       - MYSQL_DATABASE=linkgo_im
     volumes:
-      # 挂载初始化脚本，确保一键部署时自动创建 messages 表
       - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost"]
       timeout: 20s
       retries: 10
 
-  # 3. Logic: 业务逻辑层（处理 MySQL 入库、群聊分发算法）
   logic:
     build: .
     container_name: linkgo-logic
@@ -34,11 +62,36 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      etcd:
+        condition: service_started
+      kafka:
+        condition: service_started
     environment:
       - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=123456
       - DB_DSN=root:root@tcp(mysql:3306)/linkgo_im?charset=utf8mb4&parseTime=True&loc=Local
+      - SERVICE_ADDR=logic:9001
+      - ETCD_ENDPOINTS=etcd:2379
+      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_GROUP_TOPIC=group_message_dispatch
 
-  # 4. Gateway A: 网关入口（处理 RESTful API 与 WebSocket）
+  transfer:
+    build: .
+    container_name: linkgo-transfer
+    command: ./transfer
+    depends_on:
+      - redis
+      - kafka
+    environment:
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=123456
+      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_GROUP_TOPIC=group_message_dispatch
+      - KAFKA_RETRY_TOPIC=group_message_retry
+      - KAFKA_DLQ_TOPIC=group_message_dlq
+      - KAFKA_CONSUMER_GROUP=transfer-group
+      - TRANSFER_METRICS_PORT=9102
+
   gateway-a:
     build: .
     container_name: linkgo-gateway-a
@@ -48,27 +101,31 @@ services:
     depends_on:
       - logic
       - redis
+      - etcd
     environment:
       - GATEWAY_PORT=8090
-      - LOGIC_ADDR=logic:9001
+      - GATEWAY_ID=gateway-a
       - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=123456
+      - ETCD_ENDPOINTS=etcd:2379
 
-  # 5. Gateway B: 模拟分布式多节点（验证跨节点广播）
   gateway-b:
     build: .
     container_name: linkgo-gateway-b
     command: ./gateway
     ports:
-      - "8091:8090" # 映射外部 8091 到容器内部 8090
+      - "8091:8090"
     depends_on:
       - logic
       - redis
+      - etcd
     environment:
       - GATEWAY_PORT=8090
-      - LOGIC_ADDR=logic:9001
+      - GATEWAY_ID=gateway-b
       - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=123456
+      - ETCD_ENDPOINTS=etcd:2379
 
-  # 6. Gateway C: 第三个网关节点（增加并发承载）
   gateway-c:
     build: .
     container_name: linkgo-gateway-c
@@ -78,7 +135,10 @@ services:
     depends_on:
       - logic
       - redis
+      - etcd
     environment:
       - GATEWAY_PORT=8090
-      - LOGIC_ADDR=logic:9001
+      - GATEWAY_ID=gateway-c
       - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=123456
+      - ETCD_ENDPOINTS=etcd:2379

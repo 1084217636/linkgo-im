@@ -19,7 +19,9 @@ CREATE TABLE IF NOT EXISTS `users` (
 -- 3. 消息表：针对 IM 场景优化的索引设计
 CREATE TABLE IF NOT EXISTS `messages` (
     `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `message_id` VARCHAR(160) NOT NULL COMMENT '消息唯一标识: session_id + seq',
     `session_id` VARCHAR(128) NOT NULL COMMENT '会话ID: 单聊(sorted_uid_uid), 群聊(G_id)',
+    `seq` BIGINT NOT NULL COMMENT '会话内单调递增序列，用于乱序保护与补偿同步',
     `from_uid` VARCHAR(64) NOT NULL COMMENT '发送者ID',
     `to_id` VARCHAR(64) NOT NULL COMMENT '接收者ID(用户ID或群ID)',
     `to_type` ENUM('user', 'group') NOT NULL DEFAULT 'user' COMMENT '接收类型',
@@ -27,7 +29,9 @@ CREATE TABLE IF NOT EXISTS `messages` (
     `msg_type` TINYINT(1) DEFAULT 1 COMMENT '消息类型: 1文字 2图片 3语音',
     `create_time` BIGINT NOT NULL COMMENT '毫秒级时间戳',
     PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_message_id` (`message_id`),
     -- 核心索引：历史记录查询全靠它
+    INDEX `idx_session_seq` (`session_id`, `seq`),
     INDEX `idx_session_time` (`session_id`, `create_time`),
     INDEX `idx_from_uid` (`from_uid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='聊天消息持久化表';

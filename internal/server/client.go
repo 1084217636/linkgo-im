@@ -2,38 +2,68 @@ package server
 
 import (
 	"context"
+	"log"
 	"time"
-	"github.com/gorilla/websocket"
-	"github.com/1084217636/linkgo-im/api" // 你的 protobuf
+
+	"github.com/1084217636/linkgo-im/api"
+	"github.com/1084217636/linkgo-im/internal/metrics"
+	"github.com/redis/go-redis/v9"
+	"google.golang.org/protobuf/proto"
 )
 
-// StartClientLoop 处理长连接的读写逻辑
-func StartClientLoop(uid string, conn *websocket.Conn, logic api.LogicClient) {
-	// 对应简历：心跳检测机制
-	readTimeout := 60 * time.Second
-	conn.SetReadDeadline(time.Now().Add(readTimeout))
+var pushPool = NewPushWorkerPool(64, 4096)
+
+func StartClientLoop(
+	ctx context.Context,
+	uid string,
+	conn *ClientConn,
+	logic api.LogicClient,
+	rdb *redis.Client,
+	routeValue string,
+	routeTTL time.Duration,
+) {
+	conn.Conn.SetReadLimit(64 << 10)
+	_ = conn.Conn.SetReadDeadline(time.Now().Add(routeTTL))
 
 	for {
-		// 1. 读取客户端消息
-		_, msg, err := conn.ReadMessage()
+		_, msg, err := conn.Conn.ReadMessage()
 		if err != nil {
-			break // 异常或断开则退出循环，触发外部 defer 清理
+			return
 		}
 
-		// 2. 心跳续命
-		conn.SetReadDeadline(time.Now().Add(readTimeout))
-		if string(msg) == "PING" {
-			conn.WriteMessage(websocket.TextMessage, []byte("PONG"))
+		var frame api.WireMessage
+		if err := proto.Unmarshal(msg, &frame); err != nil {
+			log.Printf("decode wire message failed for user=%s: %v", uid, err)
+			metrics.InboundMessages.WithLabelValues("gateway", "decode_error").Inc()
 			continue
 		}
 
-		// 3. 对应简历：解耦业务逻辑与长连接管理
-		// 将消息异步/同步发送至 Logic 层处理
-		go func(data []byte) {
-			logic.PushMessage(context.Background(), &api.PushMsgReq{
-				UserId:  uid,
-				Content: data,
+		switch frame.MsgType {
+		case api.MsgType_ACK:
+			metrics.InboundMessages.WithLabelValues("gateway", "ack").Inc()
+			AckMessage(ctx, rdb, uid, frame.AckMessageId)
+			continue
+		case api.MsgType_HEARTBEAT:
+			metrics.InboundMessages.WithLabelValues("gateway", "heartbeat").Inc()
+			if err := RefreshRoute(ctx, rdb, uid, routeValue, routeTTL); err != nil {
+				log.Printf("refresh route failed for user=%s: %v", uid, err)
+			}
+			_ = conn.Conn.SetReadDeadline(time.Now().Add(routeTTL))
+			pong, _ := proto.Marshal(&api.WireMessage{
+				MsgType: api.MsgType_HEARTBEAT,
+				Body:    "PONG",
+				SentAt:  time.Now().UnixMilli(),
 			})
-		}(msg)
+			if err := conn.WriteBinary(pong); err != nil {
+				return
+			}
+			continue
+		default:
+			metrics.InboundMessages.WithLabelValues("gateway", "normal").Inc()
+			if ok := pushPool.Submit(uid, logic, msg); !ok {
+				log.Printf("push queue full for user=%s", uid)
+				metrics.OutboundMessages.WithLabelValues("logic", "queue_full").Inc()
+			}
+		}
 	}
 }

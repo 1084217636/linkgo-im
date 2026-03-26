@@ -1,29 +1,50 @@
 services:
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.15
+    container_name: linkgo-etcd
+    command:
+      - /usr/local/bin/etcd
+      - --name=etcd0
+      - --advertise-client-urls=http://etcd:2379
+      - --listen-client-urls=http://0.0.0.0:2379
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: linkgo-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: linkgo-kafka
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
   redis:
     image: redis:7-alpine
     container_name: linkgo-redis
-    ports:
-    - 6379:6379
     command: redis-server --requirepass 123456
+
   mysql:
     image: mysql:8.0
     container_name: linkgo-mysql
-    ports:
-    - 3306:3306
     environment:
-    - MYSQL_ROOT_PASSWORD=root
-    - MYSQL_DATABASE=linkgo_im
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=linkgo_im
     volumes:
-    - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test:
-      - CMD
-      - mysqladmin
-      - ping
-      - -h
-      - localhost
+      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost"]
       timeout: 20s
       retries: 10
+
   logic:
     build: .
     container_name: linkgo-logic
@@ -33,136 +54,202 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      etcd:
+        condition: service_started
+      kafka:
+        condition: service_started
     environment:
-    - REDIS_ADDR=redis:6379
-    - DB_DSN=root:root@tcp(mysql:3306)/linkgo_im?charset=utf8mb4&parseTime=True&loc=Local
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=123456
+      - DB_DSN=root:root@tcp(mysql:3306)/linkgo_im?charset=utf8mb4&parseTime=True&loc=Local
+      - SERVICE_ADDR=logic:9001
+      - ETCD_ENDPOINTS=etcd:2379
+      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_GROUP_TOPIC=group_message_dispatch
+
+  transfer:
+    build: .
+    container_name: linkgo-transfer
+    command: ./transfer
+    depends_on:
+      - redis
+      - kafka
+    environment:
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=123456
+      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_GROUP_TOPIC=group_message_dispatch
+      - KAFKA_RETRY_TOPIC=group_message_retry
+      - KAFKA_DLQ_TOPIC=group_message_dlq
+      - KAFKA_CONSUMER_GROUP=transfer-group
+      - TRANSFER_METRICS_PORT=9102
+
   gateway-a:
     build: .
     container_name: linkgo-gateway-a
     command: ./gateway
     ports:
-    - 8090:8090
+      - "8090:8090"
     depends_on:
-    - logic
-    - redis
+      - logic
+      - redis
+      - etcd
     environment:
-    - GATEWAY_PORT=8090
-    - LOGIC_ADDR=logic:9001
-    - REDIS_ADDR=redis:6379
+      - GATEWAY_PORT=8090
+      - GATEWAY_ID=gateway-a
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=123456
+      - ETCD_ENDPOINTS=etcd:2379
+
   gateway-b:
     build: .
     container_name: linkgo-gateway-b
     command: ./gateway
     ports:
-    - 8091:8090
+      - "8091:8090"
     depends_on:
-    - logic
-    - redis
+      - logic
+      - redis
+      - etcd
     environment:
-    - GATEWAY_PORT=8090
-    - LOGIC_ADDR=logic:9001
-    - REDIS_ADDR=redis:6379
+      - GATEWAY_PORT=8090
+      - GATEWAY_ID=gateway-b
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=123456
+      - ETCD_ENDPOINTS=etcd:2379
+
   gateway-c:
     build: .
     container_name: linkgo-gateway-c
     command: ./gateway
     ports:
-    - 8092:8090
+      - "8092:8090"
     depends_on:
-    - logic
-    - redis
+      - logic
+      - redis
+      - etcd
     environment:
-    - GATEWAY_PORT=8090
-    - LOGIC_ADDR=logic:9001
-    - REDIS_ADDR=redis:6379
+      - GATEWAY_PORT=8090
+      - GATEWAY_ID=gateway-c
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=123456
+      - ETCD_ENDPOINTS=etcd:2379
+
   gateway-d:
     build: .
     container_name: linkgo-gateway-d
     command: ./gateway
     ports:
-    - 8093:8090
+      - "8093:8090"
     depends_on:
-    - logic
-    - redis
+      - logic
+      - redis
+      - etcd
     environment:
-    - GATEWAY_PORT=8090
-    - LOGIC_ADDR=logic:9001
-    - REDIS_ADDR=redis:6379
+      - GATEWAY_PORT=8090
+      - GATEWAY_ID=gateway-d
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=123456
+      - ETCD_ENDPOINTS=etcd:2379
+
   gateway-e:
     build: .
     container_name: linkgo-gateway-e
     command: ./gateway
     ports:
-    - 8094:8090
+      - "8094:8090"
     depends_on:
-    - logic
-    - redis
+      - logic
+      - redis
+      - etcd
     environment:
-    - GATEWAY_PORT=8090
-    - LOGIC_ADDR=logic:9001
-    - REDIS_ADDR=redis:6379
+      - GATEWAY_PORT=8090
+      - GATEWAY_ID=gateway-e
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=123456
+      - ETCD_ENDPOINTS=etcd:2379
+
   gateway-f:
     build: .
     container_name: linkgo-gateway-f
     command: ./gateway
     ports:
-    - 8095:8090
+      - "8095:8090"
     depends_on:
-    - logic
-    - redis
+      - logic
+      - redis
+      - etcd
     environment:
-    - GATEWAY_PORT=8090
-    - LOGIC_ADDR=logic:9001
-    - REDIS_ADDR=redis:6379
+      - GATEWAY_PORT=8090
+      - GATEWAY_ID=gateway-f
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=123456
+      - ETCD_ENDPOINTS=etcd:2379
+
   gateway-g:
     build: .
     container_name: linkgo-gateway-g
     command: ./gateway
     ports:
-    - 8096:8090
+      - "8096:8090"
     depends_on:
-    - logic
-    - redis
+      - logic
+      - redis
+      - etcd
     environment:
-    - GATEWAY_PORT=8090
-    - LOGIC_ADDR=logic:9001
-    - REDIS_ADDR=redis:6379
+      - GATEWAY_PORT=8090
+      - GATEWAY_ID=gateway-g
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=123456
+      - ETCD_ENDPOINTS=etcd:2379
+
   gateway-h:
     build: .
     container_name: linkgo-gateway-h
     command: ./gateway
     ports:
-    - 8097:8090
+      - "8097:8090"
     depends_on:
-    - logic
-    - redis
+      - logic
+      - redis
+      - etcd
     environment:
-    - GATEWAY_PORT=8090
-    - LOGIC_ADDR=logic:9001
-    - REDIS_ADDR=redis:6379
+      - GATEWAY_PORT=8090
+      - GATEWAY_ID=gateway-h
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=123456
+      - ETCD_ENDPOINTS=etcd:2379
+
   gateway-i:
     build: .
     container_name: linkgo-gateway-i
     command: ./gateway
     ports:
-    - 8098:8090
+      - "8098:8090"
     depends_on:
-    - logic
-    - redis
+      - logic
+      - redis
+      - etcd
     environment:
-    - GATEWAY_PORT=8090
-    - LOGIC_ADDR=logic:9001
-    - REDIS_ADDR=redis:6379
+      - GATEWAY_PORT=8090
+      - GATEWAY_ID=gateway-i
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=123456
+      - ETCD_ENDPOINTS=etcd:2379
+
   gateway-j:
     build: .
     container_name: linkgo-gateway-j
     command: ./gateway
     ports:
-    - 8099:8090
+      - "8099:8090"
     depends_on:
-    - logic
-    - redis
+      - logic
+      - redis
+      - etcd
     environment:
-    - GATEWAY_PORT=8090
-    - LOGIC_ADDR=logic:9001
-    - REDIS_ADDR=redis:6379
+      - GATEWAY_PORT=8090
+      - GATEWAY_ID=gateway-j
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=123456
+      - ETCD_ENDPOINTS=etcd:2379

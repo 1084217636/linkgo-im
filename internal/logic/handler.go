@@ -3,151 +3,241 @@ package logic
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"time"
-	"github.com/1084217636/linkgo-im/internal/middleware" // ⚠️ 增加这一行
+
 	"github.com/1084217636/linkgo-im/api"
+	"github.com/1084217636/linkgo-im/internal/delivery"
+	"github.com/1084217636/linkgo-im/internal/metrics"
+	"github.com/1084217636/linkgo-im/internal/middleware"
 	"github.com/redis/go-redis/v9"
-	_ "github.com/go-sql-driver/mysql"
+	"google.golang.org/protobuf/proto"
 )
 
-// LogicHandler 结构体
+var sessionSeqScript = redis.NewScript(`
+local nextSeq = redis.call("INCR", KEYS[1])
+redis.call("PEXPIRE", KEYS[1], ARGV[1])
+return nextSeq
+`)
+
+type GroupDispatcher interface {
+	PublishGroupDispatch(ctx context.Context, frame *api.WireMessage, recipients []string) error
+}
+
 type LogicHandler struct {
-	api.UnimplementedLogicServer // ⚠️ 必须加这一行，否则 main.go 注册 gRPC 时必报错！
-	
-	Rdb *redis.Client
-	DB  *sql.DB
+	api.UnimplementedLogicServer
+
+	Rdb             *redis.Client
+	DB              *sql.DB
+	Delivery        *delivery.RedisDelivery
+	GroupDispatcher GroupDispatcher
 }
 
-// MsgPayload 定义消息传输载荷
-type MsgPayload struct {
-	From   string `json:"from"`
-	To     string `json:"to"`
-	ToType string `json:"to_type"` // "user" 或 "group"
-	Msg    string `json:"msg"`
-}
-
-// PushMessage 消息推送逻辑
 func (h *LogicHandler) PushMessage(ctx context.Context, req *api.PushMsgReq) (*api.PushMsgReply, error) {
-	if string(req.Content) == "PING" {
+	var frame api.WireMessage
+	if err := proto.Unmarshal(req.Content, &frame); err != nil {
+		metrics.InboundMessages.WithLabelValues("logic", "decode_error").Inc()
+		return nil, fmt.Errorf("invalid protobuf payload: %w", err)
+	}
+	if frame.MsgType == api.MsgType_HEARTBEAT || frame.MsgType == api.MsgType_ACK {
+		metrics.InboundMessages.WithLabelValues("logic", "control").Inc()
 		return &api.PushMsgReply{}, nil
 	}
+	metrics.InboundMessages.WithLabelValues("logic", "normal").Inc()
 
-	var payload MsgPayload
-	if err := json.Unmarshal(req.Content, &payload); err != nil {
-		fmt.Printf("解析消息失败: %v\n", err)
-		return &api.PushMsgReply{}, nil
+	if err := normalizeFrame(req.UserId, &frame); err != nil {
+		return nil, err
 	}
 
-	if payload.From == "" {
-		payload.From = req.UserId
+	frame.SessionId = buildSessionID(frame.From, frame.To, frame.ToType)
+	seq, err := h.nextSequence(ctx, frame.SessionId)
+	if err != nil {
+		return nil, err
+	}
+	frame.Seq = seq
+	frame.SentAt = time.Now().UnixMilli()
+	frame.MessageId = fmt.Sprintf("%s-%d", frame.SessionId, frame.Seq)
+
+	recipients, err := h.resolveRecipients(ctx, &frame)
+	if err != nil {
+		return nil, err
 	}
 
-	// 序列化为 JSON 字符串存储
-	historyData, _ := json.Marshal(payload)
-
-	// Redis 快速缓存
-	if payload.ToType == "group" {
-		h.Rdb.LPush(ctx, "hist:"+payload.To, string(historyData))
-		h.Rdb.LTrim(ctx, "hist:"+payload.To, 0, 99)
+	if frame.ToType == "group" && h.GroupDispatcher != nil {
+		if err := h.GroupDispatcher.PublishGroupDispatch(ctx, &frame, recipients); err != nil {
+			return nil, err
+		}
 	} else {
-		h.Rdb.LPush(ctx, "hist:"+payload.From+":"+payload.To, string(historyData))
-		h.Rdb.LPush(ctx, "hist:"+payload.To+":"+payload.From, string(historyData))
+		if err := h.dispatchToRecipients(ctx, &frame, recipients); err != nil {
+			return nil, err
+		}
 	}
 
-	// 消息分发
-	h.dispatch(ctx, payload.To, string(historyData))
-
-	// MySQL 持久化
-	go h.saveMessage(payload.From, payload)
-
+	go h.saveMessage(&frame)
 	return &api.PushMsgReply{}, nil
 }
 
-func (h *LogicHandler) dispatch(ctx context.Context, targetId string, content string) {
-	isOnline, _ := h.Rdb.Exists(ctx, "route:"+targetId).Result()
-	if isOnline > 0 {
-		broadcastData := fmt.Sprintf("%s:%s", targetId, content)
-		h.Rdb.Publish(ctx, "im_message_push", broadcastData)
-	} else {
-		h.Rdb.ZAdd(ctx, "offline_msg:"+targetId, redis.Z{
-			Score:  float64(time.Now().UnixMilli()),
-			Member: content,
-		})
-	}
-}
-
-func (h *LogicHandler) saveMessage(from string, p MsgPayload) {
-	if h.DB == nil { return }
-	sessionId := p.To
-	if p.ToType == "user" {
-		ids := []string{from, p.To}
-		sort.Strings(ids)
-		sessionId = strings.Join(ids, "_")
-	}
-	query := "INSERT INTO messages (session_id, from_uid, to_id, to_type, content, create_time) VALUES (?, ?, ?, ?, ?, ?)"
-	h.DB.Exec(query, sessionId, from, p.To, p.ToType, p.Msg, time.Now().UnixMilli())
-}
-
-// GetHistory 拉取历史记录
 func (h *LogicHandler) GetHistory(ctx context.Context, req *api.GetHistoryReq) (*api.GetHistoryReply, error) {
-	var sessionId string
-	if strings.HasPrefix(req.TargetId, "G") {
-		sessionId = req.TargetId
-	} else {
-		uids := []string{req.UserId, req.TargetId}
-		sort.Strings(uids)
-		sessionId = strings.Join(uids, "_")
+	sessionID := buildSessionID(req.UserId, req.TargetId, targetType(req.TargetId))
+	rows, err := h.DB.QueryContext(ctx, `
+SELECT message_id, session_id, seq, from_uid, to_id, to_type, content, create_time
+FROM messages
+WHERE session_id = ?
+ORDER BY seq DESC
+LIMIT 50
+`, sessionID)
+	if err != nil {
+		return nil, err
 	}
-
-	rows, err := h.DB.QueryContext(ctx, 
-		"SELECT from_uid, to_id, to_type, content FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 20", 
-		sessionId)
-	if err != nil { return nil, err }
 	defer rows.Close()
 
-	var res []string
+	res := make([]*api.WireMessage, 0, 50)
 	for rows.Next() {
-		var f_uid, t_id, t_type, content string
-		if err := rows.Scan(&f_uid, &t_id, &t_type, &content); err == nil {
-			m := MsgPayload{From: f_uid, To: t_id, ToType: t_type, Msg: content}
-			data, _ := json.Marshal(m)
-			res = append(res, string(data))
+		var msg api.WireMessage
+		var body string
+		if err := rows.Scan(
+			&msg.MessageId,
+			&msg.SessionId,
+			&msg.Seq,
+			&msg.From,
+			&msg.To,
+			&msg.ToType,
+			&body,
+			&msg.SentAt,
+		); err != nil {
+			return nil, err
 		}
+		msg.Body = body
+		msg.MsgType = api.MsgType_NORMAL
+		res = append(res, &msg)
 	}
+
 	for i, j := 0, len(res)-1; i < j; i, j = i+1, j-1 {
 		res[i], res[j] = res[j], res[i]
 	}
 	return &api.GetHistoryReply{Messages: res}, nil
 }
-// Login 实现 gRPC 登录接口
+
 func (h *LogicHandler) Login(ctx context.Context, req *api.LoginReq) (*api.LoginReply, error) {
-    var uid string
-    var pwdInDB string
+	var uid string
+	var pwdInDB string
 
-    // 1. 查数据库
-    query := "SELECT user_id, password FROM users WHERE username = ? LIMIT 1"
-    err := h.DB.QueryRowContext(ctx, query, req.Username).Scan(&uid, &pwdInDB)
-    if err != nil {
-        return nil, fmt.Errorf("用户不存在")
-    }
+	query := "SELECT user_id, password FROM users WHERE username = ? LIMIT 1"
+	if err := h.DB.QueryRowContext(ctx, query, req.Username).Scan(&uid, &pwdInDB); err != nil {
+		return nil, fmt.Errorf("user not found")
+	}
 
-    // 2. 比对密码（实验环境用明文，生产环境用 bcrypt.CompareHashAndPassword）
-    if pwdInDB != req.Password {
-        return nil, fmt.Errorf("密码错误")
-    }
+	if pwdInDB != req.Password {
+		return nil, fmt.Errorf("invalid password")
+	}
 
-    // 3. 生成 JWT（调用我们之前写的 GenerateToken）
-    token, err := middleware.GenerateToken(uid)
-    if err != nil {
-        return nil, err
-    }
+	token, err := middleware.GenerateToken(uid)
+	if err != nil {
+		return nil, err
+	}
 
-    return &api.LoginReply{
-        Token:  token,
-        UserId: uid,
-    }, nil
+	return &api.LoginReply{
+		Token:  token,
+		UserId: uid,
+	}, nil
+}
+
+func normalizeFrame(sender string, frame *api.WireMessage) error {
+	if frame.From == "" {
+		frame.From = sender
+	}
+	if frame.From != sender {
+		return fmt.Errorf("sender mismatch")
+	}
+	if frame.To == "" || frame.Body == "" {
+		return fmt.Errorf("to and body are required")
+	}
+	if frame.ToType == "" {
+		frame.ToType = targetType(frame.To)
+	}
+	if frame.ToType != "user" && frame.ToType != "group" {
+		return fmt.Errorf("unsupported to_type")
+	}
+	frame.MsgType = api.MsgType_NORMAL
+	return nil
+}
+
+func (h *LogicHandler) resolveRecipients(ctx context.Context, frame *api.WireMessage) ([]string, error) {
+	if frame.ToType == "user" {
+		return []string{frame.To}, nil
+	}
+
+	members, err := h.Rdb.SMembers(ctx, "group_members:"+frame.To).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	recipients := make([]string, 0, len(members))
+	for _, member := range members {
+		if member == "" || member == frame.From {
+			continue
+		}
+		recipients = append(recipients, member)
+	}
+	return recipients, nil
+}
+
+func (h *LogicHandler) dispatchToRecipients(ctx context.Context, frame *api.WireMessage, recipients []string) error {
+	payload, err := proto.Marshal(frame)
+	if err != nil {
+		return err
+	}
+	for _, recipient := range recipients {
+		if err := h.Delivery.Deliver(ctx, recipient, frame.MessageId, payload, frame.SentAt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (h *LogicHandler) nextSequence(ctx context.Context, sessionID string) (int64, error) {
+	return sessionSeqScript.Run(ctx, h.Rdb, []string{"seq:" + sessionID}, 7*24*time.Hour.Milliseconds()).Int64()
+}
+
+func (h *LogicHandler) saveMessage(frame *api.WireMessage) {
+	if h.DB == nil {
+		return
+	}
+
+	query := `
+INSERT INTO messages (message_id, session_id, seq, from_uid, to_id, to_type, content, create_time)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`
+	if _, err := h.DB.Exec(
+		query,
+		frame.MessageId,
+		frame.SessionId,
+		frame.Seq,
+		frame.From,
+		frame.To,
+		frame.ToType,
+		frame.Body,
+		frame.SentAt,
+	); err != nil {
+		log.Printf("persist message failed, session=%s seq=%d: %v", frame.SessionId, frame.Seq, err)
+	}
+}
+
+func buildSessionID(from, to, toType string) string {
+	if toType == "group" {
+		return "group:" + to
+	}
+	ids := []string{from, to}
+	sort.Strings(ids)
+	return "c2c:" + strings.Join(ids, ":")
+}
+
+func targetType(target string) string {
+	if strings.HasPrefix(strings.ToUpper(target), "G") || strings.HasPrefix(target, "group:") {
+		return "group"
+	}
+	return "user"
 }

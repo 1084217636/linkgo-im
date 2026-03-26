@@ -1,48 +1,58 @@
 syntax = "proto3";
+
 package api;
+
 option go_package = "./api";
 
-// 定义消息类型枚举
 enum MsgType {
-    NORMAL = 0;    // 普通消息
-    HEARTBEAT = 1; // 心跳包
+    NORMAL = 0;
+    HEARTBEAT = 1;
+    ACK = 2;
+    SYSTEM = 3;
 }
 
-// --- Logic 服务接口 ---
-message PushMsgReq {
-    string user_id = 1; // 谁发的
-    bytes  content = 2; // 原始内容
+message WireMessage {
+    string message_id = 1;
+    string session_id = 2;
+    int64 seq = 3;
+    string from = 4;
+    string to = 5;
+    string to_type = 6;
+    MsgType msg_type = 7;
+    string body = 8;
+    int64 sent_at = 9;
+    string ack_message_id = 10;
 }
+
+message PushMsgReq {
+    string user_id = 1;
+    bytes content = 2;
+}
+
 message PushMsgReply {}
 
 message UserLoginReq {
     string user_id = 1;
 }
+
 message UserLoginReply {}
 
-// 【新增】获取历史消息请求
 message GetHistoryReq {
-    string user_id = 1;   // 当前用户ID
-    string target_id = 2; // 目标ID（用户ID或群ID）
+    string user_id = 1;
+    string target_id = 2;
 }
 
-// 【新增】获取历史消息响应
 message GetHistoryReply {
-    repeated string messages = 1; // 返回的消息列表
+    repeated WireMessage messages = 1;
 }
 
 service Logic {
-    //用户登录
     rpc Login (LoginReq) returns (LoginReply);
-    // 处理上行消息
     rpc PushMessage (PushMsgReq) returns (PushMsgReply);
-    // 用户上线通知
     rpc UserLogin (UserLoginReq) returns (UserLoginReply);
-    // 【新增】拉取历史记录接口
     rpc GetHistory (GetHistoryReq) returns (GetHistoryReply);
 }
 
-// 增加这两个结构
 message LoginReq {
     string username = 1;
     string password = 2;
@@ -53,14 +63,13 @@ message LoginReply {
     string user_id = 2;
 }
 
-// --- Gateway 服务接口 ---
 message SendToUserReq {
-    string target_user_id = 1; 
-    bytes  content = 2;        
+    string target_user_id = 1;
+    bytes content = 2;
 }
 
 message SendToUserReply {
-    bool success = 1; 
+    bool success = 1;
 }
 
 service Gateway {

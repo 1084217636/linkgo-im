@@ -1,0 +1,21 @@
+Name: logic.rpc
+ListenOn: 0.0.0.0:9001
+Etcd:
+  Hosts:
+    - etcd:2379
+  Key: /services/logic
+
+Redis:
+  Addr: redis:6379
+  Password: "123456"
+
+Database:
+  Dsn: root:root@tcp(mysql:3306)/linkgo_im?charset=utf8mb4&parseTime=True&loc=Local
+
+Kafka:
+  Brokers:
+    - kafka:9092
+  GroupTopic: group_message_dispatch
+
+Auth:
+  AccessSecret: linkgo_im_secret_2026
