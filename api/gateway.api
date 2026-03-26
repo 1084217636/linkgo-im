@@ -1,0 +1,43 @@
+syntax = "v1"
+
+info(
+	title: "LinkGo Gateway"
+	desc: "go-zero api scaffold for gateway"
+	author: "codex"
+)
+
+type LoginReq {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type LoginResp {
+	Token string `json:"token"`
+	UserId string `json:"user_id"`
+}
+
+type HistoryReq {
+	TargetId string `form:"target_id"`
+}
+
+type GroupCreateReq {
+	GroupId string `json:"group_id"`
+	Members []string `json:"members"`
+}
+
+@server(
+	prefix: /api/v1
+)
+service gateway-api {
+	@handler Login
+	post /login (LoginReq) returns (LoginResp)
+
+	@handler GetHistory
+	get /history (HistoryReq)
+
+	@handler CreateGroup
+	post /group/create (GroupCreateReq)
+
+	@handler UserGroups
+	get /user/groups
+}

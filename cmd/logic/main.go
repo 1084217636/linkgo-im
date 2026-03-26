@@ -1,79 +1,80 @@
 package main
 
 import (
-	"database/sql"
-	"fmt"
-	"log"
-	"net"
+	"flag"
 	"os"
-	"os/signal"
-	"syscall"
+	"strconv"
 
 	"github.com/1084217636/linkgo-im/api"
-	"github.com/1084217636/linkgo-im/internal/logic"
-	_ "github.com/go-sql-driver/mysql"
-	"github.com/redis/go-redis/v9"
+	"github.com/1084217636/linkgo-im/cmd/logic/internal/config"
+	logicserver "github.com/1084217636/linkgo-im/cmd/logic/internal/server"
+	"github.com/1084217636/linkgo-im/cmd/logic/internal/svc"
+	"github.com/1084217636/linkgo-im/internal/discovery"
+	authutil "github.com/1084217636/linkgo-im/internal/middleware"
+	"github.com/zeromicro/go-zero/core/conf"
+	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/zrpc"
 	"google.golang.org/grpc"
 )
 
-func getEnv(key, fallback string) string {
-	if value, ok := os.LookupEnv(key); ok {
-		return value
-	}
-	return fallback
-}
+var configFile = flag.String("f", "cmd/logic/etc/logic.yaml", "the config file")
 
 func main() {
-	redisAddr := getEnv("REDIS_ADDR", "127.0.0.1:6379")
-	rpcPort := getEnv("RPC_PORT", "9001")
-	dsn := getEnv("DB_DSN", "root:root@tcp(127.0.0.1:3306)/linkgo_im?charset=utf8mb4&parseTime=True")
+	flag.Parse()
 
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     redisAddr,
-		Password: "123456", 
-		DB:       0,
+	var c config.Config
+	conf.MustLoad(*configFile, &c)
+	overrideConfigFromEnv(&c)
+	authutil.SetJWTSecret(c.Auth.AccessSecret)
+
+	ctx := svc.NewServiceContext(c)
+	defer ctx.Close()
+
+	server := zrpc.MustNewServer(c.RpcServerConf, func(grpcServer *grpc.Server) {
+		api.RegisterLogicServer(grpcServer, logicserver.NewLogicServer(ctx))
 	})
+	defer server.Stop()
 
-	db, err := sql.Open("mysql", dsn)
-	if err != nil {
-		log.Fatalf("❌ MySQL 连接驱动加载失败: %v", err)
-	}
-	db.SetMaxOpenConns(100)
-	db.SetMaxIdleConns(10)
-	
-	if err := db.Ping(); err != nil {
-		log.Fatalf("❌ 无法连接到 MySQL 数据库: %v", err)
-	}
+	logx.Infof("starting logic rpc server on %s", c.ListenOn)
+	server.Start()
+}
 
-	// 初始化 Handler
-	handler := &logic.LogicHandler{
-		Rdb: rdb,
-		DB:  db,
+func overrideConfigFromEnv(c *config.Config) {
+	if c == nil {
+		return
 	}
 
-	lis, err := net.Listen("tcp", ":"+rpcPort)
-	if err != nil {
-		log.Fatalf("❌ 监听端口失败: %v", err)
+	if value := os.Getenv("RPC_PORT"); value != "" {
+		c.ListenOn = "0.0.0.0:" + value
 	}
-
-	// 注册 gRPC 服务 (只要 handler 里嵌了 UnimplementedLogicServer 这里就不会报错)
-	server := grpc.NewServer()
-	api.RegisterLogicServer(server, handler)
-
-	fmt.Printf("🧠 [Logic Service] 启动成功，监听端口 :%s\n", rpcPort)
-
-	go func() {
-		if err := server.Serve(lis); err != nil {
-			log.Fatalf("❌ gRPC 服务异常停止: %v", err)
+	if value := os.Getenv("ETCD_ENDPOINTS"); value != "" {
+		c.Etcd.Hosts = parseEndpoints(value)
+	}
+	if value := os.Getenv("REDIS_ADDR"); value != "" {
+		c.Redis.Addr = value
+	}
+	if value := os.Getenv("REDIS_PASSWORD"); value != "" {
+		c.Redis.Password = value
+	}
+	if value := os.Getenv("DB_DSN"); value != "" {
+		c.Database.Dsn = value
+	}
+	if value := os.Getenv("KAFKA_BROKERS"); value != "" {
+		c.Kafka.Brokers = parseEndpoints(value)
+	}
+	if value := os.Getenv("KAFKA_GROUP_TOPIC"); value != "" {
+		c.Kafka.GroupTopic = value
+	}
+	if value := os.Getenv("JWT_SECRET"); value != "" {
+		c.Auth.AccessSecret = value
+	}
+	if value := os.Getenv("CPU_THRESHOLD"); value != "" {
+		if threshold, err := strconv.ParseInt(value, 10, 64); err == nil {
+			c.CpuThreshold = threshold
 		}
-	}()
+	}
+}
 
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-
-	server.GracefulStop()
-	db.Close()
-	rdb.Close()
-	fmt.Println("服务已安全退出。")
+func parseEndpoints(raw string) []string {
+	return discovery.ParseEndpoints(raw)
 }

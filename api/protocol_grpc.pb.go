@@ -29,13 +29,9 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type LogicClient interface {
-	// 用户登录
 	Login(ctx context.Context, in *LoginReq, opts ...grpc.CallOption) (*LoginReply, error)
-	// 处理上行消息
 	PushMessage(ctx context.Context, in *PushMsgReq, opts ...grpc.CallOption) (*PushMsgReply, error)
-	// 用户上线通知
 	UserLogin(ctx context.Context, in *UserLoginReq, opts ...grpc.CallOption) (*UserLoginReply, error)
-	// 【新增】拉取历史记录接口
 	GetHistory(ctx context.Context, in *GetHistoryReq, opts ...grpc.CallOption) (*GetHistoryReply, error)
 }
 
@@ -91,13 +87,9 @@ func (c *logicClient) GetHistory(ctx context.Context, in *GetHistoryReq, opts ..
 // All implementations must embed UnimplementedLogicServer
 // for forward compatibility.
 type LogicServer interface {
-	// 用户登录
 	Login(context.Context, *LoginReq) (*LoginReply, error)
-	// 处理上行消息
 	PushMessage(context.Context, *PushMsgReq) (*PushMsgReply, error)
-	// 用户上线通知
 	UserLogin(context.Context, *UserLoginReq) (*UserLoginReply, error)
-	// 【新增】拉取历史记录接口
 	GetHistory(context.Context, *GetHistoryReq) (*GetHistoryReply, error)
 	mustEmbedUnimplementedLogicServer()
 }

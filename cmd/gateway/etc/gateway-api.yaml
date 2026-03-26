@@ -1,0 +1,21 @@
+Name: gateway-api
+Host: 0.0.0.0
+Port: 8090
+
+Redis:
+  Addr: redis:6379
+  Password: "123456"
+
+Etcd:
+  Endpoints:
+    - etcd:2379
+
+Logic:
+  Addr: ""
+
+Gateway:
+  ID: gateway-a
+  RouteTTLSeconds: 75
+
+Auth:
+  AccessSecret: linkgo_im_secret_2026
