@@ -3,7 +3,7 @@
 LinkGo-IM 是一个基于 `Go + Go-Zero` 的分布式即时通讯系统，当前版本已经补齐到更接近简历描述的工程形态：`go-zero REST + zRPC` 脚手架、`WebSocket + gRPC` 分层、`Etcd` 服务发现、`Redis` 在线状态中心、`Lua` 会话序列号、`Kafka` 群聊异步分发、`Protobuf` 二进制消息协议、`JWT + 令牌桶限流`、`MySQL` 历史消息持久化。
 
 说明：
-当前项目已经把 `gateway` 和 `logic` 迁移到 `go-zero` 官方脚手架目录：`config / handler / logic / svc / types` 与 `zrpc` 入口；`transfer` 保持独立 Kafka 消费进程，负责异步扩散与重试死信。
+当前项目已经把 `gateway` 和 `logic` 迁移到 `go-zero` 官方脚手架结构：`gateway` 采用 REST 的 `config / handler / logic / svc / types` 分层，`logic` 采用 zRPC 的 `config / server / logic / svc` 分层；`transfer` 保持独立 Kafka 消费进程，负责异步扩散与重试死信。
 
 ## 项目亮点
 
