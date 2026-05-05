@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"log"
 
 	"github.com/1084217636/linkgo-im/internal/metrics"
 	"github.com/1084217636/linkgo-im/internal/server"
 	"github.com/redis/go-redis/v9"
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 type RedisDelivery struct {
@@ -45,9 +45,9 @@ func (d *RedisDelivery) Deliver(ctx context.Context, targetID, messageID string,
 fallbackOffline:
 	if err := d.Rdb.ZAdd(ctx, "offline_msg:"+targetID, redis.Z{
 		Score:  float64(now),
-		Member: encoded,
+		Member: messageID,
 	}).Err(); err != nil {
-		log.Printf("save offline message failed for user=%s: %v", targetID, err)
+		logx.Errorf("save offline message failed user=%s: %v", targetID, err)
 		metrics.OutboundMessages.WithLabelValues("offline", "error").Inc()
 		return err
 	}
@@ -58,13 +58,13 @@ fallbackOffline:
 func (d *RedisDelivery) trackPendingAck(ctx context.Context, targetID, messageID, encoded string, now int64) error {
 	if err := d.Rdb.ZAdd(ctx, "pending_ack:"+targetID, redis.Z{
 		Score:  float64(now),
-		Member: encoded,
+		Member: messageID,
 	}).Err(); err != nil {
-		log.Printf("save pending ack failed for user=%s: %v", targetID, err)
+		logx.Errorf("save pending ack failed user=%s: %v", targetID, err)
 		return err
 	}
 	if err := d.Rdb.HSet(ctx, "ack_idx:"+targetID, messageID, encoded).Err(); err != nil {
-		log.Printf("save ack index failed for user=%s: %v", targetID, err)
+		logx.Errorf("save ack index failed user=%s: %v", targetID, err)
 		return err
 	}
 	return nil

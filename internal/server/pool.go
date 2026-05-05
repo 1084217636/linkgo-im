@@ -2,9 +2,9 @@ package server
 
 import (
 	"context"
-	"log"
 
 	"github.com/1084217636/linkgo-im/api"
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 type pushTask struct {
@@ -29,7 +29,7 @@ func NewPushWorkerPool(workerCount, queueSize int) *PushWorkerPool {
 					UserId:  task.uid,
 					Content: task.data,
 				}); err != nil {
-					log.Printf("push message failed for user=%s: %v", task.uid, err)
+					logx.Errorf("push message failed user=%s: %v", task.uid, err)
 				}
 			}
 		}()

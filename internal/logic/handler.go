@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"sort"
 	"strings"
 	"time"
@@ -14,6 +13,7 @@ import (
 	"github.com/1084217636/linkgo-im/internal/metrics"
 	"github.com/1084217636/linkgo-im/internal/middleware"
 	"github.com/redis/go-redis/v9"
+	"github.com/zeromicro/go-zero/core/logx"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -222,7 +222,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		frame.Body,
 		frame.SentAt,
 	); err != nil {
-		log.Printf("persist message failed, session=%s seq=%d: %v", frame.SessionId, frame.Seq, err)
+		logx.Errorf("persist message failed session=%s seq=%d: %v", frame.SessionId, frame.Seq, err)
 	}
 }
 

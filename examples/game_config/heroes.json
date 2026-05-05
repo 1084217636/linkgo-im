@@ -1,0 +1,23 @@
+[
+  {
+    "id": 1001,
+    "name": "Ranger",
+    "hp": 1200,
+    "attack": 140,
+    "skill_ids": [2001, 2002]
+  },
+  {
+    "id": 1002,
+    "name": "Guardian",
+    "hp": 50000,
+    "attack": 90,
+    "skill_ids": [2003]
+  },
+  {
+    "id": 1002,
+    "name": "BrokenMage",
+    "hp": -10,
+    "attack": 90000,
+    "skill_ids": [2999]
+  }
+]

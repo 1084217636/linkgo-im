@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"sync"
 
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 type ClientManager struct {
@@ -87,7 +87,7 @@ func (m *ClientManager) SubscribeRedis(ctx context.Context, rdb *redis.Client, g
 	for msg := range pubsub.Channel() {
 		var envelope PushEnvelope
 		if err := json.Unmarshal([]byte(msg.Payload), &envelope); err != nil {
-			log.Printf("invalid pubsub payload: %v", err)
+			logx.Errorf("invalid pubsub payload: %v", err)
 			continue
 		}
 
@@ -98,12 +98,12 @@ func (m *ClientManager) SubscribeRedis(ctx context.Context, rdb *redis.Client, g
 
 		payload, err := base64.StdEncoding.DecodeString(envelope.PayloadB64)
 		if err != nil {
-			log.Printf("decode pubsub payload failed: %v", err)
+			logx.Errorf("decode pubsub payload failed: %v", err)
 			continue
 		}
 
 		if err := conn.WriteBinary(payload); err != nil {
-			log.Printf("push websocket failed for user=%s: %v", envelope.TargetID, err)
+			logx.Errorf("push websocket failed user=%s: %v", envelope.TargetID, err)
 			m.Remove(envelope.TargetID, conn)
 		}
 	}

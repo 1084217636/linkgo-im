@@ -11,13 +11,26 @@ LinkGo-IM 是一个基于 `Go + Go-Zero` 的分布式即时通讯系统，当前
 - Gateway 使用 go-zero REST scaffold，Logic 使用 go-zero zRPC scaffold，简历里的 go-zero 表述可以落地。
 - Logic 实例注册到 Etcd，Gateway 基于服务发现和 Rendezvous Hash 选择目标节点。
 - WebSocket 消息载荷改为 Protobuf 二进制帧，不再依赖业务 JSON 文本。
-- Redis `route:<uid>` 维护在线状态，结合网关定向 `Pub/Sub` 完成跨节点精准投递。
-- Redis Lua 脚本为每个会话分配单调递增 `seq`，保证会话内顺序一致性。
+- Redis `route:<uid>` 维护在线状态，结合网关定向 `Pub/Sub` 完成跨节点实时推送。
+- Redis Lua 脚本为每个会话分配单调递增 `seq`，用于会话内排序、去重和补偿。
 - `pending_ack + ack_idx` 维护待确认消息，弱网断线后支持重放未 ACK 消息。
 - 群聊消息先写入 Kafka，由 `transfer` 服务异步消费扩散，降低 Logic 同步扇出压力。
 - `transfer` 对 Kafka 消费失败链路做重试和死信处理，避免异步链路静默丢消息。
 - 网关集成 JWT 鉴权与令牌桶限流，避免恶意握手和暴力登录。
 - 系统暴露 Prometheus `/metrics` 指标，可观测连接数、消息吞吐、ACK、Kafka 重试等状态。
+- Gateway 和 Transfer 增加 `/healthz`、`/readyz` 健康检查接口，便于本地调试、Docker Compose 健康检测和后续接入监控。
+- 内部异常日志统一收敛到 go-zero `logx`，方便按错误链路排查 Redis、WebSocket、ACK、Kafka 消费等问题。
+
+## 设计边界
+
+- Gateway 管连接：负责登录入口、JWT 校验、WebSocket 长连接、心跳保活、ACK 接收和离线消息回放，不承载复杂消息编排。
+- Logic 管路由和会话：负责消息校验、`session_id / seq / message_id` 生成、在线状态查询、单聊分发和历史查询，不持有 WebSocket 连接。
+- Transfer 管群聊扩散：基于 Kafka 消费群聊任务，按群成员异步扩散，失败任务进入 retry / dead-letter 链路。
+- Redis 管在线态和补偿：保存 `route:<uid>`、`pending_ack`、`ack_idx`、`offline_msg` 和群成员缓存，不作为最终历史消息存储。
+- MySQL 管最终历史：消息最终落 MySQL，历史消息按 `session_id + seq` 查询。
+- Pub/Sub 只做在线实时通知：不把 Redis Pub/Sub 当可靠队列，可靠性依赖 pending、ACK、离线回放和历史补齐。
+- ACK 边界：当前实现的是接收方收到消息后的投递 ACK，不是已读 ACK；服务端写 WebSocket 成功不会立即清理 pending，收到客户端 ACK 后才清理。
+- 顺序性边界：只保证单会话维度递增 `seq`，不做全局消息顺序。
 
 ## 架构分层
 
@@ -45,13 +58,13 @@ LinkGo-IM 是一个基于 `Go + Go-Zero` 的分布式即时通讯系统，当前
 
 1. 用户调用 `/api/v1/login` 获取 JWT。
 2. 客户端通过 `/ws?token=...` 建立 WebSocket。
-3. Gateway 校验 JWT 后把 `route:<uid>` 写入 Redis，并同步 `pending_ack:<uid>`。
+3. Gateway 校验 JWT 后把 `route:<uid>` 写入 Redis，并按 `pending_ack:<uid>` 回放未确认消息。
 4. 客户端发送 Protobuf `WireMessage` 二进制帧到 Gateway。
 5. Gateway 根据用户 ID 经 Etcd 发现 Logic 节点，通过 gRPC 转发消息。
 6. Logic 用 Lua 分配会话 `seq`，补齐 `message_id / session_id / sent_at`。
 7. 单聊消息直接投递；群聊消息写入 Kafka，由 `transfer` 异步消费扩散。
-8. RedisDelivery 同时写入 `pending_ack`，在线用户按目标 `gatewayID` 定向走 Pub/Sub，离线用户写入 `offline_msg`。
-9. 客户端收到消息后回传 ACK，服务端删除待确认消息。
+8. RedisDelivery 先写入 `pending_ack` 和 `ack_idx`，在线用户按目标 `gatewayID` 定向走 Pub/Sub，离线用户写入 `offline_msg`。
+9. 客户端收到消息后回传接收方 ACK，服务端删除待确认消息；如果 ACK 未返回，pending 保留用于重连回放。
 10. 如果 `transfer` 消费后的投递失败，任务进入 retry topic；多次失败后进入 dead-letter topic。
 11. Gateway / Transfer 暴露 Prometheus 指标，便于观测连接数、消息量和异常情况。
 12. Logic 异步落库 MySQL，历史消息按 `session_id + seq` 查询。
@@ -88,6 +101,7 @@ message WireMessage {
 ├── api/                # protobuf 协议和 gRPC 生成代码
 ├── benchmark/          # 压测脚本和报告
 ├── cmd/                # gateway / logic / transfer 入口
+├── deploy/k8s/         # Kubernetes 部署清单
 ├── docs/               # 简历、面试、教学材料
 ├── internal/           # 业务核心实现
 ├── pkg/                # 通用工具
@@ -104,6 +118,19 @@ message WireMessage {
 ```bash
 docker-compose up --build
 ```
+
+常用开发命令：
+
+```bash
+make test        # 运行全部 Go 单元测试
+make build       # 构建 gateway / logic / transfer 三个二进制
+make docker-build # 构建本地 Docker 镜像
+make docker-up   # 使用 Docker Compose 启动完整本地环境
+make docker-down # 停止本地容器环境
+make ci-local    # 本地模拟 CI：测试、构建、Compose 配置检查、镜像构建
+```
+
+Docker / Kubernetes / CI-CD 的详细用法见 [docs/devops-guide.md](docs/devops-guide.md)。
 
 默认组件：
 
@@ -137,6 +164,11 @@ docker-compose up --build
 - 令牌桶限流
 - 双向心跳
 - Prometheus 指标暴露
+- Docker Compose 本地容器化联调
+- Kubernetes Deployment / Service / Probe 清单
+- GitHub Actions CI：自动测试、构建服务、构建 Docker 镜像、检查 K8s 清单
+- Gateway / Transfer 健康检查
+- 基础单元测试与统一日志
 
 仍可继续增强：
 
@@ -145,4 +177,4 @@ docker-compose up --build
 
 ## 可直接写进简历的版本
 
-基于 Go 构建分布式即时通讯系统，采用 Gateway + Logic + Transfer 分层架构，使用 WebSocket 承载长连接、gRPC 解耦内部调用；基于 Etcd 做服务注册发现并结合一致性哈希实现跨节点精准路由，基于 Protobuf 二进制协议优化消息传输；利用 Redis Lua 生成会话级 Sequence ID，结合 ACK 未确认消息补偿解决弱网乱序与漏发；引入 Kafka 异步扩散群聊消息，降低同步扇出和核心链路写压；网关层接入 JWT 鉴权、令牌桶限流和双向心跳，支撑高并发长连接场景。
+基于 Go + go-zero 构建即时通讯后端项目，采用 Gateway + Logic + Transfer 分层架构，围绕多 Gateway 场景下的连接管理、跨节点消息路由、会话级顺序控制、接收方 ACK 补偿与群聊异步扩散进行设计；使用 Redis 维护在线路由、pending 和离线补偿，使用 Kafka 解耦群聊扩散链路，使用 MySQL 存储最终历史消息；基于 Docker Compose 编排完整本地环境，补充健康检查、基础单元测试和统一日志，提升本地调试与项目可维护性。

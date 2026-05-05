@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"log"
 	"net/http"
 	"time"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/1084217636/linkgo-im/internal/metrics"
 	"github.com/1084217636/linkgo-im/internal/server"
 	"github.com/gorilla/websocket"
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 var upgrader = websocket.Upgrader{
@@ -48,11 +48,11 @@ func WebSocketHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 
 		ctx := context.Background()
 		if err := server.RefreshRoute(ctx, svcCtx.Rdb, userID, routeValue, svcCtx.RouteTTL); err != nil {
-			log.Printf("set route failed for user=%s: %v", userID, err)
+			logx.Errorf("set route failed user=%s: %v", userID, err)
 		}
 		defer func() {
 			if err := server.ClearRouteIfMatch(ctx, svcCtx.Rdb, userID, routeValue); err != nil {
-				log.Printf("delete route failed for user=%s: %v", userID, err)
+				logx.Errorf("delete route failed user=%s: %v", userID, err)
 			}
 		}()
 

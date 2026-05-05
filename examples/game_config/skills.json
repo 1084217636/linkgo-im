@@ -1,0 +1,26 @@
+[
+  {
+    "id": 2001,
+    "name": "Arrow Shot",
+    "cooldown": 2,
+    "power": 120
+  },
+  {
+    "id": 2002,
+    "name": "Rapid Fire",
+    "cooldown": 8,
+    "power": 360
+  },
+  {
+    "id": 2003,
+    "name": "Shield Wall",
+    "cooldown": 18,
+    "power": 80
+  },
+  {
+    "id": 2003,
+    "name": "Duplicate Shield",
+    "cooldown": 400,
+    "power": 50
+  }
+]

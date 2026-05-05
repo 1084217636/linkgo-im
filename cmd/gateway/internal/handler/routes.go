@@ -1,15 +1,31 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 
 	gwmiddleware "github.com/1084217636/linkgo-im/cmd/gateway/internal/middleware"
 	"github.com/1084217636/linkgo-im/cmd/gateway/internal/svc"
+	"github.com/1084217636/linkgo-im/internal/health"
 	"github.com/1084217636/linkgo-im/internal/metrics"
 	"github.com/zeromicro/go-zero/rest"
 )
 
 func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
+	server.AddRoute(rest.Route{
+		Method:  http.MethodGet,
+		Path:    "/healthz",
+		Handler: health.LiveHandler(),
+	})
+	server.AddRoute(rest.Route{
+		Method: http.MethodGet,
+		Path:   "/readyz",
+		Handler: health.ReadyHandler(map[string]health.Check{
+			"redis": func(ctx context.Context) error {
+				return serverCtx.Rdb.Ping(ctx).Err()
+			},
+		}),
+	})
 	server.AddRoute(rest.Route{
 		Method: http.MethodGet,
 		Path:   "/metrics",

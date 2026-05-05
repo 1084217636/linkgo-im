@@ -17,6 +17,9 @@
 
 # 日志
 *.log
+artifacts/
+__pycache__/
+*.pyc
 
 # 编译后的程序
 /bin/

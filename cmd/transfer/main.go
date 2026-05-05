@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -12,9 +11,11 @@ import (
 	"github.com/1084217636/linkgo-im/api"
 	"github.com/1084217636/linkgo-im/internal/delivery"
 	"github.com/1084217636/linkgo-im/internal/discovery"
+	"github.com/1084217636/linkgo-im/internal/health"
 	"github.com/1084217636/linkgo-im/internal/metrics"
 	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/kafka-go"
+	"github.com/zeromicro/go-zero/core/logx"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -77,14 +78,20 @@ func main() {
 
 	go func() {
 		mux := http.NewServeMux()
+		mux.HandleFunc("/healthz", health.LiveHandler())
+		mux.HandleFunc("/readyz", health.ReadyHandler(map[string]health.Check{
+			"redis": func(ctx context.Context) error {
+				return rdb.Ping(ctx).Err()
+			},
+		}))
 		mux.Handle("/metrics", metrics.Handler())
 		if err := http.ListenAndServe(":"+metricsPort, mux); err != nil {
-			log.Printf("transfer metrics server stopped: %v", err)
+			logx.Errorf("transfer metrics server stopped: %v", err)
 		}
 	}()
 
 	go consumeLoop(ctx, reader, retryWriter, dlqWriter, redisDelivery, false)
-	log.Printf("[transfer] consuming topic=%s retry=%s dlq=%s", kafkaTopic, retryTopic, dlqTopic)
+	logx.Infof("transfer consuming topic=%s retry=%s dlq=%s", kafkaTopic, retryTopic, dlqTopic)
 	consumeLoop(ctx, retryReader, retryWriter, dlqWriter, redisDelivery, true)
 }
 
@@ -103,7 +110,7 @@ func consumeLoop(
 				return
 			}
 			metrics.KafkaOperations.WithLabelValues(stageLabel(isRetry), "read_error").Inc()
-			log.Printf("read kafka message failed: %v", err)
+			logx.Errorf("read kafka message failed: %v", err)
 			continue
 		}
 
@@ -129,7 +136,7 @@ func consumeLoop(
 		for _, recipient := range job.Recipients {
 			if err := redisDelivery.Deliver(ctx, recipient, job.Frame.MessageId, payload, job.Frame.SentAt); err != nil {
 				deliveryErr = true
-				log.Printf("deliver group message failed recipient=%s msg=%s: %v", recipient, job.Frame.MessageId, err)
+				logx.Errorf("deliver group message failed recipient=%s msg=%s: %v", recipient, job.Frame.MessageId, err)
 				break
 			}
 		}
@@ -158,7 +165,7 @@ func consumeLoop(
 func writeDeadLetter(ctx context.Context, writer *kafka.Writer, key, value []byte) {
 	if err := writer.WriteMessages(ctx, kafka.Message{Key: key, Value: value}); err != nil {
 		metrics.KafkaOperations.WithLabelValues("dlq_write", "error").Inc()
-		log.Printf("write dlq failed: %v", err)
+		logx.Errorf("write dlq failed: %v", err)
 		return
 	}
 	metrics.KafkaOperations.WithLabelValues("dlq_write", "success").Inc()

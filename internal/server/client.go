@@ -2,12 +2,12 @@ package server
 
 import (
 	"context"
-	"log"
 	"time"
 
 	"github.com/1084217636/linkgo-im/api"
 	"github.com/1084217636/linkgo-im/internal/metrics"
 	"github.com/redis/go-redis/v9"
+	"github.com/zeromicro/go-zero/core/logx"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -33,7 +33,7 @@ func StartClientLoop(
 
 		var frame api.WireMessage
 		if err := proto.Unmarshal(msg, &frame); err != nil {
-			log.Printf("decode wire message failed for user=%s: %v", uid, err)
+			logx.Errorf("decode wire message failed user=%s: %v", uid, err)
 			metrics.InboundMessages.WithLabelValues("gateway", "decode_error").Inc()
 			continue
 		}
@@ -46,7 +46,7 @@ func StartClientLoop(
 		case api.MsgType_HEARTBEAT:
 			metrics.InboundMessages.WithLabelValues("gateway", "heartbeat").Inc()
 			if err := RefreshRoute(ctx, rdb, uid, routeValue, routeTTL); err != nil {
-				log.Printf("refresh route failed for user=%s: %v", uid, err)
+				logx.Errorf("refresh route failed user=%s: %v", uid, err)
 			}
 			_ = conn.Conn.SetReadDeadline(time.Now().Add(routeTTL))
 			pong, _ := proto.Marshal(&api.WireMessage{
@@ -61,7 +61,7 @@ func StartClientLoop(
 		default:
 			metrics.InboundMessages.WithLabelValues("gateway", "normal").Inc()
 			if ok := pushPool.Submit(uid, logic, msg); !ok {
-				log.Printf("push queue full for user=%s", uid)
+				logx.Errorf("push queue full user=%s", uid)
 				metrics.OutboundMessages.WithLabelValues("logic", "queue_full").Inc()
 			}
 		}
