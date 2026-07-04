@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/1084217636/linkgo-im/cmd/gateway/internal/config"
+	"github.com/1084217636/linkgo-im/internal/ai"
 	authutil "github.com/1084217636/linkgo-im/internal/middleware"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/redis/go-redis/v9"
@@ -23,6 +24,8 @@ type ServiceContext struct {
 	AckTimeout  time.Duration
 	AckRetries  int
 	RetryEvery  time.Duration
+	AIProvider  ai.Provider
+	AISummary   *ai.SummaryService
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
@@ -81,6 +84,8 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		logx.Must(db.Ping())
 	}
 
+	aiProvider := ai.NewProvider(c.AI.Provider)
+
 	return &ServiceContext{
 		Config: c,
 		Rdb: redis.NewClient(&redis.Options{
@@ -97,6 +102,8 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		AckTimeout:  time.Duration(ackTimeoutSeconds) * time.Second,
 		AckRetries:  ackRetries,
 		RetryEvery:  time.Duration(retryIntervalSeconds) * time.Second,
+		AIProvider:  aiProvider,
+		AISummary:   ai.NewSummaryService(db, aiProvider, c.AI.MaxMessages),
 	}
 }
 

@@ -318,6 +318,62 @@ user:conversation:read:<uid>
 internal/logic/conversation_test.go
 ```
 
+## 9. AI Group Summary
+
+位置：
+
+```text
+internal/ai/
+cmd/gateway/internal/logic/aisummarylogic.go
+cmd/gateway/internal/handler/aisummaryhandler.go
+```
+
+职责：
+
+```text
+给企业群聊提供总结、待办提取和风险提取能力；当前 V2 使用 mock provider，先保证业务闭环稳定。
+```
+
+关键函数：
+
+```text
+AISummaryHandler
+AISummaryLogic.Generate
+ai.NewSummaryService
+SummaryService.Generate
+MockProvider.Summarize
+```
+
+表：
+
+```text
+group_members
+messages
+ai_summary_records
+```
+
+关键校验：
+
+```text
+1. 当前 JWT 用户必须是 active 群成员。
+2. 只读取 conversation_id = group:<group_id> 且 to_type = group 的消息。
+3. message_limit 会被 AI.MaxMessages 截断，避免一次请求读取过多消息。
+4. 结果落库保存 summary_id、operator_id、seq 范围、todos_json、risks_json 和 provider。
+```
+
+指标：
+
+```text
+linkgo_ai_summary_requests_total{provider,result}
+```
+
+测试：
+
+```text
+internal/ai/summary_service_test.go
+make ai-demo
+```
+
 ## 9. Kafka Transfer
 
 位置：

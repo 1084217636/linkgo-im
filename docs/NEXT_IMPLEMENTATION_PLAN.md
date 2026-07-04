@@ -146,7 +146,7 @@ docker compose config
 目标：
 
 ```text
-在 IM 主链路稳定后，接入 AI 群聊总结、待办提取和知识库问答。
+在 IM 主链路稳定后，先接入 AI 群聊总结和待办/风险提取。
 ```
 
 第一轮 AI 只做：
@@ -178,13 +178,17 @@ POST /api/v1/ai/group-summary
   "summary": "本轮讨论主要围绕...",
   "todos": [
     {
-      "owner": "1001",
-      "content": "补充接口压测报告",
-      "deadline": ""
+      "title": "补充接口压测报告",
+      "owner_id": "1001",
+      "source_seq": 132
     }
   ],
   "risks": [
-    "上线前需要确认 Kafka retry 配置"
+    {
+      "level": "medium",
+      "description": "上线前需要确认 Kafka retry 配置",
+      "source_seq": 140
+    }
   ],
   "provider": "mock",
   "created_at": 1783060000000
@@ -205,12 +209,11 @@ cmd/gateway/etc/gateway-api.yaml
 internal/ai/provider.go
 internal/ai/mock_provider.go
 internal/ai/summary_service.go
-internal/ai/prompt.go
 internal/ai/types.go
 internal/ai/summary_service_test.go
 internal/metrics/metrics.go
 sql/init.sql
-sql/20260703_ai_summary.sql
+sql/20260705_ai_summary.sql
 scripts/ai_demo.sh
 README.md
 ```
@@ -235,20 +238,51 @@ ai_summary_records
 summary_id
 group_id
 conversation_id
-request_user_id
+operator_id
 message_start_seq
 message_end_seq
-message_count
 summary
 todos_json
 risks_json
 provider
-prompt_hash
-model_response
-status
-error_message
 created_at
-updated_at
+```
+
+当前 V2 已落地：
+
+```text
+1. internal/ai 独立业务包，支持 mock provider、消息加载、群成员权限校验、结果落库。
+2. Gateway 新增 POST /api/v1/ai/group-summary。
+3. AI 配置支持 AI_PROVIDER / AI_MODEL / AI_TIMEOUT_SECONDS / AI_MAX_MESSAGES。
+4. Prometheus 新增 linkgo_ai_summary_requests_total。
+5. scripts/ai_demo.sh 支持登录、建群、写入演示消息、调用总结接口。
+6. SQL 新增 ai_summary_records 表和旧库迁移脚本。
+```
+
+V2 不做：
+
+```text
+不接真实模型 API key
+不做向量知识库
+不做消息全文语义搜索
+不在 WebSocket 主链路里同步调用 AI
+```
+
+### V3：AI 助手增强
+
+目标：
+
+```text
+把 mock provider 替换成可插拔真实 provider，并补知识库问答的最小闭环。
+```
+
+候选内容：
+
+```text
+1. 新增 OpenAI / Ollama / SiliconFlow provider 之一。
+2. 增加 provider 超时、失败降级和敏感信息脱敏。
+3. 新增 /api/v1/ai/ask，基于企业 FAQ 或项目文档做知识库问答。
+4. 保存 AI 调用输入摘要、输出、耗时、失败原因，形成审计证据。
 ```
 
 ## 3. 每次 AI 帮你改完必须补的内容
@@ -277,14 +311,10 @@ docs/INTERVIEW_QA.md
 
 ## 4. 下一步立刻执行
 
-下一步先做 V0，不写功能代码：
+当前项目一已经完成 V0、V1、V2。下一步建议进入 V3：
 
 ```text
-1. 补 docs/CODE_MAP.md。
-2. 补 docs/CORE_LINKS.md。
-3. 补 docs/MODULE_CARDS.md。
-4. 补 docs/TEST_EVIDENCE.md。
-5. 补 docs/INTERVIEW_QA.md。
+1. 先保持 mock provider 稳定可演示。
+2. 再接一个真实模型 provider。
+3. 最后补知识库问答，不要一口气重构消息主链路。
 ```
-
-V0 完成后再决定是否补测试或进入 V1 脚本。

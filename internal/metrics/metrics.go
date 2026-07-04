@@ -43,6 +43,11 @@ var (
 		Name: "linkgo_red_packet_operations_total",
 		Help: "Red packet operations by action and result.",
 	}, []string{"action", "result"})
+
+	AISummaryRequests = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "linkgo_ai_summary_requests_total",
+		Help: "AI group summary requests by provider and result.",
+	}, []string{"provider", "result"})
 )
 
 func Handler() http.Handler {

@@ -196,3 +196,59 @@ red_packet_claims(red_packet_id,user_id) 唯一索引兜底重复领取
 ```text
 我主要负责把 IM 从单体 demo 升级成 Gateway / Logic / Transfer 分层架构，补齐 WebSocket 长连接、Redis 在线路由、会话级 seq、client_msg_id 幂等、MySQL 历史消息、pending ACK、离线补偿、Kafka 群聊异步扩散和 Prometheus 指标。同时我把红包做成业务亮点，用事务和唯一索引解决并发超卖和重复领取。后续在企业协同场景上接 AI 群聊总结和待办提取。
 ```
+
+## 15. AI 群聊总结是不是套壳大模型？
+
+不是。当前 V2 的重点不是模型生成文本，而是把 AI 能力接入企业 IM 的业务闭环：
+
+```text
+JWT 当前用户
+  ↓
+群成员权限校验
+  ↓
+按 group:<group_id> 读取最近消息
+  ↓
+Provider 生成总结 / 待办 / 风险
+  ↓
+结果写入 ai_summary_records
+  ↓
+Prometheus 指标记录成功或失败原因
+```
+
+模型只是 provider，业务系统负责权限、上下文、审计、超时和演示闭环。
+
+## 16. 为什么 V2 先用 mock provider？
+
+因为秋招项目要先证明工程闭环稳定：
+
+```text
+没有 API key 也能演示
+单元测试结果确定
+接口结构稳定
+后续真实模型只替换 Provider
+```
+
+真实模型接入会增加网络、成本、限流和敏感信息问题，适合放在 V3。
+
+## 17. AI 总结怎么保证不越权？
+
+触发接口时不相信客户端传用户 ID，而是从 JWT 上下文取当前用户。服务端查询 `group_members`，只有 `status = active` 且未禁言过期的成员才能读取该群最近消息并生成总结。
+
+## 18. AI 结果怎么审计？
+
+每次总结都会写入 `ai_summary_records`：
+
+```text
+summary_id
+group_id
+conversation_id
+operator_id
+message_start_seq / message_end_seq
+summary
+todos_json
+risks_json
+provider
+created_at
+```
+
+这样能追溯是谁在什么时候总结了哪一段群聊消息。

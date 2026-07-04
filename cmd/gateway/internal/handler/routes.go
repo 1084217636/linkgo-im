@@ -123,6 +123,11 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Path:    "/red-packets/detail",
 				Handler: RedPacketDetailHandler(serverCtx),
 			},
+			rest.Route{
+				Method:  http.MethodPost,
+				Path:    "/ai/group-summary",
+				Handler: AISummaryHandler(serverCtx),
+			},
 		),
 		rest.WithPrefix("/api/v1"),
 	)

@@ -12,6 +12,7 @@ type Config struct {
 	Logic    LogicConf    `json:",optional"`
 	Gateway  GatewayConf  `json:",optional"`
 	Auth     AuthConf     `json:",optional"`
+	AI       AIConf       `json:",optional"`
 }
 
 type RedisConf struct {
@@ -45,4 +46,11 @@ type GatewayConf struct {
 
 type AuthConf struct {
 	AccessSecret string `json:",optional"`
+}
+
+type AIConf struct {
+	Provider       string `json:",optional"`
+	Model          string `json:",optional"`
+	TimeoutSeconds int64  `json:",default=10"`
+	MaxMessages    int    `json:",default=100"`
 }

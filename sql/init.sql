@@ -141,7 +141,25 @@ CREATE TABLE IF NOT EXISTS `red_packet_claims` (
     INDEX `idx_red_packet_claim_user` (`user_id`, `created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='IM红包领取记录';
 
--- 9. 预置实验账号（create_time 随便填的当前毫秒值）
+-- 9. AI群聊总结：保存总结、待办、风险和消息范围，支撑审计与回放
+CREATE TABLE IF NOT EXISTS `ai_summary_records` (
+    `summary_id` VARCHAR(64) NOT NULL COMMENT 'AI总结ID',
+    `group_id` VARCHAR(64) NOT NULL COMMENT '群组ID',
+    `conversation_id` VARCHAR(128) NOT NULL COMMENT '群聊会话ID: group:<group_id>',
+    `operator_id` VARCHAR(64) NOT NULL COMMENT '触发总结的用户',
+    `message_start_seq` BIGINT NOT NULL COMMENT '总结覆盖的起始消息序号',
+    `message_end_seq` BIGINT NOT NULL COMMENT '总结覆盖的结束消息序号',
+    `summary` TEXT NOT NULL COMMENT '群聊总结',
+    `todos_json` TEXT NOT NULL COMMENT '待办事项JSON',
+    `risks_json` TEXT NOT NULL COMMENT '风险点JSON',
+    `provider` VARCHAR(32) NOT NULL DEFAULT 'mock' COMMENT 'AI提供方',
+    `created_at` BIGINT NOT NULL COMMENT '毫秒级创建时间',
+    PRIMARY KEY (`summary_id`),
+    INDEX `idx_ai_summary_group_time` (`group_id`, `created_at`),
+    INDEX `idx_ai_summary_conversation_seq` (`conversation_id`, `message_end_seq`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI群聊总结记录表';
+
+-- 10. 预置实验账号（create_time 随便填的当前毫秒值）
 INSERT INTO `users` (`user_id`, `username`, `password`, `created_at`, `updated_at`) VALUES 
 ('1001', 'userA', '123456', 1710100000000, 1710100000000), 
 ('1002', 'userB', '123456', 1710100000000, 1710100000000), 

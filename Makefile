@@ -106,4 +106,5 @@ ai-test-suggest:
 ai-quality-summary:
 	python3 tools/ai_agent_workflow/quality_summary.py --task-type local_validation --validation-command "GOCACHE=/tmp/go-build go test ./..." --output artifacts/quality_summary.json
 
-ai-demo: ai-config-check ai-test-suggest ai-quality-summary
+ai-demo:
+	bash scripts/ai_demo.sh

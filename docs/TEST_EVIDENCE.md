@@ -233,3 +233,72 @@ curl http://127.0.0.1:8090/readyz
 curl http://127.0.0.1:8090/metrics
 curl http://127.0.0.1:9102/metrics
 ```
+
+## 8. V2 AI 群聊总结
+
+日期：2026-07-05
+
+新增内容：
+
+```text
+POST /api/v1/ai/group-summary
+internal/ai mock provider
+ai_summary_records
+linkgo_ai_summary_requests_total
+scripts/ai_demo.sh
+```
+
+固定验收命令：
+
+```bash
+make test
+make build
+docker compose config
+make ai-demo
+```
+
+本轮结果：
+
+```text
+make test：通过，包含 internal/ai/summary_service_test.go。
+make build：通过，生成 bin/gateway、bin/logic、bin/transfer。
+docker compose config：通过。
+START_STACK=1 make ai-demo：通过。
+```
+
+演示说明：
+
+```text
+make ai-demo 默认使用 docker-compose.light.yml：
+1. 登录 userA。
+2. 创建 G_AI_DEMO 群。
+3. 写入 3 条演示群消息。
+4. 调用 /api/v1/ai/group-summary。
+5. 输出 artifacts/ai_summary_demo/ai_summary_response.json。
+脚本默认会自动读取 .env.docker-cn 里的镜像配置；如果需要 Docker Hub 原始镜像，可设置 USE_DOCKER_CN=0。
+```
+
+成功响应应包含：
+
+```text
+summary_id
+conversation_id = group:G_AI_DEMO
+message_start_seq = 1
+message_end_seq = 3
+provider = mock
+todos 至少 1 条
+risks 至少 1 条
+```
+
+本轮实际响应摘要：
+
+```text
+summary_id = ais_1783183919858_17890a8e
+group_id = G_AI_DEMO
+conversation_id = group:G_AI_DEMO
+message_start_seq = 1
+message_end_seq = 3
+provider = mock
+todos = 3
+risks = 1
+```

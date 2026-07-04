@@ -29,3 +29,9 @@ Gateway:
 
 Auth:
   AccessSecret: linkgo_im_secret_2026
+
+AI:
+  Provider: mock
+  Model: mock-summary-v1
+  TimeoutSeconds: 10
+  MaxMessages: 100

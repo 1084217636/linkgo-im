@@ -132,6 +132,22 @@ func overrideConfigFromEnv(c *config.Config) {
 			c.Gateway.RetryIntervalSeconds = ttl
 		}
 	}
+	if value := os.Getenv("AI_PROVIDER"); value != "" {
+		c.AI.Provider = value
+	}
+	if value := os.Getenv("AI_MODEL"); value != "" {
+		c.AI.Model = value
+	}
+	if value := os.Getenv("AI_TIMEOUT_SECONDS"); value != "" {
+		if ttl, err := strconv.ParseInt(value, 10, 64); err == nil {
+			c.AI.TimeoutSeconds = ttl
+		}
+	}
+	if value := os.Getenv("AI_MAX_MESSAGES"); value != "" {
+		if n, err := strconv.Atoi(value); err == nil {
+			c.AI.MaxMessages = n
+		}
+	}
 }
 
 func parseEndpoints(raw string) []string {

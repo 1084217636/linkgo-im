@@ -164,3 +164,35 @@ type RedPacketDetailResp struct {
 	Claims  []RedPacketClaimInfo `json:"claims"`
 	Claimed bool                 `json:"claimed"`
 }
+
+type AISummaryReq struct {
+	GroupID      string `json:"group_id"`
+	MessageLimit int    `json:"message_limit,optional"`
+	IncludeTodos bool   `json:"include_todos,optional"`
+	IncludeRisks bool   `json:"include_risks,optional"`
+}
+
+type AITodoItem struct {
+	Title     string `json:"title"`
+	OwnerID   string `json:"owner_id,optional"`
+	SourceSeq int64  `json:"source_seq,optional"`
+}
+
+type AIRiskItem struct {
+	Level       string `json:"level"`
+	Description string `json:"description"`
+	SourceSeq   int64  `json:"source_seq,optional"`
+}
+
+type AISummaryResp struct {
+	SummaryID       string       `json:"summary_id"`
+	GroupID         string       `json:"group_id"`
+	ConversationID  string       `json:"conversation_id"`
+	MessageStartSeq int64        `json:"message_start_seq"`
+	MessageEndSeq   int64        `json:"message_end_seq"`
+	Summary         string       `json:"summary"`
+	Todos           []AITodoItem `json:"todos"`
+	Risks           []AIRiskItem `json:"risks"`
+	Provider        string       `json:"provider"`
+	CreatedAt       int64        `json:"created_at"`
+}
