@@ -1,4 +1,6 @@
-FROM golang:1.25.7-alpine AS builder
+ARG GO_BUILDER_IMAGE=golang:1.25-alpine
+ARG RUNTIME_IMAGE=alpine:3.22
+FROM ${GO_BUILDER_IMAGE} AS builder
 WORKDIR /app
 # 设置代理，解决国内下载慢
 ENV GOPROXY=https://goproxy.cn,direct
@@ -9,7 +11,7 @@ RUN go build -o gateway ./cmd/gateway
 RUN go build -o logic ./cmd/logic
 RUN go build -o transfer ./cmd/transfer
 
-FROM alpine:latest
+FROM ${RUNTIME_IMAGE}
 WORKDIR /root/
 # 安装基础库
 RUN apk add --no-cache ca-certificates libc6-compat

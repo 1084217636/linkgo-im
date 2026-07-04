@@ -25,7 +25,7 @@ func main() {
 	var c config.Config
 	conf.MustLoad(*configFile, &c)
 	overrideConfigFromEnv(&c)
-	authutil.SetJWTSecret(c.Auth.AccessSecret)
+	authutil.SetJWTSecret(c.JWT.AccessSecret)
 
 	ctx := svc.NewServiceContext(c)
 	defer ctx.Close()
@@ -51,13 +51,33 @@ func overrideConfigFromEnv(c *config.Config) {
 		c.Etcd.Hosts = parseEndpoints(value)
 	}
 	if value := os.Getenv("REDIS_ADDR"); value != "" {
-		c.Redis.Addr = value
+		c.Cache.Addr = value
 	}
 	if value := os.Getenv("REDIS_PASSWORD"); value != "" {
-		c.Redis.Password = value
+		c.Cache.Password = value
 	}
 	if value := os.Getenv("DB_DSN"); value != "" {
 		c.Database.Dsn = value
+	}
+	if value := os.Getenv("DB_MAX_OPEN_CONNS"); value != "" {
+		if n, err := strconv.Atoi(value); err == nil {
+			c.Database.MaxOpenConns = n
+		}
+	}
+	if value := os.Getenv("DB_MAX_IDLE_CONNS"); value != "" {
+		if n, err := strconv.Atoi(value); err == nil {
+			c.Database.MaxIdleConns = n
+		}
+	}
+	if value := os.Getenv("DB_CONN_MAX_LIFETIME_SECONDS"); value != "" {
+		if n, err := strconv.ParseInt(value, 10, 64); err == nil {
+			c.Database.ConnMaxLifetimeSeconds = n
+		}
+	}
+	if value := os.Getenv("DB_CONN_MAX_IDLE_TIME_SECONDS"); value != "" {
+		if n, err := strconv.ParseInt(value, 10, 64); err == nil {
+			c.Database.ConnMaxIdleTimeSeconds = n
+		}
 	}
 	if value := os.Getenv("KAFKA_BROKERS"); value != "" {
 		c.Kafka.Brokers = parseEndpoints(value)
@@ -66,7 +86,7 @@ func overrideConfigFromEnv(c *config.Config) {
 		c.Kafka.GroupTopic = value
 	}
 	if value := os.Getenv("JWT_SECRET"); value != "" {
-		c.Auth.AccessSecret = value
+		c.JWT.AccessSecret = value
 	}
 	if value := os.Getenv("CPU_THRESHOLD"); value != "" {
 		if threshold, err := strconv.ParseInt(value, 10, 64); err == nil {

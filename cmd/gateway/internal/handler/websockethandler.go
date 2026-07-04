@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
+	"strconv"
 	"time"
 
 	gwmiddleware "github.com/1084217636/linkgo-im/cmd/gateway/internal/middleware"
@@ -13,6 +14,8 @@ import (
 	"github.com/1084217636/linkgo-im/internal/server"
 	"github.com/gorilla/websocket"
 	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/rest/httpx"
+	"github.com/zeromicro/go-zero/zrpc"
 )
 
 var upgrader = websocket.Upgrader{
@@ -23,13 +26,13 @@ func WebSocketHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := gwmiddleware.UserIDFromContext(r.Context())
 		if userID == "" {
-			writeError(r, w, http.StatusUnauthorized, "missing user context")
+			httpx.WriteJsonCtx(r.Context(), w, http.StatusUnauthorized, map[string]string{"error": "missing user context"})
 			return
 		}
 
 		client, err := svcCtx.LogicRouter.GetClient(r.Context(), userID)
 		if err != nil {
-			writeError(r, w, http.StatusServiceUnavailable, err.Error())
+			httpx.WriteJsonCtx(r.Context(), w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
 			return
 		}
 
@@ -56,9 +59,23 @@ func WebSocketHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			}
 		}()
 
-		server.SyncOfflineMessages(ctx, svcCtx.Rdb, userID, clientConn)
+		sessionID := r.URL.Query().Get("session_id")
+		lastSeq := parseLastSeq(r.URL.Query().Get("last_seq"))
+		server.SyncOfflineMessages(ctx, svcCtx.Rdb, userID, clientConn, sessionID, lastSeq)
+		ctx = zrpc.SetHashKey(ctx, userID)
 		server.StartClientLoop(ctx, userID, clientConn, client, svcCtx.Rdb, routeValue, svcCtx.RouteTTL)
 	}
+}
+
+func parseLastSeq(raw string) int64 {
+	if raw == "" {
+		return -1
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return -1
+	}
+	return value
 }
 
 func newConnectionID() string {

@@ -6,8 +6,8 @@
 
 - `GenerateToken`：登录成功后生成 JWT。
 - `Auth`：支持从 `Authorization: Bearer <token>` 和 `ws?token=...` 两种入口提取凭证。
-- `ratelimit.go`：基于内存令牌桶做请求限流。
-- 解析通过后把 `user_id` 注入 Gin Context，供后续接口和 WebSocket 使用。
+- `ratelimit.go`：基于内存分片令牌桶做请求限流，按 key 分散锁竞争，并惰性清理长时间不活跃的 bucket。
+- 解析通过后把 `user_id` 注入请求 Context，供后续接口和 WebSocket 使用。
 
 ## 使用位置
 

@@ -5,17 +5,21 @@ Etcd:
     - etcd:2379
   Key: /services/logic
 
-Redis:
+Cache:
   Addr: redis:6379
   Password: "123456"
 
 Database:
   Dsn: root:root@tcp(mysql:3306)/linkgo_im?charset=utf8mb4&parseTime=True&loc=Local
+  MaxOpenConns: 100
+  MaxIdleConns: 20
+  ConnMaxLifetimeSeconds: 300
+  ConnMaxIdleTimeSeconds: 60
 
 Kafka:
   Brokers:
     - kafka:9092
   GroupTopic: group_message_dispatch
 
-Auth:
+JWT:
   AccessSecret: linkgo_im_secret_2026

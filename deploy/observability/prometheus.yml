@@ -1,0 +1,22 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: linkgo-gateway
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - gateway-a:8090
+          - gateway-b:8090
+          - gateway-c:8090
+        labels:
+          component: gateway
+
+  - job_name: linkgo-transfer
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - transfer:9102
+        labels:
+          component: transfer

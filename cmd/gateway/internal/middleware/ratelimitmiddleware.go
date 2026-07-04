@@ -9,29 +9,35 @@ import (
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
-func RateLimitMiddleware(limiter *authutil.TokenBucketLimiter) func(next http.HandlerFunc) http.HandlerFunc {
-	return func(next http.HandlerFunc) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			if limiter == nil {
-				next(w, r)
-				return
-			}
+type RateLimitMiddleware struct {
+	limiter *authutil.TokenBucketLimiter
+}
 
-			key := UserIDFromContext(r.Context())
-			if key == "" {
-				key = clientIP(r)
-			}
+func NewRateLimitMiddleware(limiter *authutil.TokenBucketLimiter) *RateLimitMiddleware {
+	return &RateLimitMiddleware{limiter: limiter}
+}
 
-			if !limiter.Allow(key) {
-				metrics.RateLimitHits.WithLabelValues(r.URL.Path).Inc()
-				httpx.WriteJsonCtx(r.Context(), w, http.StatusTooManyRequests, map[string]string{
-					"error": "rate limit exceeded",
-				})
-				return
-			}
-
+func (m *RateLimitMiddleware) Handle(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if m.limiter == nil {
 			next(w, r)
+			return
 		}
+
+		key := UserIDFromContext(r.Context())
+		if key == "" {
+			key = clientIP(r)
+		}
+
+		if !m.limiter.Allow(key) {
+			metrics.RateLimitHits.WithLabelValues(r.URL.Path).Inc()
+			httpx.WriteJsonCtx(r.Context(), w, http.StatusTooManyRequests, map[string]string{
+				"error": "rate limit exceeded",
+			})
+			return
+		}
+
+		next(w, r)
 	}
 }
 

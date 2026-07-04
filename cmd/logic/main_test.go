@@ -26,8 +26,8 @@ func TestOverrideConfigFromEnv(t *testing.T) {
 	if got := c.Etcd.Hosts; len(got) != 2 || got[0] != "etcd-a:2379" || got[1] != "etcd-b:2379" {
 		t.Fatalf("Etcd.Hosts = %#v", got)
 	}
-	if c.Redis.Addr != "redis.test:6379" || c.Redis.Password != "secret" {
-		t.Fatalf("Redis config = %#v", c.Redis)
+	if c.Cache.Addr != "redis.test:6379" || c.Cache.Password != "secret" {
+		t.Fatalf("Cache config = %#v", c.Cache)
 	}
 	if c.Database.Dsn != "root:root@tcp(mysql:3306)/linkgo_im" {
 		t.Fatalf("Database.Dsn = %q", c.Database.Dsn)
@@ -38,8 +38,8 @@ func TestOverrideConfigFromEnv(t *testing.T) {
 	if c.Kafka.GroupTopic != "group-topic" {
 		t.Fatalf("Kafka.GroupTopic = %q", c.Kafka.GroupTopic)
 	}
-	if c.Auth.AccessSecret != "jwt-secret" {
-		t.Fatalf("Auth.AccessSecret = %q", c.Auth.AccessSecret)
+	if c.JWT.AccessSecret != "jwt-secret" {
+		t.Fatalf("JWT.AccessSecret = %q", c.JWT.AccessSecret)
 	}
 	if c.CpuThreshold != 900 {
 		t.Fatalf("CpuThreshold = %d, want 900", c.CpuThreshold)

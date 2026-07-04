@@ -85,6 +85,9 @@ type WireMessage struct {
 	Body          string                 `protobuf:"bytes,8,opt,name=body,proto3" json:"body,omitempty"`
 	SentAt        int64                  `protobuf:"varint,9,opt,name=sent_at,json=sentAt,proto3" json:"sent_at,omitempty"`
 	AckMessageId  string                 `protobuf:"bytes,10,opt,name=ack_message_id,json=ackMessageId,proto3" json:"ack_message_id,omitempty"`
+	ClientMsgId   string                 `protobuf:"bytes,11,opt,name=client_msg_id,json=clientMsgId,proto3" json:"client_msg_id,omitempty"`
+	TraceId       string                 `protobuf:"bytes,12,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`
+	LastSeq       int64                  `protobuf:"varint,13,opt,name=last_seq,json=lastSeq,proto3" json:"last_seq,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -187,6 +190,27 @@ func (x *WireMessage) GetAckMessageId() string {
 		return x.AckMessageId
 	}
 	return ""
+}
+
+func (x *WireMessage) GetClientMsgId() string {
+	if x != nil {
+		return x.ClientMsgId
+	}
+	return ""
+}
+
+func (x *WireMessage) GetTraceId() string {
+	if x != nil {
+		return x.TraceId
+	}
+	return ""
+}
+
+func (x *WireMessage) GetLastSeq() int64 {
+	if x != nil {
+		return x.LastSeq
+	}
+	return 0
 }
 
 type PushMsgReq struct {
@@ -509,6 +533,7 @@ type LoginReply struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Token         string                 `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`
 	UserId        string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Conversations []*Conversation        `protobuf:"bytes,3,rep,name=conversations,proto3" json:"conversations,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -557,6 +582,113 @@ func (x *LoginReply) GetUserId() string {
 	return ""
 }
 
+func (x *LoginReply) GetConversations() []*Conversation {
+	if x != nil {
+		return x.Conversations
+	}
+	return nil
+}
+
+type Conversation struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ConversationId string                 `protobuf:"bytes,1,opt,name=conversation_id,json=conversationId,proto3" json:"conversation_id,omitempty"`
+	Type           string                 `protobuf:"bytes,2,opt,name=type,proto3" json:"type,omitempty"`
+	Title          string                 `protobuf:"bytes,3,opt,name=title,proto3" json:"title,omitempty"`
+	LastMsg        string                 `protobuf:"bytes,4,opt,name=last_msg,json=lastMsg,proto3" json:"last_msg,omitempty"`
+	LastSeq        int64                  `protobuf:"varint,5,opt,name=last_seq,json=lastSeq,proto3" json:"last_seq,omitempty"`
+	ReadSeq        int64                  `protobuf:"varint,6,opt,name=read_seq,json=readSeq,proto3" json:"read_seq,omitempty"`
+	UnreadCount    int64                  `protobuf:"varint,7,opt,name=unread_count,json=unreadCount,proto3" json:"unread_count,omitempty"`
+	UpdatedAt      int64                  `protobuf:"varint,8,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *Conversation) Reset() {
+	*x = Conversation{}
+	mi := &file_api_protocol_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Conversation) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Conversation) ProtoMessage() {}
+
+func (x *Conversation) ProtoReflect() protoreflect.Message {
+	mi := &file_api_protocol_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Conversation.ProtoReflect.Descriptor instead.
+func (*Conversation) Descriptor() ([]byte, []int) {
+	return file_api_protocol_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *Conversation) GetConversationId() string {
+	if x != nil {
+		return x.ConversationId
+	}
+	return ""
+}
+
+func (x *Conversation) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *Conversation) GetTitle() string {
+	if x != nil {
+		return x.Title
+	}
+	return ""
+}
+
+func (x *Conversation) GetLastMsg() string {
+	if x != nil {
+		return x.LastMsg
+	}
+	return ""
+}
+
+func (x *Conversation) GetLastSeq() int64 {
+	if x != nil {
+		return x.LastSeq
+	}
+	return 0
+}
+
+func (x *Conversation) GetReadSeq() int64 {
+	if x != nil {
+		return x.ReadSeq
+	}
+	return 0
+}
+
+func (x *Conversation) GetUnreadCount() int64 {
+	if x != nil {
+		return x.UnreadCount
+	}
+	return 0
+}
+
+func (x *Conversation) GetUpdatedAt() int64 {
+	if x != nil {
+		return x.UpdatedAt
+	}
+	return 0
+}
+
 type SendToUserReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	TargetUserId  string                 `protobuf:"bytes,1,opt,name=target_user_id,json=targetUserId,proto3" json:"target_user_id,omitempty"`
@@ -567,7 +699,7 @@ type SendToUserReq struct {
 
 func (x *SendToUserReq) Reset() {
 	*x = SendToUserReq{}
-	mi := &file_api_protocol_proto_msgTypes[9]
+	mi := &file_api_protocol_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -579,7 +711,7 @@ func (x *SendToUserReq) String() string {
 func (*SendToUserReq) ProtoMessage() {}
 
 func (x *SendToUserReq) ProtoReflect() protoreflect.Message {
-	mi := &file_api_protocol_proto_msgTypes[9]
+	mi := &file_api_protocol_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -592,7 +724,7 @@ func (x *SendToUserReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendToUserReq.ProtoReflect.Descriptor instead.
 func (*SendToUserReq) Descriptor() ([]byte, []int) {
-	return file_api_protocol_proto_rawDescGZIP(), []int{9}
+	return file_api_protocol_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *SendToUserReq) GetTargetUserId() string {
@@ -618,7 +750,7 @@ type SendToUserReply struct {
 
 func (x *SendToUserReply) Reset() {
 	*x = SendToUserReply{}
-	mi := &file_api_protocol_proto_msgTypes[10]
+	mi := &file_api_protocol_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -630,7 +762,7 @@ func (x *SendToUserReply) String() string {
 func (*SendToUserReply) ProtoMessage() {}
 
 func (x *SendToUserReply) ProtoReflect() protoreflect.Message {
-	mi := &file_api_protocol_proto_msgTypes[10]
+	mi := &file_api_protocol_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -643,7 +775,7 @@ func (x *SendToUserReply) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendToUserReply.ProtoReflect.Descriptor instead.
 func (*SendToUserReply) Descriptor() ([]byte, []int) {
-	return file_api_protocol_proto_rawDescGZIP(), []int{10}
+	return file_api_protocol_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *SendToUserReply) GetSuccess() bool {
@@ -657,7 +789,7 @@ var File_api_protocol_proto protoreflect.FileDescriptor
 
 const file_api_protocol_proto_rawDesc = "" +
 	"\n" +
-	"\x12api/protocol.proto\x12\x03api\"\x96\x02\n" +
+	"\x12api/protocol.proto\x12\x03api\"\xf0\x02\n" +
 	"\vWireMessage\x12\x1d\n" +
 	"\n" +
 	"message_id\x18\x01 \x01(\tR\tmessageId\x12\x1d\n" +
@@ -671,7 +803,10 @@ const file_api_protocol_proto_rawDesc = "" +
 	"\x04body\x18\b \x01(\tR\x04body\x12\x17\n" +
 	"\asent_at\x18\t \x01(\x03R\x06sentAt\x12$\n" +
 	"\x0eack_message_id\x18\n" +
-	" \x01(\tR\fackMessageId\"?\n" +
+	" \x01(\tR\fackMessageId\x12\"\n" +
+	"\rclient_msg_id\x18\v \x01(\tR\vclientMsgId\x12\x19\n" +
+	"\btrace_id\x18\f \x01(\tR\atraceId\x12\x19\n" +
+	"\blast_seq\x18\r \x01(\x03R\alastSeq\"?\n" +
 	"\n" +
 	"PushMsgReq\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x18\n" +
@@ -687,11 +822,22 @@ const file_api_protocol_proto_rawDesc = "" +
 	"\bmessages\x18\x01 \x03(\v2\x10.api.WireMessageR\bmessages\"B\n" +
 	"\bLoginReq\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\x12\x1a\n" +
-	"\bpassword\x18\x02 \x01(\tR\bpassword\";\n" +
+	"\bpassword\x18\x02 \x01(\tR\bpassword\"t\n" +
 	"\n" +
 	"LoginReply\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token\x12\x17\n" +
-	"\auser_id\x18\x02 \x01(\tR\x06userId\"O\n" +
+	"\auser_id\x18\x02 \x01(\tR\x06userId\x127\n" +
+	"\rconversations\x18\x03 \x03(\v2\x11.api.ConversationR\rconversations\"\xf4\x01\n" +
+	"\fConversation\x12'\n" +
+	"\x0fconversation_id\x18\x01 \x01(\tR\x0econversationId\x12\x12\n" +
+	"\x04type\x18\x02 \x01(\tR\x04type\x12\x14\n" +
+	"\x05title\x18\x03 \x01(\tR\x05title\x12\x19\n" +
+	"\blast_msg\x18\x04 \x01(\tR\alastMsg\x12\x19\n" +
+	"\blast_seq\x18\x05 \x01(\x03R\alastSeq\x12\x19\n" +
+	"\bread_seq\x18\x06 \x01(\x03R\areadSeq\x12!\n" +
+	"\funread_count\x18\a \x01(\x03R\vunreadCount\x12\x1d\n" +
+	"\n" +
+	"updated_at\x18\b \x01(\x03R\tupdatedAt\"O\n" +
 	"\rSendToUserReq\x12$\n" +
 	"\x0etarget_user_id\x18\x01 \x01(\tR\ftargetUserId\x12\x18\n" +
 	"\acontent\x18\x02 \x01(\fR\acontent\"+\n" +
@@ -727,7 +873,7 @@ func file_api_protocol_proto_rawDescGZIP() []byte {
 }
 
 var file_api_protocol_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_api_protocol_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_api_protocol_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_api_protocol_proto_goTypes = []any{
 	(MsgType)(0),            // 0: api.MsgType
 	(*WireMessage)(nil),     // 1: api.WireMessage
@@ -739,27 +885,29 @@ var file_api_protocol_proto_goTypes = []any{
 	(*GetHistoryReply)(nil), // 7: api.GetHistoryReply
 	(*LoginReq)(nil),        // 8: api.LoginReq
 	(*LoginReply)(nil),      // 9: api.LoginReply
-	(*SendToUserReq)(nil),   // 10: api.SendToUserReq
-	(*SendToUserReply)(nil), // 11: api.SendToUserReply
+	(*Conversation)(nil),    // 10: api.Conversation
+	(*SendToUserReq)(nil),   // 11: api.SendToUserReq
+	(*SendToUserReply)(nil), // 12: api.SendToUserReply
 }
 var file_api_protocol_proto_depIdxs = []int32{
 	0,  // 0: api.WireMessage.msg_type:type_name -> api.MsgType
 	1,  // 1: api.GetHistoryReply.messages:type_name -> api.WireMessage
-	8,  // 2: api.Logic.Login:input_type -> api.LoginReq
-	2,  // 3: api.Logic.PushMessage:input_type -> api.PushMsgReq
-	4,  // 4: api.Logic.UserLogin:input_type -> api.UserLoginReq
-	6,  // 5: api.Logic.GetHistory:input_type -> api.GetHistoryReq
-	10, // 6: api.Gateway.PushToUser:input_type -> api.SendToUserReq
-	9,  // 7: api.Logic.Login:output_type -> api.LoginReply
-	3,  // 8: api.Logic.PushMessage:output_type -> api.PushMsgReply
-	5,  // 9: api.Logic.UserLogin:output_type -> api.UserLoginReply
-	7,  // 10: api.Logic.GetHistory:output_type -> api.GetHistoryReply
-	11, // 11: api.Gateway.PushToUser:output_type -> api.SendToUserReply
-	7,  // [7:12] is the sub-list for method output_type
-	2,  // [2:7] is the sub-list for method input_type
-	2,  // [2:2] is the sub-list for extension type_name
-	2,  // [2:2] is the sub-list for extension extendee
-	0,  // [0:2] is the sub-list for field type_name
+	10, // 2: api.LoginReply.conversations:type_name -> api.Conversation
+	8,  // 3: api.Logic.Login:input_type -> api.LoginReq
+	2,  // 4: api.Logic.PushMessage:input_type -> api.PushMsgReq
+	4,  // 5: api.Logic.UserLogin:input_type -> api.UserLoginReq
+	6,  // 6: api.Logic.GetHistory:input_type -> api.GetHistoryReq
+	11, // 7: api.Gateway.PushToUser:input_type -> api.SendToUserReq
+	9,  // 8: api.Logic.Login:output_type -> api.LoginReply
+	3,  // 9: api.Logic.PushMessage:output_type -> api.PushMsgReply
+	5,  // 10: api.Logic.UserLogin:output_type -> api.UserLoginReply
+	7,  // 11: api.Logic.GetHistory:output_type -> api.GetHistoryReply
+	12, // 12: api.Gateway.PushToUser:output_type -> api.SendToUserReply
+	8,  // [8:13] is the sub-list for method output_type
+	3,  // [3:8] is the sub-list for method input_type
+	3,  // [3:3] is the sub-list for extension type_name
+	3,  // [3:3] is the sub-list for extension extendee
+	0,  // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_api_protocol_proto_init() }
@@ -773,7 +921,7 @@ func file_api_protocol_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_protocol_proto_rawDesc), len(file_api_protocol_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   11,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

@@ -10,24 +10,28 @@ import (
 
 type ctxUserIDKey struct{}
 
-func AuthMiddleware() func(next http.HandlerFunc) http.HandlerFunc {
-	return func(next http.HandlerFunc) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			token := authutil.ExtractBearerToken(r.Header.Get("Authorization"))
-			if token == "" {
-				token = r.URL.Query().Get("token")
-			}
-			claims, err := authutil.ParseToken(token)
-			if err != nil {
-				httpx.WriteJsonCtx(r.Context(), w, http.StatusUnauthorized, map[string]string{
-					"error": err.Error(),
-				})
-				return
-			}
+type AuthMiddleware struct{}
 
-			ctx := context.WithValue(r.Context(), ctxUserIDKey{}, claims.UserID)
-			next(w, r.WithContext(ctx))
+func NewAuthMiddleware() *AuthMiddleware {
+	return &AuthMiddleware{}
+}
+
+func (m *AuthMiddleware) Handle(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := authutil.ExtractBearerToken(r.Header.Get("Authorization"))
+		if token == "" {
+			token = r.URL.Query().Get("token")
 		}
+		claims, err := authutil.ParseToken(token)
+		if err != nil {
+			httpx.WriteJsonCtx(r.Context(), w, http.StatusUnauthorized, map[string]string{
+				"error": err.Error(),
+			})
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), ctxUserIDKey{}, claims.UserID)
+		next(w, r.WithContext(ctx))
 	}
 }
 

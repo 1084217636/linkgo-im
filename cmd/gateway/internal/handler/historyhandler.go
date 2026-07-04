@@ -13,21 +13,16 @@ func HistoryHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.HistoryReq
 		if err := httpx.Parse(r, &req); err != nil {
-			writeError(r, w, http.StatusBadRequest, err.Error())
+			httpx.ErrorCtx(r.Context(), w, err)
 			return
 		}
 
 		l := logic.NewHistoryLogic(r.Context(), svcCtx)
 		resp, err := l.GetHistory(&req)
 		if err != nil {
-			status := http.StatusInternalServerError
-			if err.Error() == "target_id is required" {
-				status = http.StatusBadRequest
-			}
-			writeError(r, w, status, err.Error())
-			return
+			httpx.ErrorCtx(r.Context(), w, err)
+		} else {
+			httpx.OkJsonCtx(r.Context(), w, resp)
 		}
-
-		httpx.OkJsonCtx(r.Context(), w, resp)
 	}
 }

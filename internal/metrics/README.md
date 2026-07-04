@@ -10,6 +10,7 @@
 - `linkgo_ack_operations_total`
 - `linkgo_kafka_operations_total`
 - `linkgo_rate_limit_hits_total`
+- `linkgo_red_packet_operations_total`
 
 ## 作用
 
@@ -20,3 +21,4 @@
 - ACK 是否正常回收？
 - Kafka 是否出现重试或死信？
 - 有没有接口被频繁限流？
+- 红包发放、抢红包是否有成功、已抢、抢完或过期等结果？

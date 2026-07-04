@@ -22,6 +22,9 @@ message WireMessage {
     string body = 8;
     int64 sent_at = 9;
     string ack_message_id = 10;
+    string client_msg_id = 11;
+    string trace_id = 12;
+    int64 last_seq = 13;
 }
 
 message PushMsgReq {
@@ -61,6 +64,18 @@ message LoginReq {
 message LoginReply {
     string token = 1;
     string user_id = 2;
+    repeated Conversation conversations = 3;
+}
+
+message Conversation {
+    string conversation_id = 1;
+    string type = 2;
+    string title = 3;
+    string last_msg = 4;
+    int64 last_seq = 5;
+    int64 read_seq = 6;
+    int64 unread_count = 7;
+    int64 updated_at = 8;
 }
 
 message SendToUserReq {

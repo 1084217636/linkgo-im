@@ -38,6 +38,11 @@ var (
 		Name: "linkgo_rate_limit_hits_total",
 		Help: "Rate limit hits by route.",
 	}, []string{"route"})
+
+	RedPacketOperations = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "linkgo_red_packet_operations_total",
+		Help: "Red packet operations by action and result.",
+	}, []string{"action", "result"})
 )
 
 func Handler() http.Handler {

@@ -1,43 +1,229 @@
 syntax = "v1"
 
-info(
-	title: "LinkGo Gateway"
-	desc: "go-zero api scaffold for gateway"
-	author: "codex"
+info (
+	title:   "LinkGo IM Gateway API"
+	desc:    "LinkGo IM instant messaging service gateway with JWT authentication and rate limiting"
+	version: "1.0"
 )
+
+// --- request / response types ---
 
 type LoginReq {
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
+type Conversation {
+	ConversationID string `json:"conversation_id"`
+	Type           string `json:"type"`
+	Title          string `json:"title"`
+	LastMsg        string `json:"last_msg"`
+	LastSeq        int64  `json:"last_seq"`
+	ReadSeq        int64  `json:"read_seq"`
+	UnreadCount    int64  `json:"unread_count"`
+	UpdatedAt      int64  `json:"updated_at"`
+}
+
 type LoginResp {
-	Token string `json:"token"`
-	UserId string `json:"user_id"`
+	Token         string         `json:"token"`
+	UserID        string         `json:"user_id"`
+	Conversations []Conversation `json:"conversations"`
 }
 
 type HistoryReq {
-	TargetId string `form:"target_id"`
+	TargetID string `form:"target_id"`
+}
+
+type HistoryResp {
+	Data []interface{} `json:"data"`
 }
 
 type GroupCreateReq {
-	GroupId string `json:"group_id"`
+	GroupID string   `json:"group_id"`
+	Name    string   `json:"name"`
 	Members []string `json:"members"`
 }
 
-@server(
+type GroupCreateResp {
+	GroupID string `json:"group_id"`
+	Members int    `json:"members"`
+	Msg     string `json:"msg"`
+}
+
+type UserGroupsResp {
+	Groups []string `json:"groups"`
+}
+
+type FriendApplyReq {
+	TargetUserID string `json:"target_user_id"`
+	Message      string `json:"message"`
+}
+
+type FriendApplyResp {
+	FromUserID string `json:"from_user_id"`
+	ToUserID   string `json:"to_user_id"`
+	Status     string `json:"status"`
+	UpdatedAt  int64  `json:"updated_at"`
+}
+
+type FriendRespondReq {
+	FromUserID string `json:"from_user_id"`
+	Action     string `json:"action"`
+}
+
+type FriendRespondResp {
+	FromUserID string `json:"from_user_id"`
+	ToUserID   string `json:"to_user_id"`
+	Status     string `json:"status"`
+	UpdatedAt  int64  `json:"updated_at"`
+}
+
+type FriendInfo {
+	UserID    string `json:"user_id"`
+	Status    string `json:"status"`
+	UpdatedAt int64  `json:"updated_at"`
+}
+
+type FriendListResp {
+	Friends []FriendInfo `json:"friends"`
+}
+
+type FriendRequestInfo {
+	FromUserID string `json:"from_user_id"`
+	ToUserID   string `json:"to_user_id"`
+	Message    string `json:"message"`
+	Status     string `json:"status"`
+	CreatedAt  int64  `json:"created_at"`
+	UpdatedAt  int64  `json:"updated_at"`
+}
+
+type FriendRequestsResp {
+	Requests []FriendRequestInfo `json:"requests"`
+}
+
+type GroupMembersReq {
+	GroupID string `form:"group_id"`
+}
+
+type GroupMemberInfo {
+	UserID    string `json:"user_id"`
+	Role      string `json:"role"`
+	Status    string `json:"status"`
+	MuteUntil int64  `json:"mute_until"`
+	JoinedAt  int64  `json:"joined_at"`
+}
+
+type GroupMembersResp {
+	GroupID string            `json:"group_id"`
+	Members []GroupMemberInfo `json:"members"`
+}
+
+type RedPacketCreateReq {
+	TargetID       string `json:"target_id"`
+	ToType         string `json:"to_type,optional"`
+	ConversationID string `json:"conversation_id,optional"`
+	TotalAmount    int64  `json:"total_amount"`
+	TotalCount     int    `json:"total_count"`
+	Greeting       string `json:"greeting,optional"`
+	ExpiresAt      int64  `json:"expires_at,optional"`
+}
+
+type RedPacketInfo {
+	RedPacketID     string `json:"red_packet_id"`
+	SenderID        string `json:"sender_id"`
+	ConversationID  string `json:"conversation_id"`
+	ToType          string `json:"to_type"`
+	TotalAmount     int64  `json:"total_amount"`
+	TotalCount      int    `json:"total_count"`
+	RemainingAmount int64  `json:"remaining_amount"`
+	RemainingCount  int    `json:"remaining_count"`
+	Greeting        string `json:"greeting"`
+	Status          string `json:"status"`
+	CreatedAt       int64  `json:"created_at"`
+	ExpiresAt       int64  `json:"expires_at"`
+	UpdatedAt       int64  `json:"updated_at"`
+}
+
+type RedPacketCreateResp {
+	Packet RedPacketInfo `json:"packet"`
+}
+
+type RedPacketClaimReq {
+	RedPacketID string `json:"red_packet_id"`
+}
+
+type RedPacketClaimResp {
+	RedPacketID    string `json:"red_packet_id"`
+	UserID         string `json:"user_id"`
+	Amount         int64  `json:"amount"`
+	CreatedAt      int64  `json:"created_at"`
+	AlreadyClaimed bool   `json:"already_claimed"`
+	Status         string `json:"status"`
+}
+
+type RedPacketDetailReq {
+	RedPacketID string `form:"red_packet_id"`
+}
+
+type RedPacketClaimInfo {
+	RedPacketID string `json:"red_packet_id"`
+	UserID      string `json:"user_id"`
+	Amount      int64  `json:"amount"`
+	CreatedAt   int64  `json:"created_at"`
+}
+
+type RedPacketDetailResp {
+	Packet  RedPacketInfo        `json:"packet"`
+	Claims  []RedPacketClaimInfo `json:"claims"`
+	Claimed bool                 `json:"claimed"`
+}
+
+// --- endpoints ---
+
+@server (
 	prefix: /api/v1
+	middleware: RateLimit
 )
 service gateway-api {
 	@handler Login
 	post /login (LoginReq) returns (LoginResp)
+}
 
-	@handler GetHistory
-	get /history (HistoryReq)
+@server (
+	prefix: /api/v1
+	middleware: Auth,RateLimit
+)
+service gateway-api {
+	@handler History
+	get /history (HistoryReq) returns (HistoryResp)
 
-	@handler CreateGroup
-	post /group/create (GroupCreateReq)
+	@handler FriendApply
+	post /friend/apply (FriendApplyReq) returns (FriendApplyResp)
+
+	@handler FriendRespond
+	post /friend/respond (FriendRespondReq) returns (FriendRespondResp)
+
+	@handler FriendList
+	get /friends returns (FriendListResp)
+
+	@handler FriendRequests
+	get /friend/requests returns (FriendRequestsResp)
+
+	@handler GroupCreate
+	post /group/create (GroupCreateReq) returns (GroupCreateResp)
+
+	@handler GroupMembers
+	get /group/members (GroupMembersReq) returns (GroupMembersResp)
 
 	@handler UserGroups
-	get /user/groups
+	get /user/groups returns (UserGroupsResp)
+
+	@handler RedPacketCreate
+	post /red-packets (RedPacketCreateReq) returns (RedPacketCreateResp)
+
+	@handler RedPacketClaim
+	post /red-packets/claim (RedPacketClaimReq) returns (RedPacketClaimResp)
+
+	@handler RedPacketDetail
+	get /red-packets/detail (RedPacketDetailReq) returns (RedPacketDetailResp)
 }

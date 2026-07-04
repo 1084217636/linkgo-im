@@ -9,6 +9,7 @@ import (
 	"github.com/1084217636/linkgo-im/cmd/gateway/internal/svc"
 	"github.com/1084217636/linkgo-im/cmd/gateway/internal/types"
 	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/zrpc"
 )
 
 type HistoryLogic struct {
@@ -36,7 +37,8 @@ func (l *HistoryLogic) GetHistory(req *types.HistoryReq) (*types.HistoryResp, er
 		return nil, err
 	}
 
-	reply, err := cli.GetHistory(l.ctx, &api.GetHistoryReq{
+	ctx := zrpc.SetHashKey(l.ctx, userID)
+	reply, err := cli.GetHistory(ctx, &api.GetHistoryReq{
 		UserId:   userID,
 		TargetId: req.TargetID,
 	})

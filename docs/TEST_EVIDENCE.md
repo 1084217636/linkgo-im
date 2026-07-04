@@ -1,0 +1,235 @@
+# 测试证据
+
+记录每一轮改动后的验收命令、成功结果和后续待补证据。
+
+## 1. 当前基线
+
+日期：2026-07-04
+
+执行目录：
+
+```text
+/home/xiaobin/myproject/enterprise-im-ai
+```
+
+### make test
+
+命令：
+
+```bash
+make test
+```
+
+结果：
+
+```text
+通过。
+主要包：
+cmd/gateway
+cmd/logic
+cmd/transfer
+internal/health
+internal/logic
+internal/middleware
+internal/server
+```
+
+### make build
+
+命令：
+
+```bash
+make build
+```
+
+结果：
+
+```text
+通过。
+生成：
+bin/gateway
+bin/logic
+bin/transfer
+```
+
+### docker compose config
+
+命令：
+
+```bash
+docker compose config
+```
+
+结果：
+
+```text
+通过。
+配置展开后约 311 行。
+```
+
+## 2. V1 核心 IM Demo
+
+命令：
+
+```bash
+bash scripts/demo_core_im.sh
+```
+
+当前环境：
+
+```text
+linkgo-light-gateway-a
+linkgo-light-logic
+linkgo-light-mysql
+linkgo-light-redis
+linkgo-light-etcd
+```
+
+报告：
+
+```text
+artifacts/core_im_demo/core_im_demo_report.md
+```
+
+结果：
+
+```text
+PASS gateway healthz
+PASS login userA
+PASS login userB
+PASS redis ping
+PASS mysql ping
+PASS websocket connect userA
+PASS websocket connect userB
+PASS single chat receive + ack
+PASS ack clears pending
+PASS offline indexes recorded
+PASS offline replay + ack
+PASS mysql messages persisted
+PASS gateway metrics exposed
+SKIP group chat via kafka transfer
+```
+
+说明：
+
+```text
+当前运行的是 docker-compose.light.yml 栈，不包含 Kafka 和 Transfer，所以群聊 Kafka 扩散按预期跳过。
+完整群聊扩散验收使用全量栈：
+
+START_STACK=1 REQUIRE_TRANSFER=1 bash scripts/demo_core_im.sh
+```
+
+## 3. 已有测试覆盖
+
+| 测试文件 | 当前价值 |
+| --- | --- |
+| `cmd/gateway/main_test.go` | Gateway 配置解析、启动相关基础检查 |
+| `cmd/logic/main_test.go` | Logic 配置和 Kafka topic / broker 配置解析 |
+| `cmd/transfer/main_test.go` | Transfer 辅助函数、群聊幂等 key |
+| `internal/health/health_test.go` | 健康检查 |
+| `internal/logic/handler_test.go` | 消息幂等、落库兼容等 Logic 行为 |
+| `internal/logic/conversation_test.go` | 会话列表、未读数、会话状态 |
+| `internal/logic/redpacket_test.go` | 红包创建、领取、重复领取、事务行为 |
+| `internal/middleware/ratelimit_test.go` | 限流器 |
+| `internal/server/manager_test.go` | 连接管理和 Redis key 生成 |
+
+## 4. V1 演示证据覆盖情况
+
+已新增：
+
+```text
+scripts/demo_core_im.sh
+tools/core_im_demo/main.go
+```
+
+当前已覆盖：
+
+```text
+1. 登录 userA / userB 获取 token。
+2. userA / userB 建立 WebSocket。
+3. userA 发送单聊消息给 userB。
+4. 验证 MySQL messages 落库。
+5. userB 回 ACK，验证 pending_ack 清理。
+6. userB 断线后 userA 发消息，验证 offline_msg / pending_ack。
+7. userB 重连，验证 SyncOfflineMessages 回放。
+8. full 栈下创建群组并发送群聊，验证 Kafka / Transfer 链路。
+```
+
+## 5. 成功日志关键字
+
+登录：
+
+```text
+list conversations failed   # 仅会话列表失败时出现，不应阻断登录
+```
+
+WebSocket：
+
+```text
+sync pending messages
+sync messages after last_seq
+```
+
+发消息：
+
+```text
+gateway received client message
+logic accepted message
+message published to gateway
+gateway pushed websocket message
+message saved for offline delivery
+```
+
+ACK：
+
+```text
+ack confirmed
+ack timeout retry pushed
+ack retry exhausted
+```
+
+群聊：
+
+```text
+group dispatch published
+group dispatch consumed
+group dispatch scheduled retry
+group dispatch moved to dlq
+```
+
+红包：
+
+```text
+测试通过时证明重复领取和超卖被约束；当前代码没有强依赖业务日志。
+```
+
+## 6. 失败情况检查点
+
+| 场景 | 检查点 |
+| --- | --- |
+| 登录失败 | `users` 表是否有账号，JWT secret 是否一致 |
+| WebSocket 401 | token 是否缺失或过期，AuthMiddleware 是否注入 user_id |
+| 消息不落库 | `messages` 表结构是否包含 `client_msg_id`、`conversation_id` |
+| 消息重复 | 客户端是否复用 `client_msg_id`，MySQL 是否有 `uk_sender_client_msg` |
+| 在线不推送 | `route:<uid>` 是否存在，Gateway Pub/Sub 是否有订阅者 |
+| 重连不补偿 | `pending_ack:<uid>`、`session_timeline:<session_id>`、`message_payload:<message_id>` 是否存在 |
+| 群聊不扩散 | Kafka broker、topic、Transfer 是否启动，`group_members` 是否有成员 |
+| 红包重复领取 | `red_packet_claims` 唯一索引是否存在 |
+
+## 7. 每次修改后的固定命令
+
+```bash
+make test
+make build
+docker compose config
+```
+
+涉及 Docker 环境时再跑：
+
+```bash
+docker compose up --build
+curl http://127.0.0.1:8090/healthz
+curl http://127.0.0.1:8090/readyz
+curl http://127.0.0.1:8090/metrics
+curl http://127.0.0.1:9102/metrics
+```

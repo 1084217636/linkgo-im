@@ -1,6 +1,6 @@
 services:
   etcd:
-    image: quay.io/coreos/etcd:v3.5.15
+    image: ${ETCD_IMAGE:-quay.io/coreos/etcd:v3.5.15}
     container_name: linkgo-etcd
     command:
       - /usr/local/bin/etcd
@@ -11,14 +11,14 @@ services:
       - "2379:2379"
 
   zookeeper:
-    image: confluentinc/cp-zookeeper:7.6.0
+    image: ${ZOOKEEPER_IMAGE:-confluentinc/cp-zookeeper:7.6.0}
     container_name: linkgo-zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
 
   kafka:
-    image: confluentinc/cp-kafka:7.6.0
+    image: ${KAFKA_IMAGE:-confluentinc/cp-kafka:7.6.0}
     container_name: linkgo-kafka
     depends_on:
       - zookeeper
@@ -32,29 +32,35 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
 
   redis:
-    image: redis:7-alpine
+    image: ${REDIS_IMAGE:-redis:7-alpine}
     container_name: linkgo-redis
     ports:
       - "6379:6379"
     command: redis-server --requirepass 123456
 
   mysql:
-    image: mysql:8.0
+    image: ${MYSQL_IMAGE:-mysql:8.0}
     container_name: linkgo-mysql
     ports:
       - "3306:3306"
     environment:
       - MYSQL_ROOT_PASSWORD=root
       - MYSQL_DATABASE=linkgo_im
+      - MARIADB_ROOT_PASSWORD=root
+      - MARIADB_DATABASE=linkgo_im
     volumes:
       - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
       timeout: 20s
       retries: 10
 
   logic:
-    build: .
+    build:
+      context: .
+      args:
+        GO_BUILDER_IMAGE: ${GO_BUILDER_IMAGE:-golang:1.25-alpine}
+        RUNTIME_IMAGE: ${RUNTIME_IMAGE:-alpine:3.22}
     container_name: linkgo-logic
     command: ./logic
     depends_on:
@@ -70,15 +76,23 @@ services:
       - REDIS_ADDR=redis:6379
       - REDIS_PASSWORD=123456
       - DB_DSN=root:root@tcp(mysql:3306)/linkgo_im?charset=utf8mb4&parseTime=True&loc=Local
+      - DB_MAX_OPEN_CONNS=100
+      - DB_MAX_IDLE_CONNS=20
       - SERVICE_ADDR=logic:9001
       - ETCD_ENDPOINTS=etcd:2379
       - KAFKA_BROKERS=kafka:9092
       - KAFKA_GROUP_TOPIC=group_message_dispatch
 
   transfer:
-    build: .
+    build:
+      context: .
+      args:
+        GO_BUILDER_IMAGE: ${GO_BUILDER_IMAGE:-golang:1.25-alpine}
+        RUNTIME_IMAGE: ${RUNTIME_IMAGE:-alpine:3.22}
     container_name: linkgo-transfer
     command: ./transfer
+    ports:
+      - "9102:9102"
     depends_on:
       - redis
       - kafka
@@ -98,7 +112,11 @@ services:
       retries: 5
 
   gateway-a:
-    build: .
+    build:
+      context: .
+      args:
+        GO_BUILDER_IMAGE: ${GO_BUILDER_IMAGE:-golang:1.25-alpine}
+        RUNTIME_IMAGE: ${RUNTIME_IMAGE:-alpine:3.22}
     container_name: linkgo-gateway-a
     command: ./gateway
     ports:
@@ -112,7 +130,11 @@ services:
       - GATEWAY_ID=gateway-a
       - REDIS_ADDR=redis:6379
       - REDIS_PASSWORD=123456
+      - DB_DSN=root:root@tcp(mysql:3306)/linkgo_im?charset=utf8mb4&parseTime=True&loc=Local
+      - DB_MAX_OPEN_CONNS=80
+      - DB_MAX_IDLE_CONNS=20
       - ETCD_ENDPOINTS=etcd:2379
+      - LOGIC_ADDR=logic:9001
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8090/healthz"]
       interval: 10s
@@ -120,7 +142,11 @@ services:
       retries: 5
 
   gateway-b:
-    build: .
+    build:
+      context: .
+      args:
+        GO_BUILDER_IMAGE: ${GO_BUILDER_IMAGE:-golang:1.25-alpine}
+        RUNTIME_IMAGE: ${RUNTIME_IMAGE:-alpine:3.22}
     container_name: linkgo-gateway-b
     command: ./gateway
     ports:
@@ -134,7 +160,11 @@ services:
       - GATEWAY_ID=gateway-b
       - REDIS_ADDR=redis:6379
       - REDIS_PASSWORD=123456
+      - DB_DSN=root:root@tcp(mysql:3306)/linkgo_im?charset=utf8mb4&parseTime=True&loc=Local
+      - DB_MAX_OPEN_CONNS=80
+      - DB_MAX_IDLE_CONNS=20
       - ETCD_ENDPOINTS=etcd:2379
+      - LOGIC_ADDR=logic:9001
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8090/healthz"]
       interval: 10s
@@ -142,7 +172,11 @@ services:
       retries: 5
 
   gateway-c:
-    build: .
+    build:
+      context: .
+      args:
+        GO_BUILDER_IMAGE: ${GO_BUILDER_IMAGE:-golang:1.25-alpine}
+        RUNTIME_IMAGE: ${RUNTIME_IMAGE:-alpine:3.22}
     container_name: linkgo-gateway-c
     command: ./gateway
     ports:
@@ -156,7 +190,11 @@ services:
       - GATEWAY_ID=gateway-c
       - REDIS_ADDR=redis:6379
       - REDIS_PASSWORD=123456
+      - DB_DSN=root:root@tcp(mysql:3306)/linkgo_im?charset=utf8mb4&parseTime=True&loc=Local
+      - DB_MAX_OPEN_CONNS=80
+      - DB_MAX_IDLE_CONNS=20
       - ETCD_ENDPOINTS=etcd:2379
+      - LOGIC_ADDR=logic:9001
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8090/healthz"]
       interval: 10s

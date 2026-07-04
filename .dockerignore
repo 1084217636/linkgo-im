@@ -1,0 +1,12 @@
+.git
+.github
+.codex
+artifacts
+bin
+benchmark/logs
+tmp
+*.log
+*.pdf
+升级文档
+mermaid-diagram-*.png
+image.png

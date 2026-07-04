@@ -4,13 +4,17 @@ metadata:
   name: linkgo-im-config
   namespace: linkgo-im
 data:
-  REDIS_ADDR: redis.default.svc.cluster.local:6379
-  ETCD_ENDPOINTS: etcd.default.svc.cluster.local:2379
-  DB_DSN: root:root@tcp(mysql.default.svc.cluster.local:3306)/linkgo_im?charset=utf8mb4&parseTime=True&loc=Local
-  KAFKA_BROKERS: kafka.default.svc.cluster.local:9092
+  REDIS_ADDR: redis.linkgo-im.svc.cluster.local:6379
+  ETCD_ENDPOINTS: etcd.linkgo-im.svc.cluster.local:2379
+  LOGIC_ADDR: logic.linkgo-im.svc.cluster.local:9001
+  DB_DSN: root:root@tcp(mysql.linkgo-im.svc.cluster.local:3306)/linkgo_im?charset=utf8mb4&parseTime=True&loc=Local
+  KAFKA_BROKERS: kafka.linkgo-im.svc.cluster.local:9092
   KAFKA_GROUP_TOPIC: group_message_dispatch
   KAFKA_RETRY_TOPIC: group_message_retry
   KAFKA_DLQ_TOPIC: group_message_dlq
   KAFKA_CONSUMER_GROUP: transfer-group
   ROUTE_TTL_SECONDS: "75"
+  ACK_TIMEOUT_SECONDS: "5"
+  ACK_MAX_RETRIES: "3"
+  RETRY_INTERVAL_SECONDS: "1"
   TRANSFER_METRICS_PORT: "9102"

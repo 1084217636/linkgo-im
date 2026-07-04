@@ -6,6 +6,13 @@ Redis:
   Addr: redis:6379
   Password: "123456"
 
+Database:
+  Dsn: root:root@tcp(mysql:3306)/linkgo_im?charset=utf8mb4&parseTime=True&loc=Local
+  MaxOpenConns: 80
+  MaxIdleConns: 20
+  ConnMaxLifetimeSeconds: 300
+  ConnMaxIdleTimeSeconds: 60
+
 Etcd:
   Endpoints:
     - etcd:2379
@@ -16,6 +23,9 @@ Logic:
 Gateway:
   ID: gateway-a
   RouteTTLSeconds: 75
+  AckTimeoutSeconds: 5
+  AckMaxRetries: 3
+  RetryIntervalSeconds: 1
 
 Auth:
   AccessSecret: linkgo_im_secret_2026

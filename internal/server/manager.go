@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
+	"github.com/1084217636/linkgo-im/internal/metrics"
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -25,6 +27,13 @@ type ClientConn struct {
 
 type PushEnvelope struct {
 	TargetID   string `json:"target_id"`
+	MessageID  string `json:"message_id"`
+	SessionID  string `json:"session_id"`
+	Seq        int64  `json:"seq"`
+	TraceID    string `json:"trace_id"`
+	GatewayID  string `json:"gateway_id"`
+	RouteValue string `json:"route_value"`
+	SentAt     int64  `json:"sent_at"`
 	PayloadB64 string `json:"payload_b64"`
 }
 
@@ -93,18 +102,81 @@ func (m *ClientManager) SubscribeRedis(ctx context.Context, rdb *redis.Client, g
 
 		conn, ok := m.GetConn(envelope.TargetID)
 		if !ok {
+			MarkOffline(ctx, rdb, envelope.TargetID, envelope.MessageID, envelope.SentAt)
+			if envelope.RouteValue != "" {
+				_ = ClearRouteIfMatch(ctx, rdb, envelope.TargetID, envelope.RouteValue)
+			}
+			metrics.OutboundMessages.WithLabelValues("gateway", "missing_conn").Inc()
+			logx.Errorw("gateway push missed local connection",
+				logx.Field("trace_id", envelope.TraceID),
+				logx.Field("message_id", envelope.MessageID),
+				logx.Field("seq", envelope.Seq),
+				logx.Field("gateway_id", gatewayID),
+				logx.Field("target_id", envelope.TargetID),
+			)
 			continue
 		}
 
 		payload, err := base64.StdEncoding.DecodeString(envelope.PayloadB64)
 		if err != nil {
-			logx.Errorf("decode pubsub payload failed: %v", err)
+			logx.Errorw("decode pubsub payload failed",
+				logx.Field("trace_id", envelope.TraceID),
+				logx.Field("message_id", envelope.MessageID),
+				logx.Field("seq", envelope.Seq),
+				logx.Field("gateway_id", gatewayID),
+				logx.Field("error", err.Error()),
+			)
 			continue
 		}
 
 		if err := conn.WriteBinary(payload); err != nil {
-			logx.Errorf("push websocket failed user=%s: %v", envelope.TargetID, err)
+			MarkOffline(ctx, rdb, envelope.TargetID, envelope.MessageID, envelope.SentAt)
+			if envelope.RouteValue != "" {
+				_ = ClearRouteIfMatch(ctx, rdb, envelope.TargetID, envelope.RouteValue)
+			}
+			_ = conn.Close()
 			m.Remove(envelope.TargetID, conn)
+			metrics.OutboundMessages.WithLabelValues("gateway", "write_error").Inc()
+			logx.Errorw("push websocket failed",
+				logx.Field("trace_id", envelope.TraceID),
+				logx.Field("message_id", envelope.MessageID),
+				logx.Field("seq", envelope.Seq),
+				logx.Field("gateway_id", gatewayID),
+				logx.Field("target_id", envelope.TargetID),
+				logx.Field("error", err.Error()),
+			)
+			continue
 		}
+		metrics.OutboundMessages.WithLabelValues("gateway", "success").Inc()
+		logx.Infow("gateway pushed websocket message",
+			logx.Field("trace_id", envelope.TraceID),
+			logx.Field("message_id", envelope.MessageID),
+			logx.Field("seq", envelope.Seq),
+			logx.Field("gateway_id", gatewayID),
+			logx.Field("target_id", envelope.TargetID),
+		)
 	}
+}
+
+func MarkOffline(ctx context.Context, rdb *redis.Client, uid, messageID string, sentAt int64) {
+	if rdb == nil || uid == "" || messageID == "" {
+		return
+	}
+	if sentAt <= 0 {
+		sentAt = timeNowMillis()
+	}
+	if err := rdb.ZAdd(ctx, OfflineMessageKey(uid), redis.Z{
+		Score:  float64(sentAt),
+		Member: messageID,
+	}).Err(); err != nil {
+		logx.Errorw("save offline message failed",
+			logx.Field("message_id", messageID),
+			logx.Field("target_id", uid),
+			logx.Field("error", err.Error()),
+		)
+	}
+}
+
+func timeNowMillis() int64 {
+	return time.Now().UnixMilli()
 }

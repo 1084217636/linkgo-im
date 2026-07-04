@@ -2,6 +2,7 @@ package svc
 
 import (
 	"database/sql"
+	"time"
 
 	"github.com/1084217636/linkgo-im/cmd/logic/internal/config"
 	"github.com/1084217636/linkgo-im/internal/delivery"
@@ -22,8 +23,8 @@ type ServiceContext struct {
 
 func NewServiceContext(c config.Config) *ServiceContext {
 	rdb := redis.NewClient(&redis.Options{
-		Addr:     c.Redis.Addr,
-		Password: c.Redis.Password,
+		Addr:     c.Cache.Addr,
+		Password: c.Cache.Password,
 		DB:       0,
 	})
 
@@ -31,8 +32,29 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	if err != nil {
 		logx.Must(err)
 	}
-	db.SetMaxOpenConns(100)
-	db.SetMaxIdleConns(10)
+	maxOpen := c.Database.MaxOpenConns
+	if maxOpen <= 0 {
+		maxOpen = 100
+	}
+	maxIdle := c.Database.MaxIdleConns
+	if maxIdle <= 0 {
+		maxIdle = 20
+	}
+	if maxIdle > maxOpen {
+		maxIdle = maxOpen
+	}
+	connMaxLifetime := c.Database.ConnMaxLifetimeSeconds
+	if connMaxLifetime <= 0 {
+		connMaxLifetime = 300
+	}
+	connMaxIdleTime := c.Database.ConnMaxIdleTimeSeconds
+	if connMaxIdleTime <= 0 {
+		connMaxIdleTime = 60
+	}
+	db.SetMaxOpenConns(maxOpen)
+	db.SetMaxIdleConns(maxIdle)
+	db.SetConnMaxLifetime(time.Duration(connMaxLifetime) * time.Second)
+	db.SetConnMaxIdleTime(time.Duration(connMaxIdleTime) * time.Second)
 	logx.Must(db.Ping())
 
 	kafkaWriter := &kafka.Writer{

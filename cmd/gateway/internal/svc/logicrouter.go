@@ -2,92 +2,55 @@ package svc
 
 import (
 	"context"
-	"sync"
+	"errors"
+	"time"
 
 	"github.com/1084217636/linkgo-im/api"
 	"github.com/1084217636/linkgo-im/cmd/gateway/internal/config"
-	"github.com/1084217636/linkgo-im/internal/discovery"
 	"github.com/zeromicro/go-zero/core/logx"
-	"google.golang.org/grpc"
+	"github.com/zeromicro/go-zero/zrpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-type logicClientEntry struct {
-	conn   *grpc.ClientConn
-	client api.LogicClient
-}
-
 type LogicRouterPool struct {
-	directAddr string
-	resolver   *discovery.Resolver
-	mu         sync.Mutex
-	clients    map[string]*logicClientEntry
+	client     api.LogicClient
+	zrpcClient zrpc.Client
 }
 
 func NewLogicRouter(c config.Config) *LogicRouterPool {
+	var conf zrpc.RpcClientConf
 	if c.Logic.Addr != "" {
-		return &LogicRouterPool{
-			directAddr: c.Logic.Addr,
-			clients:    map[string]*logicClientEntry{},
-		}
+		conf = zrpc.NewDirectClientConf([]string{c.Logic.Addr}, "", "")
+	} else {
+		conf = zrpc.NewEtcdClientConf(c.Etcd.Endpoints, "/services/logic", "", "")
 	}
+	conf.NonBlock = true
+	conf.Timeout = int64((2 * time.Second).Milliseconds())
+	conf.BalancerName = "p2c_ewma"
 
-	client, err := discovery.NewClient(c.Etcd.Endpoints)
+	client, err := zrpc.NewClient(conf, zrpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		logx.Must(err)
 	}
 
 	return &LogicRouterPool{
-		resolver: discovery.NewResolver(client, "logic"),
-		clients:  map[string]*logicClientEntry{},
+		client:     api.NewLogicClient(client.Conn()),
+		zrpcClient: client,
 	}
 }
 
 func (p *LogicRouterPool) GetClient(ctx context.Context, key string) (api.LogicClient, error) {
-	addr := p.directAddr
-	var err error
-	if addr == "" {
-		addr, err = p.resolver.Pick(ctx, key)
-		if err != nil {
-			return nil, err
-		}
+	if p == nil || p.client == nil {
+		return nil, errors.New("logic client unavailable")
 	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if entry, ok := p.clients[addr]; ok {
-		return entry.client, nil
-	}
-
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		return nil, err
-	}
-
-	entry := &logicClientEntry{
-		conn:   conn,
-		client: api.NewLogicClient(conn),
-	}
-	p.clients[addr] = entry
-	return entry.client, nil
+	return p.client, nil
 }
 
 func (p *LogicRouterPool) Close() {
 	if p == nil {
 		return
 	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	for addr, entry := range p.clients {
-		if entry != nil && entry.conn != nil {
-			_ = entry.conn.Close()
-		}
-		delete(p.clients, addr)
-	}
-	if p.resolver != nil {
-		_ = p.resolver.Close()
+	if p.zrpcClient != nil {
+		_ = p.zrpcClient.Conn().Close()
 	}
 }

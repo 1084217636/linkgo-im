@@ -1,23 +1,34 @@
 package config
 
-import "github.com/zeromicro/go-zero/rest"
+import (
+	"github.com/zeromicro/go-zero/rest"
+)
 
 type Config struct {
 	rest.RestConf
-	Redis   RedisConf
-	Etcd    EtcdConf
-	Logic   LogicConf
-	Gateway GatewayConf
-	Auth    AuthConf
+	Redis    RedisConf    `json:",optional"`
+	Database DatabaseConf `json:",optional"`
+	Etcd     EtcdConf     `json:",optional"`
+	Logic    LogicConf    `json:",optional"`
+	Gateway  GatewayConf  `json:",optional"`
+	Auth     AuthConf     `json:",optional"`
 }
 
 type RedisConf struct {
-	Addr     string
-	Password string
+	Addr     string `json:",optional"`
+	Password string `json:",optional"`
+}
+
+type DatabaseConf struct {
+	Dsn                    string `json:",optional"`
+	MaxOpenConns           int    `json:",default=80"`
+	MaxIdleConns           int    `json:",default=20"`
+	ConnMaxLifetimeSeconds int64  `json:",default=300"`
+	ConnMaxIdleTimeSeconds int64  `json:",default=60"`
 }
 
 type EtcdConf struct {
-	Endpoints []string
+	Endpoints []string `json:",optional"`
 }
 
 type LogicConf struct {
@@ -25,10 +36,13 @@ type LogicConf struct {
 }
 
 type GatewayConf struct {
-	ID              string `json:",optional"`
-	RouteTTLSeconds int64  `json:",default=75"`
+	ID                   string `json:",optional"`
+	RouteTTLSeconds      int64  `json:",default=75"`
+	AckTimeoutSeconds    int64  `json:",default=5"`
+	AckMaxRetries        int    `json:",default=3"`
+	RetryIntervalSeconds int64  `json:",default=1"`
 }
 
 type AuthConf struct {
-	AccessSecret string
+	AccessSecret string `json:",optional"`
 }

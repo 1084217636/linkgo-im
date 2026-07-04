@@ -27,25 +27,38 @@ func main() {
 	overrideConfigFromEnv(&c)
 	authutil.SetJWTSecret(c.Auth.AccessSecret)
 
-	ctx := svc.NewServiceContext(c)
-	defer ctx.Close()
+	svcCtx := svc.NewServiceContext(c)
+	defer svcCtx.Close()
 
-	go serverSubscribe(ctx)
+	runtimeCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	server := rest.MustNewServer(c.RestConf, rest.WithCors())
-	defer server.Stop()
+	if cleaned, err := server.CleanupGatewayRoutes(runtimeCtx, svcCtx.Rdb, svcCtx.GatewayID); err != nil {
+		logx.Errorf("cleanup gateway routes failed: %v", err)
+	} else if cleaned > 0 {
+		logx.Infow("cleanup stale gateway routes",
+			logx.Field("gateway_id", svcCtx.GatewayID),
+			logx.Field("count", cleaned),
+		)
+	}
+	go server.StartGatewayHeartbeat(runtimeCtx, svcCtx.Rdb, svcCtx.GatewayID, svcCtx.RouteTTL)
+	go server.StartPendingRetryLoop(runtimeCtx, svcCtx.Rdb, svcCtx.GatewayID, svcCtx.AckTimeout, svcCtx.AckRetries, svcCtx.RetryEvery)
+	go serverSubscribe(runtimeCtx, svcCtx)
 
-	handler.RegisterHandlers(server, ctx)
+	restServer := rest.MustNewServer(c.RestConf, rest.WithCors())
+	defer restServer.Stop()
 
-	logx.Infof("starting gateway server at %s:%d", c.Host, c.Port)
-	server.Start()
+	handler.RegisterHandlers(restServer, svcCtx)
+
+	logx.Infof("Starting gateway server at %s:%d", c.Host, c.Port)
+	restServer.Start()
 }
 
-func serverSubscribe(ctx *svc.ServiceContext) {
-	if ctx == nil || ctx.Rdb == nil {
+func serverSubscribe(runtimeCtx context.Context, svcCtx *svc.ServiceContext) {
+	if svcCtx == nil || svcCtx.Rdb == nil {
 		return
 	}
-	server.Manager.SubscribeRedis(context.Background(), ctx.Rdb, ctx.GatewayID)
+	server.Manager.SubscribeRedis(runtimeCtx, svcCtx.Rdb, svcCtx.GatewayID)
 }
 
 func overrideConfigFromEnv(c *config.Config) {
@@ -67,6 +80,29 @@ func overrideConfigFromEnv(c *config.Config) {
 	if value := os.Getenv("REDIS_PASSWORD"); value != "" {
 		c.Redis.Password = value
 	}
+	if value := os.Getenv("DB_DSN"); value != "" {
+		c.Database.Dsn = value
+	}
+	if value := os.Getenv("DB_MAX_OPEN_CONNS"); value != "" {
+		if n, err := strconv.Atoi(value); err == nil {
+			c.Database.MaxOpenConns = n
+		}
+	}
+	if value := os.Getenv("DB_MAX_IDLE_CONNS"); value != "" {
+		if n, err := strconv.Atoi(value); err == nil {
+			c.Database.MaxIdleConns = n
+		}
+	}
+	if value := os.Getenv("DB_CONN_MAX_LIFETIME_SECONDS"); value != "" {
+		if n, err := strconv.ParseInt(value, 10, 64); err == nil {
+			c.Database.ConnMaxLifetimeSeconds = n
+		}
+	}
+	if value := os.Getenv("DB_CONN_MAX_IDLE_TIME_SECONDS"); value != "" {
+		if n, err := strconv.ParseInt(value, 10, 64); err == nil {
+			c.Database.ConnMaxIdleTimeSeconds = n
+		}
+	}
 	if value := os.Getenv("ETCD_ENDPOINTS"); value != "" {
 		c.Etcd.Endpoints = parseEndpoints(value)
 	}
@@ -79,6 +115,21 @@ func overrideConfigFromEnv(c *config.Config) {
 	if value := os.Getenv("ROUTE_TTL_SECONDS"); value != "" {
 		if ttl, err := strconv.ParseInt(value, 10, 64); err == nil {
 			c.Gateway.RouteTTLSeconds = ttl
+		}
+	}
+	if value := os.Getenv("ACK_TIMEOUT_SECONDS"); value != "" {
+		if ttl, err := strconv.ParseInt(value, 10, 64); err == nil {
+			c.Gateway.AckTimeoutSeconds = ttl
+		}
+	}
+	if value := os.Getenv("ACK_MAX_RETRIES"); value != "" {
+		if retries, err := strconv.Atoi(value); err == nil {
+			c.Gateway.AckMaxRetries = retries
+		}
+	}
+	if value := os.Getenv("RETRY_INTERVAL_SECONDS"); value != "" {
+		if ttl, err := strconv.ParseInt(value, 10, 64); err == nil {
+			c.Gateway.RetryIntervalSeconds = ttl
 		}
 	}
 }

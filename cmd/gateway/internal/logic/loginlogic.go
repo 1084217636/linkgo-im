@@ -7,6 +7,7 @@ import (
 	"github.com/1084217636/linkgo-im/cmd/gateway/internal/svc"
 	"github.com/1084217636/linkgo-im/cmd/gateway/internal/types"
 	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/zrpc"
 )
 
 type LoginLogic struct {
@@ -29,7 +30,8 @@ func (l *LoginLogic) Login(req *types.LoginReq) (*types.LoginResp, error) {
 		return nil, err
 	}
 
-	reply, err := cli.Login(l.ctx, &api.LoginReq{
+	ctx := zrpc.SetHashKey(l.ctx, req.Username)
+	reply, err := cli.Login(ctx, &api.LoginReq{
 		Username: req.Username,
 		Password: req.Password,
 	})
@@ -38,7 +40,8 @@ func (l *LoginLogic) Login(req *types.LoginReq) (*types.LoginResp, error) {
 	}
 
 	return &types.LoginResp{
-		Token:  reply.Token,
-		UserID: reply.UserId,
+		Token:         reply.Token,
+		UserID:        reply.UserId,
+		Conversations: reply.Conversations,
 	}, nil
 }

@@ -4,10 +4,10 @@ import "github.com/zeromicro/go-zero/zrpc"
 
 type Config struct {
 	zrpc.RpcServerConf
-	Redis    RedisConf
+	Cache    RedisConf
 	Database DatabaseConf
 	Kafka    KafkaConf
-	Auth     AuthConf
+	JWT      JWTConf
 }
 
 type RedisConf struct {
@@ -16,7 +16,11 @@ type RedisConf struct {
 }
 
 type DatabaseConf struct {
-	Dsn string
+	Dsn                    string
+	MaxOpenConns           int
+	MaxIdleConns           int
+	ConnMaxLifetimeSeconds int64
+	ConnMaxIdleTimeSeconds int64
 }
 
 type KafkaConf struct {
@@ -24,6 +28,6 @@ type KafkaConf struct {
 	GroupTopic string
 }
 
-type AuthConf struct {
+type JWTConf struct {
 	AccessSecret string
 }

@@ -7,6 +7,7 @@
 - 将 Protobuf 二进制消息编码为 Base64 后写入 Redis。
 - 维护 `pending_ack:<uid>`，跟踪待确认消息。
 - 维护 `ack_idx:<uid>`，支持按 `message_id` 精确删除。
+- 用户侧 `pending_ack/offline_msg` 只保存 `message_id` 指针；消息热缓存和会话时间线由 `message_payload:<message_id>`、`session_timeline:<session_id>` 承担。
 - 在线用户走 Redis `im_message_push`。
 - 在线用户根据 `route:<uid>` 中记录的 `gatewayID` 走定向 Redis 频道。
 - 离线用户写入 `offline_msg:<uid>`。

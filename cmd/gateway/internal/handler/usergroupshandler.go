@@ -13,10 +13,9 @@ func UserGroupsHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		l := logic.NewUserGroupsLogic(r.Context(), svcCtx)
 		resp, err := l.List()
 		if err != nil {
-			writeError(r, w, http.StatusInternalServerError, err.Error())
-			return
+			httpx.ErrorCtx(r.Context(), w, err)
+		} else {
+			httpx.OkJsonCtx(r.Context(), w, resp)
 		}
-
-		httpx.OkJsonCtx(r.Context(), w, resp)
 	}
 }

@@ -36,7 +36,15 @@ spec:
       labels:
         app: logic
     spec:
+      serviceAccountName: linkgo-im
       terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: logic
       containers:
         - name: logic
           image: linkgo-im:local

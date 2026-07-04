@@ -1,9 +1,10 @@
 # API
 
-`api/` 目录存放 IM 系统的 protobuf 协议和 gRPC 生成代码，是 Gateway、Logic、Transfer 之间的统一通信契约。
+`api/` 目录存放 IM 系统的 API 契约，包括 Gateway HTTP API 定义、protobuf 协议和 gRPC 生成代码。
 
 ## 目录职责
 
+- `gateway.api` 定义 Gateway 对外 HTTP API，是 go-zero API 代码生成的唯一源文件。
 - `protocol.proto` 定义登录、消息推送、历史查询和 WebSocket 二进制消息帧。
 - `protocol.pb.go` 和 `protocol_grpc.pb.go` 是生成产物，不手改。
 
@@ -25,3 +26,5 @@ protoc --go_out=. --go-grpc_out=. api/protocol.proto
 ## 设计说明
 
 协议层统一了 gRPC 和 WebSocket 的消息模型，避免外层继续依赖 JSON 文本协议。
+
+HTTP API 定义统一放在 `api/gateway.api`，不要在 `cmd/gateway/` 下再保留一份，避免代码生成入口漂移。

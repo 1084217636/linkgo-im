@@ -35,7 +35,15 @@ spec:
         prometheus.io/path: /metrics
         prometheus.io/port: "9102"
     spec:
+      serviceAccountName: linkgo-im
       terminationGracePeriodSeconds: 45
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: transfer
       containers:
         - name: transfer
           image: linkgo-im:local
