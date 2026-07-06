@@ -374,3 +374,46 @@ group-transfer-demo 默认使用 docker-compose.yml 启动完整栈，并设置 
 如果 Transfer healthz 不可用，脚本会失败而不是 SKIP，这样能避免把没有 Kafka/Transfer 的演示误当成完整群聊闭环。
 本轮没有强行启动 full stack；当前已用 compose config 和脚本语法验证入口，full stack 演示留给下一轮在停止 light stack 后执行。
 ```
+
+## 7. V4 OpenAI-compatible Provider 验证
+
+本版新增：
+
+```text
+internal/ai/openai_provider.go
+internal/ai/fallback_provider.go
+internal/ai/openai_provider_test.go
+AI_BASE_URL / AI_API_KEY / AI_FALLBACK_TO_MOCK
+```
+
+验证命令：
+
+```bash
+go test ./...
+make build
+docker compose config
+```
+
+实际结果：
+
+```text
+go test ./...：通过，包含 internal/ai provider tests。
+make build：通过，生成 bin/gateway、bin/logic、bin/transfer。
+docker compose config：通过。
+```
+
+测试覆盖：
+
+```text
+1. OpenAI-compatible provider 请求 /chat/completions。
+2. Authorization header 使用 Bearer API key。
+3. 解析模型返回的 JSON summary/todos/risks。
+4. primary provider 失败时 fallback 到 mock provider。
+```
+
+当前边界：
+
+```text
+V4 只完成真实模型 provider 接入能力，不强制配置真实 API key。
+本地和秋招 demo 默认仍可使用 mock provider，保证演示稳定。
+```

@@ -323,13 +323,31 @@ V3 不做：
 把 mock provider 替换成可插拔真实 provider，并补知识库问答的最小闭环。
 ```
 
-候选内容：
+本版已落地：
 
 ```text
-1. 新增 OpenAI / Ollama / SiliconFlow provider 之一。
-2. 增加 provider 超时、失败降级和敏感信息脱敏。
-3. 新增 /api/v1/ai/ask，基于企业 FAQ 或项目文档做知识库问答。
-4. 保存 AI 调用输入摘要、输出、耗时、失败原因，形成审计证据。
+1. 新增 OpenAI-compatible provider，兼容 OpenAI / SiliconFlow 等 chat/completions API。
+2. AI 配置新增 BaseURL / APIKey / FallbackToMock。
+3. 环境变量新增 AI_BASE_URL / AI_API_KEY / AI_FALLBACK_TO_MOCK。
+4. 新增 FallbackProvider，真实 provider 失败时可降级 mock。
+5. 使用 httptest 覆盖 provider 请求、鉴权、JSON 解析和 fallback。
+```
+
+V4 当前边界：
+
+```text
+1. 还没有保存 AI 调用日志和 token 成本。
+2. 还没有对模型返回 JSON 做强 schema 校验。
+3. 还没有新增 /api/v1/ai/ask 知识库问答。
+4. 真实 provider 默认不进入 WebSocket 主链路，只服务总结接口。
+```
+
+下一步 V5：
+
+```text
+1. 增加 AI 调用审计记录和 provider latency 指标。
+2. 新增企业 FAQ / 项目文档知识库问答的最小闭环。
+3. 增加敏感信息脱敏策略，避免把手机号、token、密钥发给模型。
 ```
 
 ## 3. 每次 AI 帮你改完必须补的内容
@@ -358,10 +376,10 @@ docs/INTERVIEW_QA.md
 
 ## 4. 下一步立刻执行
 
-当前项目一已经完成 V0、V1、V2、V3。下一步建议进入 V4：
+当前项目一已经完成 V0、V1、V2、V3、V4。下一步建议进入 V5：
 
 ```text
-1. 保持 IM 主链路和 group-transfer-demo 稳定可演示。
-2. 再接一个真实模型 provider。
-3. 最后补知识库问答，不要一口气重构消息主链路。
+1. 保持 IM 主链路、AI summary 和 group-transfer-demo 稳定可演示。
+2. 补 AI 调用审计和延迟指标。
+3. 再做知识库问答，不要一口气重构消息主链路。
 ```

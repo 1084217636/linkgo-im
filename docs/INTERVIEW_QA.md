@@ -252,3 +252,17 @@ created_at
 ```
 
 这样能追溯是谁在什么时候总结了哪一段群聊消息。
+
+## 19. V4 接真实模型后，为什么还保留 mock？
+
+因为真实模型是不稳定外部依赖，可能遇到无 API key、网络超时、限流、成本限制和返回格式不稳定。项目里把模型封装成 `Provider`：
+
+```text
+SummaryService -> Provider interface -> mock / openai-compatible / fallback
+```
+
+默认 demo 仍可用 mock，配置 `AI_PROVIDER=openai-compatible`、`AI_BASE_URL`、`AI_API_KEY` 后才接真实模型。这样既能演示工程闭环，也能说明生产里如何做降级。
+
+## 20. 真实模型调用会不会拖慢 IM？
+
+不会进入 WebSocket 实时消息链路。AI 总结是独立 HTTP 接口，只读取已落库的群聊消息，然后写 `ai_summary_records`。实时消息仍走 Gateway / Logic / Redis / Kafka / Transfer，不依赖模型返回。

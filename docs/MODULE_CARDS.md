@@ -464,3 +464,47 @@ UPDATE 带 remaining_amount / remaining_count 条件防超卖。
 ```text
 internal/logic/redpacket_test.go
 ```
+
+## 11. AI Provider
+
+位置：
+
+```text
+internal/ai/provider.go
+internal/ai/mock_provider.go
+internal/ai/openai_provider.go
+internal/ai/fallback_provider.go
+cmd/gateway/internal/svc/servicecontext.go
+```
+
+职责：
+
+```text
+把 AI 群聊总结的模型调用从业务逻辑中隔离出来。SummaryService 只依赖 Provider 接口，不关心背后是 mock、OpenAI-compatible 还是其他厂商。
+```
+
+关键结构：
+
+```text
+Provider
+ProviderOptions
+OpenAICompatibleProvider
+FallbackProvider
+```
+
+配置：
+
+```text
+AI_PROVIDER
+AI_MODEL
+AI_BASE_URL
+AI_API_KEY
+AI_TIMEOUT_SECONDS
+AI_FALLBACK_TO_MOCK
+```
+
+面试价值：
+
+```text
+能说明 AI 接入不是把 HTTP 调用写死在业务里，而是通过 provider 抽象、超时和 fallback 控制外部模型的不确定性。
+```

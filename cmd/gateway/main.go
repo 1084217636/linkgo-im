@@ -138,6 +138,12 @@ func overrideConfigFromEnv(c *config.Config) {
 	if value := os.Getenv("AI_MODEL"); value != "" {
 		c.AI.Model = value
 	}
+	if value := os.Getenv("AI_BASE_URL"); value != "" {
+		c.AI.BaseURL = value
+	}
+	if value := os.Getenv("AI_API_KEY"); value != "" {
+		c.AI.APIKey = value
+	}
 	if value := os.Getenv("AI_TIMEOUT_SECONDS"); value != "" {
 		if ttl, err := strconv.ParseInt(value, 10, 64); err == nil {
 			c.AI.TimeoutSeconds = ttl
@@ -146,6 +152,11 @@ func overrideConfigFromEnv(c *config.Config) {
 	if value := os.Getenv("AI_MAX_MESSAGES"); value != "" {
 		if n, err := strconv.Atoi(value); err == nil {
 			c.AI.MaxMessages = n
+		}
+	}
+	if value := os.Getenv("AI_FALLBACK_TO_MOCK"); value != "" {
+		if enabled, err := strconv.ParseBool(value); err == nil {
+			c.AI.FallbackToMock = enabled
 		}
 	}
 }

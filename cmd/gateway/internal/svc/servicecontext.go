@@ -84,7 +84,14 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		logx.Must(db.Ping())
 	}
 
-	aiProvider := ai.NewProvider(c.AI.Provider)
+	aiProvider := ai.NewProviderWithOptions(ai.ProviderOptions{
+		Name:           c.AI.Provider,
+		Model:          c.AI.Model,
+		BaseURL:        c.AI.BaseURL,
+		APIKey:         c.AI.APIKey,
+		Timeout:        time.Duration(c.AI.TimeoutSeconds) * time.Second,
+		FallbackToMock: c.AI.FallbackToMock,
+	})
 
 	return &ServiceContext{
 		Config: c,

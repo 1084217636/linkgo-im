@@ -51,6 +51,9 @@ type AuthConf struct {
 type AIConf struct {
 	Provider       string `json:",optional"`
 	Model          string `json:",optional"`
+	BaseURL        string `json:",optional"`
+	APIKey         string `json:",optional"`
 	TimeoutSeconds int64  `json:",default=10"`
 	MaxMessages    int    `json:",default=100"`
+	FallbackToMock bool   `json:",default=true"`
 }

@@ -33,5 +33,8 @@ Auth:
 AI:
   Provider: mock
   Model: mock-summary-v1
+  BaseURL:
+  APIKey:
   TimeoutSeconds: 10
   MaxMessages: 100
+  FallbackToMock: true
