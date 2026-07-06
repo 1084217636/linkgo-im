@@ -268,7 +268,54 @@ V2 不做：
 不在 WebSocket 主链路里同步调用 AI
 ```
 
-### V3：AI 助手增强
+### V3：群聊 Kafka/Transfer 验收入口
+
+目标：
+
+```text
+先把群聊异步扩散做成明确的公司级验收入口，再继续增强 AI。
+```
+
+本版已落地：
+
+```text
+1. scripts/demo_core_im.sh 支持 COMPOSE_FILE_PATH / COMPOSE_ENV_FILE / USE_DOCKER_CN。
+2. 新增 scripts/demo_group_transfer.sh，默认启动完整 docker-compose.yml，并强制 REQUIRE_TRANSFER=1。
+3. 新增 make group-transfer-demo。
+4. 新增 docs/VERSION_TASK_TRACKER.csv，按 Excel/CSV 方式记录每版任务、验收、瓶颈和下一步。
+5. 新增 docs/PERFORMANCE_AND_EVOLUTION.md，记录核心链路、群聊 fanout 和 AI 总结的性能演化思路。
+```
+
+V3 验收命令：
+
+```bash
+make test
+make build
+docker compose config
+bash -n scripts/demo_core_im.sh scripts/demo_group_transfer.sh
+```
+
+全量链路演示命令：
+
+```bash
+make group-transfer-demo
+```
+
+如果 light 栈占用了本地端口，先执行：
+
+```bash
+make docker-light-down
+```
+
+V3 不做：
+
+```text
+不重写 Transfer 消费逻辑
+不改 WebSocket 协议
+不把 AI 加到消息实时投递链路里
+```
+
+### V4：AI 助手增强
 
 目标：
 
@@ -311,10 +358,10 @@ docs/INTERVIEW_QA.md
 
 ## 4. 下一步立刻执行
 
-当前项目一已经完成 V0、V1、V2。下一步建议进入 V3：
+当前项目一已经完成 V0、V1、V2、V3。下一步建议进入 V4：
 
 ```text
-1. 先保持 mock provider 稳定可演示。
+1. 保持 IM 主链路和 group-transfer-demo 稳定可演示。
 2. 再接一个真实模型 provider。
 3. 最后补知识库问答，不要一口气重构消息主链路。
 ```

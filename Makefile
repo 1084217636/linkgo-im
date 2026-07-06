@@ -1,6 +1,6 @@
 APP_NAME := linkgo-im
 
-.PHONY: test fmt-check build docker-build compose-config compose-cn-config compose-light-config compose-light-cn-config observability-config observability-cn-config observability-up observability-cn-up observability-down observability-cn-down docker-up docker-cn-up docker-cn-reset docker-light-up docker-light-cn-up docker-down docker-cn-down docker-light-down docker-light-cn-down k8s-render k8s-dry-run k8s-apply k8s-delete ci-local bench ops-smoke core-im-demo ai-config-check ai-test-suggest ai-quality-summary ai-demo
+.PHONY: test fmt-check build docker-build compose-config compose-cn-config compose-light-config compose-light-cn-config observability-config observability-cn-config observability-up observability-cn-up observability-down observability-cn-down docker-up docker-cn-up docker-cn-reset docker-light-up docker-light-cn-up docker-down docker-cn-down docker-light-down docker-light-cn-down k8s-render k8s-dry-run k8s-apply k8s-delete ci-local bench ops-smoke core-im-demo group-transfer-demo ai-config-check ai-test-suggest ai-quality-summary ai-demo
 
 test:
 	go test ./...
@@ -96,6 +96,9 @@ ops-smoke:
 
 core-im-demo:
 	bash scripts/demo_core_im.sh
+
+group-transfer-demo:
+	bash scripts/demo_group_transfer.sh
 
 ai-config-check:
 	python3 tools/ai_agent_workflow/config_check.py --config-dir examples/game_config --output artifacts/config_check_report.json

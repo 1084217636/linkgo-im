@@ -302,3 +302,75 @@ provider = mock
 todos = 3
 risks = 1
 ```
+
+## 6. V3 群聊 Transfer 验收入口
+
+本版新增：
+
+```text
+scripts/demo_group_transfer.sh
+make group-transfer-demo
+docs/VERSION_TASK_TRACKER.csv
+docs/PERFORMANCE_AND_EVOLUTION.md
+```
+
+固定验收命令：
+
+```bash
+make test
+make build
+docker compose config
+bash -n scripts/demo_core_im.sh scripts/demo_group_transfer.sh
+```
+
+本轮实际结果：
+
+```text
+make test：通过。
+make build：通过，生成 bin/gateway、bin/logic、bin/transfer。
+docker compose config：通过。
+bash -n scripts/demo_core_im.sh scripts/demo_group_transfer.sh：通过。
+START_STACK=1 COMPOSE_FILE_PATH=docker-compose.light.yml make core-im-demo：通过。
+```
+
+轻量栈 demo 实际结果：
+
+```text
+PASS gateway healthz
+PASS login userA
+PASS login userB
+PASS redis ping
+PASS mysql ping
+PASS websocket connect userA
+PASS websocket connect userB
+PASS single chat receive + ack
+PASS ack clears pending
+PASS offline indexes recorded
+PASS offline replay + ack
+SKIP group chat via kafka transfer
+PASS mysql messages persisted
+PASS gateway metrics exposed
+```
+
+全量链路演示：
+
+```bash
+make group-transfer-demo
+```
+
+预期结果：
+
+```text
+PASS group create
+PASS group chat via kafka transfer
+PASS mysql messages persisted
+PASS gateway metrics exposed
+```
+
+说明：
+
+```text
+group-transfer-demo 默认使用 docker-compose.yml 启动完整栈，并设置 REQUIRE_TRANSFER=1。
+如果 Transfer healthz 不可用，脚本会失败而不是 SKIP，这样能避免把没有 Kafka/Transfer 的演示误当成完整群聊闭环。
+本轮没有强行启动 full stack；当前已用 compose config 和脚本语法验证入口，full stack 演示留给下一轮在停止 light stack 后执行。
+```
