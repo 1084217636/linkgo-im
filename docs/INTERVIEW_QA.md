@@ -266,3 +266,30 @@ SummaryService -> Provider interface -> mock / openai-compatible / fallback
 ## 20. 真实模型调用会不会拖慢 IM？
 
 不会进入 WebSocket 实时消息链路。AI 总结是独立 HTTP 接口，只读取已落库的群聊消息，然后写 `ai_summary_records`。实时消息仍走 Gateway / Logic / Redis / Kafka / Transfer，不依赖模型返回。
+
+## 21. V5 为什么要做 ai_call_logs？
+
+因为只保存总结结果还不够。真实模型调用有超时、限流、成本和稳定性问题，所以 V5 额外记录：
+
+```text
+provider
+message_count
+seq 范围
+duration_ms
+status
+error_message
+operator_id
+```
+
+这样可以回答：
+
+```text
+哪类 provider 慢？
+失败是不是集中在某个模型？
+一次总结用了多少条消息？
+失败时用户是谁、群是什么、覆盖哪段消息？
+```
+
+## 22. ai_call_logs 写失败怎么办？
+
+当前是 best-effort，不阻断总结主流程。理由是 AI 总结本身是用户可见功能，审计表临时故障不应该让接口完全不可用。但这个边界要说清楚：生产上可以把失败日志打到错误日志或消息队列，后续异步补偿。

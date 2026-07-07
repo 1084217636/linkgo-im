@@ -508,3 +508,53 @@ AI_FALLBACK_TO_MOCK
 ```text
 能说明 AI 接入不是把 HTTP 调用写死在业务里，而是通过 provider 抽象、超时和 fallback 控制外部模型的不确定性。
 ```
+
+## 12. AI Call Audit
+
+位置：
+
+```text
+internal/ai/summary_service.go
+internal/metrics/metrics.go
+sql/20260707_ai_call_logs.sql
+```
+
+职责：
+
+```text
+记录 AI provider 调用的审计证据和性能指标，支撑故障复盘、成本优化和面试中的工程闭环说明。
+```
+
+表：
+
+```text
+ai_call_logs
+```
+
+关键字段：
+
+```text
+call_id
+provider
+group_id
+conversation_id
+operator_id
+message_count
+message_start_seq / message_end_seq
+duration_ms
+status
+error_message
+created_at
+```
+
+指标：
+
+```text
+linkgo_ai_provider_latency_seconds{provider,result}
+```
+
+当前边界：
+
+```text
+审计日志是 best-effort，不阻断 summary 主流程；fallback 内部的 primary/fallback attempt 还没有展开成多条日志。
+```

@@ -146,3 +146,49 @@ AI_API_KEY=...
 2. 增加 ai_call_logs 表，保存输入摘要、provider、耗时、错误码。
 3. 补 /api/v1/ai/ask，把企业 FAQ 或项目文档问答做成第二个 AI 闭环。
 ```
+
+## V5：AI 调用审计与 provider 延迟指标
+
+本版目标是把 AI 调用从“接口能返回”升级成“可审计、可观察、可优化”。
+
+当前能力：
+
+```text
+AI summary request
+  ↓
+权限校验和消息加载
+  ↓
+provider.Summarize
+  ↓
+ai_call_logs 记录 provider、消息数、seq 范围、耗时、状态、失败原因
+  ↓
+ai_summary_records 保存总结结果
+  ↓
+Prometheus 暴露 linkgo_ai_provider_latency_seconds
+```
+
+相比 V4 的改进：
+
+```text
+1. 不只知道 AI 请求成功/失败，还能知道 provider 调用耗时。
+2. 每次调用都有 call_id，可以追溯谁在什么时候对哪个群做了总结。
+3. 失败 provider 也会写入 ai_call_logs，便于复盘模型超时、限流或返回异常。
+4. ai_demo 自动应用 20260707_ai_call_logs.sql，旧库也能升级。
+```
+
+当前边界：
+
+```text
+1. ai_call_logs 是 best-effort，写失败不阻断总结主流程。
+2. FallbackProvider 目前只记录最终 provider 结果，不展开 primary/fallback 每次 attempt 明细。
+3. error_message 只做长度截断，还没有敏感信息脱敏。
+4. 还没有 token 成本、prompt 摘要和模型返回原文的审计字段。
+```
+
+下一步建议：
+
+```text
+1. 增加 provider_attempt_logs，把 primary failure 和 fallback success 都记录下来。
+2. 增加脱敏工具，过滤手机号、token、API key 等敏感字段。
+3. 接 /api/v1/ai/ask，用 FAQ/项目文档做知识库问答。
+```

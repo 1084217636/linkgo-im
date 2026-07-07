@@ -48,6 +48,12 @@ var (
 		Name: "linkgo_ai_summary_requests_total",
 		Help: "AI group summary requests by provider and result.",
 	}, []string{"provider", "result"})
+
+	AIProviderLatencySeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "linkgo_ai_provider_latency_seconds",
+		Help:    "AI provider call latency in seconds by provider and result.",
+		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30},
+	}, []string{"provider", "result"})
 )
 
 func Handler() http.Handler {

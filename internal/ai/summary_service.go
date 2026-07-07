@@ -30,6 +30,21 @@ type SummaryService struct {
 	maxMessages int
 }
 
+type CallLog struct {
+	CallID          string
+	Provider        string
+	GroupID         string
+	ConversationID  string
+	OperatorID      string
+	MessageCount    int
+	MessageStartSeq int64
+	MessageEndSeq   int64
+	DurationMs      int64
+	Status          string
+	ErrorMessage    string
+	CreatedAt       int64
+}
+
 func NewSummaryService(db *sql.DB, provider Provider, maxMessages int) *SummaryService {
 	if provider == nil {
 		provider = NewMockProvider()
@@ -71,19 +86,24 @@ func (s *SummaryService) Generate(ctx context.Context, params GenerateSummaryPar
 		return nil, ErrNoMessages
 	}
 
-	result, err := s.provider.Summarize(ctx, SummaryRequest{
+	request := SummaryRequest{
 		GroupID:        groupID,
 		ConversationID: conversationID,
 		OperatorID:     operatorID,
 		Messages:       messages,
 		IncludeTodos:   params.IncludeTodos,
 		IncludeRisks:   params.IncludeRisks,
-	})
+	}
+	providerStart := time.Now()
+	result, err := s.provider.Summarize(ctx, request)
+	durationMs := time.Since(providerStart).Milliseconds()
 	if err != nil {
+		_ = s.saveCallLog(ctx, buildCallLog(s.provider.Name(), operatorID, request, nil, durationMs, "error", err.Error()))
 		return nil, err
 	}
 	now := time.Now().UnixMilli()
 	completeSummaryResult(result, groupID, conversationID, s.provider.Name(), messages, now)
+	_ = s.saveCallLog(ctx, buildCallLog(result.Provider, operatorID, request, result, durationMs, "success", ""))
 	if err := s.saveResult(ctx, operatorID, result); err != nil {
 		return nil, err
 	}
@@ -211,6 +231,39 @@ INSERT INTO ai_summary_records
   (summary_id, group_id, conversation_id, operator_id, message_start_seq, message_end_seq, summary, todos_json, risks_json, provider, created_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `, result.SummaryID, result.GroupID, result.ConversationID, operatorID, result.MessageStartSeq, result.MessageEndSeq, result.Summary, string(todosJSON), string(risksJSON), result.Provider, result.CreatedAt)
+	return err
+}
+
+func buildCallLog(provider, operatorID string, req SummaryRequest, result *SummaryResult, durationMs int64, status, errMessage string) CallLog {
+	log := CallLog{
+		Provider:       provider,
+		GroupID:        req.GroupID,
+		ConversationID: req.ConversationID,
+		OperatorID:     operatorID,
+		MessageCount:   len(req.Messages),
+		DurationMs:     durationMs,
+		Status:         status,
+		ErrorMessage:   truncateRunes(errMessage, 512),
+		CreatedAt:      time.Now().UnixMilli(),
+	}
+	if len(req.Messages) > 0 {
+		log.MessageStartSeq = req.Messages[0].Seq
+		log.MessageEndSeq = req.Messages[len(req.Messages)-1].Seq
+	}
+	if result != nil {
+		log.MessageStartSeq = result.MessageStartSeq
+		log.MessageEndSeq = result.MessageEndSeq
+	}
+	log.CallID = newSummaryID(log.CreatedAt)
+	return log
+}
+
+func (s *SummaryService) saveCallLog(ctx context.Context, item CallLog) error {
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO ai_call_logs
+  (call_id, provider, group_id, conversation_id, operator_id, message_count, message_start_seq, message_end_seq, duration_ms, status, error_message, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, item.CallID, item.Provider, item.GroupID, item.ConversationID, item.OperatorID, item.MessageCount, item.MessageStartSeq, item.MessageEndSeq, item.DurationMs, item.Status, item.ErrorMessage, item.CreatedAt)
 	return err
 }
 

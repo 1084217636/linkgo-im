@@ -417,3 +417,47 @@ docker compose config：通过。
 V4 只完成真实模型 provider 接入能力，不强制配置真实 API key。
 本地和秋招 demo 默认仍可使用 mock provider，保证演示稳定。
 ```
+
+## 8. V5 AI 调用审计与指标验证
+
+本版新增：
+
+```text
+ai_call_logs
+sql/20260707_ai_call_logs.sql
+linkgo_ai_provider_latency_seconds
+scripts/ai_demo.sh 自动应用新迁移
+SummaryService provider success/error audit tests
+```
+
+验证命令：
+
+```bash
+go test ./...
+make build
+docker compose config
+```
+
+当前已验证：
+
+```text
+go test ./internal/ai ./cmd/gateway：通过。
+summary_service_test 覆盖 INSERT INTO ai_call_logs success。
+summary_service_test 覆盖 provider error 时写入 ai_call_logs error。
+```
+
+预期指标：
+
+```text
+linkgo_ai_summary_requests_total{provider,result}
+linkgo_ai_provider_latency_seconds_bucket{provider,result,le}
+linkgo_ai_provider_latency_seconds_sum{provider,result}
+linkgo_ai_provider_latency_seconds_count{provider,result}
+```
+
+当前边界：
+
+```text
+审计日志 best-effort 写入，失败不阻断总结接口。
+真实 provider fallback 的 primary failure 还没有 attempt 级拆分记录。
+```

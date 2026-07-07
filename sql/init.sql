@@ -159,7 +159,27 @@ CREATE TABLE IF NOT EXISTS `ai_summary_records` (
     INDEX `idx_ai_summary_conversation_seq` (`conversation_id`, `message_end_seq`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI群聊总结记录表';
 
--- 10. 预置实验账号（create_time 随便填的当前毫秒值）
+-- 10. AI调用日志：保存 provider 调用耗时、状态和失败原因，支撑审计与优化
+CREATE TABLE IF NOT EXISTS `ai_call_logs` (
+    `call_id` VARCHAR(64) NOT NULL COMMENT 'AI调用ID',
+    `provider` VARCHAR(64) NOT NULL COMMENT 'AI提供方',
+    `group_id` VARCHAR(64) NOT NULL COMMENT '群组ID',
+    `conversation_id` VARCHAR(128) NOT NULL COMMENT '群聊会话ID',
+    `operator_id` VARCHAR(64) NOT NULL COMMENT '触发用户',
+    `message_count` INT NOT NULL COMMENT '输入消息数',
+    `message_start_seq` BIGINT NOT NULL DEFAULT 0 COMMENT '覆盖起始seq',
+    `message_end_seq` BIGINT NOT NULL DEFAULT 0 COMMENT '覆盖结束seq',
+    `duration_ms` BIGINT NOT NULL COMMENT 'provider调用耗时',
+    `status` VARCHAR(32) NOT NULL COMMENT 'success/error',
+    `error_message` VARCHAR(512) NOT NULL DEFAULT '' COMMENT '失败原因',
+    `created_at` BIGINT NOT NULL COMMENT '毫秒级创建时间',
+    PRIMARY KEY (`call_id`),
+    INDEX `idx_ai_call_provider_time` (`provider`, `created_at`),
+    INDEX `idx_ai_call_group_time` (`group_id`, `created_at`),
+    INDEX `idx_ai_call_status_time` (`status`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI调用审计日志';
+
+-- 11. 预置实验账号（create_time 随便填的当前毫秒值）
 INSERT INTO `users` (`user_id`, `username`, `password`, `created_at`, `updated_at`) VALUES 
 ('1001', 'userA', '123456', 1710100000000, 1710100000000), 
 ('1002', 'userB', '123456', 1710100000000, 1710100000000), 

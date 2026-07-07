@@ -51,6 +51,7 @@ Redis 和 MySQL 分别承担什么角色？
 2. Timeout、fallback、审计和敏感信息风险。
 3. AI 为什么不能阻塞实时消息链路。
 4. 群聊总结如何做权限校验和结果留痕。
+5. ai_call_logs 和 provider latency 指标如何定位模型问题。
 ```
 
 面试重点：

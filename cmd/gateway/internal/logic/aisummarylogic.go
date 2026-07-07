@@ -41,6 +41,7 @@ func (l *AISummaryLogic) Generate(req *types.AISummaryReq) (*types.AISummaryResp
 	ctx, cancel := context.WithTimeout(l.ctx, time.Duration(timeoutSeconds)*time.Second)
 	defer cancel()
 
+	start := time.Now()
 	result, err := l.svcCtx.AISummary.Generate(ctx, ai.GenerateSummaryParams{
 		GroupID:      req.GroupID,
 		OperatorID:   userID,
@@ -49,10 +50,13 @@ func (l *AISummaryLogic) Generate(req *types.AISummaryReq) (*types.AISummaryResp
 		IncludeRisks: req.IncludeRisks,
 	})
 	if err != nil {
-		metrics.AISummaryRequests.WithLabelValues(providerName, aiSummaryMetricResult(err)).Inc()
+		metricResult := aiSummaryMetricResult(err)
+		metrics.AISummaryRequests.WithLabelValues(providerName, metricResult).Inc()
+		metrics.AIProviderLatencySeconds.WithLabelValues(providerName, metricResult).Observe(time.Since(start).Seconds())
 		return nil, err
 	}
 	metrics.AISummaryRequests.WithLabelValues(result.Provider, "success").Inc()
+	metrics.AIProviderLatencySeconds.WithLabelValues(result.Provider, "success").Observe(time.Since(start).Seconds())
 	return toAISummaryResp(result), nil
 }
 

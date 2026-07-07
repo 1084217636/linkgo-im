@@ -350,6 +350,33 @@ V4 当前边界：
 3. 增加敏感信息脱敏策略，避免把手机号、token、密钥发给模型。
 ```
 
+V5 已落地：
+
+```text
+1. 新增 ai_call_logs 表和 sql/20260707_ai_call_logs.sql。
+2. SummaryService 在 provider 调用后写入 call log，记录 provider、消息数、seq 范围、耗时、状态和错误信息。
+3. 新增 linkgo_ai_provider_latency_seconds Prometheus histogram。
+4. scripts/ai_demo.sh 自动应用 ai_call_logs 迁移。
+5. 单元测试覆盖 provider success audit 和 provider error audit。
+```
+
+V5 当前边界：
+
+```text
+1. ai_call_logs 是 best-effort，不阻断总结主流程。
+2. fallback 的 primary error 还没有独立 attempt 级日志。
+3. error_message 还没有做敏感信息脱敏。
+4. 还没有知识库问答接口。
+```
+
+下一步 V6：
+
+```text
+1. 增加 provider_attempt_logs 或把 attempt 明细写进 ai_call_logs。
+2. 增加敏感信息脱敏。
+3. 新增 /api/v1/ai/ask，基于 FAQ/项目文档做 RAG 问答。
+```
+
 ## 3. 每次 AI 帮你改完必须补的内容
 
 每做完一个功能，都要补：
@@ -376,10 +403,10 @@ docs/INTERVIEW_QA.md
 
 ## 4. 下一步立刻执行
 
-当前项目一已经完成 V0、V1、V2、V3、V4。下一步建议进入 V5：
+当前项目一已经完成 V0、V1、V2、V3、V4、V5。下一步建议进入 V6：
 
 ```text
 1. 保持 IM 主链路、AI summary 和 group-transfer-demo 稳定可演示。
-2. 补 AI 调用审计和延迟指标。
+2. 补 provider attempt 明细和敏感信息脱敏。
 3. 再做知识库问答，不要一口气重构消息主链路。
 ```
