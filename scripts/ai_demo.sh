@@ -35,6 +35,7 @@ if [[ "${APPLY_MIGRATION:-1}" == "1" ]]; then
   (cd "$ROOT_DIR" && compose exec -T mysql mysql -uroot -proot linkgo_im < sql/20260705_ai_summary.sql)
   (cd "$ROOT_DIR" && compose exec -T mysql mysql -uroot -proot linkgo_im < sql/20260707_ai_call_logs.sql)
   (cd "$ROOT_DIR" && compose exec -T mysql mysql -uroot -proot linkgo_im < sql/20260707_ai_provider_attempt_logs.sql)
+  (cd "$ROOT_DIR" && compose exec -T mysql mysql -uroot -proot linkgo_im < sql/20260707_ai_qa_records.sql)
 fi
 
 login_json="$(curl -fsS "$GATEWAY_BASE/api/v1/login" \

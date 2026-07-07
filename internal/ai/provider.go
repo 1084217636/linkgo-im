@@ -9,6 +9,7 @@ import (
 type Provider interface {
 	Name() string
 	Summarize(ctx context.Context, req SummaryRequest) (*SummaryResult, error)
+	Answer(ctx context.Context, req AskRequest) (*AskResult, error)
 }
 
 type ProviderOptions struct {

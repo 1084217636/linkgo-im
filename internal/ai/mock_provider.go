@@ -62,6 +62,41 @@ func (p *MockProvider) Summarize(ctx context.Context, req SummaryRequest) (*Summ
 	return result, nil
 }
 
+func (p *MockProvider) Answer(ctx context.Context, req AskRequest) (*AskResult, error) {
+	start := time.Now()
+	status := "success"
+	errMessage := ""
+	defer func() {
+		RecordProviderAttempt(ctx, ProviderAttempt{
+			Provider:     p.Name(),
+			Status:       status,
+			DurationMs:   time.Since(start).Milliseconds(),
+			ErrorMessage: errMessage,
+		})
+	}()
+	select {
+	case <-ctx.Done():
+		status = "error"
+		errMessage = ctx.Err().Error()
+		return nil, ctx.Err()
+	default:
+	}
+
+	result := &AskResult{
+		Question:      req.Question,
+		Sources:       req.Sources,
+		KnowledgeHits: len(req.Sources),
+		Provider:      p.Name(),
+	}
+	if len(req.Sources) == 0 {
+		result.Answer = "知识库中暂未找到相关资料，请尝试提供更具体的模块名、链路或关键词。"
+		return result, nil
+	}
+
+	result.Answer = buildMockAnswer(req.Question, req.Sources)
+	return result, nil
+}
+
 func buildMockSummary(messages []Message) string {
 	parts := make([]string, 0, 3)
 	for _, msg := range messages {
@@ -118,6 +153,26 @@ func extractMockRisks(messages []Message) []RiskItem {
 		}
 	}
 	return risks
+}
+
+func buildMockAnswer(question string, sources []KnowledgeSource) string {
+	parts := make([]string, 0, 2)
+	references := make([]string, 0, 2)
+	for _, source := range sources {
+		snippet := strings.TrimSpace(source.Snippet)
+		if snippet == "" {
+			continue
+		}
+		parts = append(parts, truncateRunes(snippet, 80))
+		references = append(references, source.Title)
+		if len(parts) == 2 {
+			break
+		}
+	}
+	if len(parts) == 0 {
+		return "知识库中找到了相关文档，但没有提取到有效摘要，请直接查看文档原文。"
+	}
+	return fmt.Sprintf("针对问题“%s”，知识库里的相关结论是：%s。建议优先查看：%s。", truncateRunes(strings.TrimSpace(question), 64), strings.Join(parts, "；"), strings.Join(references, "、"))
 }
 
 func containsAny(value string, keywords []string) bool {

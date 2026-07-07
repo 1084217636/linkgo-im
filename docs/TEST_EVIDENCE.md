@@ -494,3 +494,59 @@ ok github.com/1084217636/linkgo-im/cmd/gateway
 2. provider error 写入 ai_call_logs 和 ai_provider_attempt_logs。
 3. RedactSensitive 会过滤 token/password/Bearer。
 ```
+
+## 10. V7 AI FAQ/RAG 问答验证
+
+本版新增：
+
+```text
+/api/v1/ai/ask
+internal/ai/ask_service.go
+internal/ai/knowledge_base.go
+docs/AI_FAQ.md
+ai_qa_records
+scripts/ai_ask_demo.sh
+linkgo_ai_ask_requests_total
+```
+
+验证命令：
+
+```bash
+go test ./...
+make build
+docker compose config
+bash -n scripts/ai_demo.sh scripts/ai_ask_demo.sh
+START_STACK=1 make ai-ask-demo
+```
+
+当前已验证：
+
+```text
+go test ./...：通过。
+make build：通过。
+docker compose config：通过。
+docker compose -f docker-compose.light.yml config：通过。
+bash -n scripts/ai_demo.sh scripts/ai_ask_demo.sh：通过。
+START_STACK=1 make ai-ask-demo：通过。
+```
+
+预期响应应包含：
+
+```text
+answer_id
+question
+answer
+sources 至少 1 条
+knowledge_hits >= 1
+provider = mock
+```
+
+本轮实际响应摘要：
+
+```text
+answer_id = aiq_1783408433191_eeb8b8c2
+question = 群聊为什么用 Kafka？
+knowledge_hits = 3
+provider = mock
+sources = docs/AI_FAQ.md, docs/INTERVIEW_QA.md, docs/CORE_LINKS.md
+```

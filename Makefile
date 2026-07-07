@@ -1,6 +1,6 @@
 APP_NAME := linkgo-im
 
-.PHONY: test fmt-check build docker-build compose-config compose-cn-config compose-light-config compose-light-cn-config observability-config observability-cn-config observability-up observability-cn-up observability-down observability-cn-down docker-up docker-cn-up docker-cn-reset docker-light-up docker-light-cn-up docker-down docker-cn-down docker-light-down docker-light-cn-down k8s-render k8s-dry-run k8s-apply k8s-delete ci-local bench ops-smoke core-im-demo group-transfer-demo ai-config-check ai-test-suggest ai-quality-summary ai-demo
+.PHONY: test fmt-check build docker-build compose-config compose-cn-config compose-light-config compose-light-cn-config observability-config observability-cn-config observability-up observability-cn-up observability-down observability-cn-down docker-up docker-cn-up docker-cn-reset docker-light-up docker-light-cn-up docker-down docker-cn-down docker-light-down docker-light-cn-down k8s-render k8s-dry-run k8s-apply k8s-delete ci-local bench ops-smoke core-im-demo group-transfer-demo ai-config-check ai-test-suggest ai-quality-summary ai-demo ai-ask-demo
 
 test:
 	go test ./...
@@ -111,3 +111,6 @@ ai-quality-summary:
 
 ai-demo:
 	bash scripts/ai_demo.sh
+
+ai-ask-demo:
+	bash scripts/ai_ask_demo.sh

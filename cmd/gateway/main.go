@@ -159,6 +159,14 @@ func overrideConfigFromEnv(c *config.Config) {
 			c.AI.FallbackToMock = enabled
 		}
 	}
+	if value := os.Getenv("AI_KNOWLEDGE_PATHS"); value != "" {
+		c.AI.KnowledgePaths = parseEndpoints(value)
+	}
+	if value := os.Getenv("AI_KNOWLEDGE_TOP_K"); value != "" {
+		if n, err := strconv.Atoi(value); err == nil {
+			c.AI.KnowledgeTopK = n
+		}
+	}
 }
 
 func parseEndpoints(raw string) []string {

@@ -38,3 +38,10 @@ AI:
   TimeoutSeconds: 10
   MaxMessages: 100
   FallbackToMock: true
+  KnowledgePaths:
+    - docs/AI_FAQ.md
+    - README.md
+    - docs/CODE_MAP.md
+    - docs/CORE_LINKS.md
+    - docs/INTERVIEW_QA.md
+  KnowledgeTopK: 3

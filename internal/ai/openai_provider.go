@@ -79,6 +79,24 @@ func (p *OpenAICompatibleProvider) Summarize(ctx context.Context, req SummaryReq
 	return result, err
 }
 
+func (p *OpenAICompatibleProvider) Answer(ctx context.Context, req AskRequest) (*AskResult, error) {
+	start := time.Now()
+	result, err := p.answer(ctx, req)
+	status := "success"
+	errMessage := ""
+	if err != nil {
+		status = "error"
+		errMessage = err.Error()
+	}
+	RecordProviderAttempt(ctx, ProviderAttempt{
+		Provider:     p.Name(),
+		Status:       status,
+		DurationMs:   time.Since(start).Milliseconds(),
+		ErrorMessage: errMessage,
+	})
+	return result, err
+}
+
 func (p *OpenAICompatibleProvider) summarize(ctx context.Context, req SummaryRequest) (*SummaryResult, error) {
 	if p.apiKey == "" {
 		return nil, errors.New("ai api key is required for openai-compatible provider")
@@ -126,6 +144,53 @@ func (p *OpenAICompatibleProvider) summarize(ctx context.Context, req SummaryReq
 	return parseOpenAISummary(req, chatResp.Choices[0].Message.Content, p.name), nil
 }
 
+func (p *OpenAICompatibleProvider) answer(ctx context.Context, req AskRequest) (*AskResult, error) {
+	if p.apiKey == "" {
+		return nil, errors.New("ai api key is required for openai-compatible provider")
+	}
+	body, err := json.Marshal(openAIChatRequest{
+		Model: p.model,
+		Messages: []openAIChatMessage{
+			{Role: "system", Content: "你是企业研发协同 IM 的知识库问答助手。只能基于给定资料回答，输出 JSON，不要输出 Markdown。"},
+			{Role: "user", Content: buildAskPrompt(req)},
+		},
+		Temperature: 0.2,
+		ResponseFormat: map[string]string{
+			"type": "json_object",
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	callCtx, cancel := context.WithTimeout(ctx, p.timeout)
+	defer cancel()
+	httpReq, err := http.NewRequestWithContext(callCtx, http.MethodPost, p.baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("ai provider returned %s", resp.Status)
+	}
+
+	var chatResp openAIChatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
+		return nil, err
+	}
+	if len(chatResp.Choices) == 0 {
+		return nil, errors.New("ai provider returned no choices")
+	}
+	return parseOpenAIAnswer(req, chatResp.Choices[0].Message.Content, p.name), nil
+}
+
 type openAIChatRequest struct {
 	Model          string              `json:"model"`
 	Messages       []openAIChatMessage `json:"messages"`
@@ -150,6 +215,16 @@ type providerSummaryPayload struct {
 	Risks   []RiskItem `json:"risks"`
 }
 
+type providerAnswerPayload struct {
+	Answer  string                 `json:"answer"`
+	Sources []providerAnswerSource `json:"sources"`
+}
+
+type providerAnswerSource struct {
+	Path  string `json:"path"`
+	Title string `json:"title"`
+}
+
 func buildSummaryPrompt(req SummaryRequest) string {
 	var b strings.Builder
 	b.WriteString("请总结下面的群聊消息，输出 JSON：{\"summary\":\"...\",\"todos\":[{\"title\":\"...\",\"owner_id\":\"...\",\"source_seq\":1}],\"risks\":[{\"level\":\"low|medium|high\",\"description\":\"...\",\"source_seq\":1}]}。\n")
@@ -161,6 +236,21 @@ func buildSummaryPrompt(req SummaryRequest) string {
 	}
 	for _, msg := range req.Messages {
 		b.WriteString(fmt.Sprintf("seq=%d from=%s content=%q\n", msg.Seq, msg.FromUID, msg.Content))
+	}
+	return b.String()
+}
+
+func buildAskPrompt(req AskRequest) string {
+	var b strings.Builder
+	b.WriteString("请只基于下面的项目资料回答问题，输出 JSON：{\"answer\":\"...\",\"sources\":[{\"path\":\"...\",\"title\":\"...\"}]}。\n")
+	if len(req.Sources) == 0 {
+		b.WriteString("当前没有命中任何资料。如果资料不足，请明确回答知识库未命中。\n")
+	}
+	b.WriteString("问题：")
+	b.WriteString(req.Question)
+	b.WriteString("\n")
+	for idx, source := range req.Sources {
+		b.WriteString(fmt.Sprintf("资料%d path=%s title=%s snippet=%q\n", idx+1, source.Path, source.Title, source.Snippet))
 	}
 	return b.String()
 }
@@ -189,4 +279,41 @@ func parseOpenAISummary(req SummaryRequest, raw, provider string) *SummaryResult
 		result.Risks = nil
 	}
 	return result
+}
+
+func parseOpenAIAnswer(req AskRequest, raw, provider string) *AskResult {
+	payload := providerAnswerPayload{}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil || strings.TrimSpace(payload.Answer) == "" {
+		payload.Answer = strings.TrimSpace(raw)
+	}
+	result := &AskResult{
+		Question:      req.Question,
+		Answer:        payload.Answer,
+		Sources:       matchAnswerSources(req.Sources, payload.Sources),
+		KnowledgeHits: len(req.Sources),
+		Provider:      provider,
+	}
+	if len(result.Sources) == 0 {
+		result.Sources = req.Sources
+	}
+	if result.KnowledgeHits == 0 {
+		result.KnowledgeHits = len(result.Sources)
+	}
+	return result
+}
+
+func matchAnswerSources(candidates []KnowledgeSource, requested []providerAnswerSource) []KnowledgeSource {
+	if len(requested) == 0 {
+		return nil
+	}
+	matched := make([]KnowledgeSource, 0, len(requested))
+	for _, item := range requested {
+		for _, source := range candidates {
+			if source.Path == item.Path || (item.Title != "" && source.Title == item.Title) {
+				matched = append(matched, source)
+				break
+			}
+		}
+	}
+	return matched
 }

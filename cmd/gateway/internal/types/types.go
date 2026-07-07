@@ -196,3 +196,25 @@ type AISummaryResp struct {
 	Provider        string       `json:"provider"`
 	CreatedAt       int64        `json:"created_at"`
 }
+
+type AIAskReq struct {
+	Question string `json:"question"`
+	TopK     int    `json:"top_k,optional"`
+}
+
+type AIKnowledgeSource struct {
+	Path    string `json:"path"`
+	Title   string `json:"title"`
+	Snippet string `json:"snippet"`
+	Score   int    `json:"score,optional"`
+}
+
+type AIAskResp struct {
+	AnswerID      string              `json:"answer_id"`
+	Question      string              `json:"question"`
+	Answer        string              `json:"answer"`
+	Sources       []AIKnowledgeSource `json:"sources"`
+	KnowledgeHits int                 `json:"knowledge_hits"`
+	Provider      string              `json:"provider"`
+	CreatedAt     int64               `json:"created_at"`
+}

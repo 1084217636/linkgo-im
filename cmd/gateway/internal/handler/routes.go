@@ -128,6 +128,11 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Path:    "/ai/group-summary",
 				Handler: AISummaryHandler(serverCtx),
 			},
+			rest.Route{
+				Method:  http.MethodPost,
+				Path:    "/ai/ask",
+				Handler: AIAskHandler(serverCtx),
+			},
 		),
 		rest.WithPrefix("/api/v1"),
 	)

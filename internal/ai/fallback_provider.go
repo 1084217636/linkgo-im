@@ -51,3 +51,25 @@ func (p *FallbackProvider) Summarize(ctx context.Context, req SummaryRequest) (*
 	fallbackResult.Provider = p.primary.Name() + ":fallback:" + p.fallback.Name()
 	return fallbackResult, nil
 }
+
+func (p *FallbackProvider) Answer(ctx context.Context, req AskRequest) (*AskResult, error) {
+	if p == nil {
+		return NewMockProvider().Answer(ctx, req)
+	}
+	if p.primary == nil {
+		if p.fallback == nil {
+			return NewMockProvider().Answer(ctx, req)
+		}
+		return p.fallback.Answer(ctx, req)
+	}
+	result, err := p.primary.Answer(ctx, req)
+	if err == nil {
+		return result, nil
+	}
+	fallbackResult, fallbackErr := p.fallback.Answer(ctx, req)
+	if fallbackErr != nil {
+		return nil, fmt.Errorf("%s failed: %w; fallback failed: %v", p.primary.Name(), err, fallbackErr)
+	}
+	fallbackResult.Provider = p.primary.Name() + ":fallback:" + p.fallback.Name()
+	return fallbackResult, nil
+}

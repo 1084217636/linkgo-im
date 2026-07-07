@@ -26,6 +26,25 @@ type SummaryRequest struct {
 	IncludeRisks   bool
 }
 
+type AskParams struct {
+	OperatorID string
+	Question   string
+	TopK       int
+}
+
+type KnowledgeSource struct {
+	Path    string `json:"path"`
+	Title   string `json:"title"`
+	Snippet string `json:"snippet"`
+	Score   int    `json:"score,omitempty"`
+}
+
+type AskRequest struct {
+	OperatorID string
+	Question   string
+	Sources    []KnowledgeSource
+}
+
 type TodoItem struct {
 	Title     string `json:"title"`
 	OwnerID   string `json:"owner_id,omitempty"`
@@ -49,4 +68,14 @@ type SummaryResult struct {
 	Risks           []RiskItem
 	Provider        string
 	CreatedAt       int64
+}
+
+type AskResult struct {
+	AnswerID      string
+	Question      string
+	Answer        string
+	Sources       []KnowledgeSource
+	KnowledgeHits int
+	Provider      string
+	CreatedAt     int64
 }

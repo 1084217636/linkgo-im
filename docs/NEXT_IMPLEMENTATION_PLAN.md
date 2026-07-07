@@ -403,6 +403,32 @@ V6 当前边界：
 3. 整理最终简历 bullet 和 demo 脚本。
 ```
 
+V7 已落地：
+
+```text
+1. 新增 /api/v1/ai/ask。
+2. 新增 internal/ai/KnowledgeBase，按 README / CODE_MAP / CORE_LINKS / INTERVIEW_QA / AI_FAQ 做关键词召回。
+3. 新增 AskService，复用 provider、attempt audit 和脱敏能力。
+4. 新增 ai_qa_records 表和 sql/20260707_ai_qa_records.sql。
+5. 新增 docs/AI_FAQ.md 和 scripts/ai_ask_demo.sh。
+```
+
+V7 当前边界：
+
+```text
+1. 当前是最小 FAQ/RAG，检索基于关键词，不是向量库。
+2. sources 还是文档段落级，不是代码符号级索引。
+3. ai_qa_records 保存结果和失败信息，但没有 token/cost 字段。
+```
+
+下一步 V8：
+
+```text
+1. 做项目一最终收口：统一 demo、简历 bullet、面试问答。
+2. 补 AI token/cost 口径或知识检索命中指标。
+3. 明确生产化升级边界：向量索引、完整 DLP、权限分级、知识库热更新。
+```
+
 ## 3. 每次 AI 帮你改完必须补的内容
 
 每做完一个功能，都要补：
@@ -429,10 +455,10 @@ docs/INTERVIEW_QA.md
 
 ## 4. 下一步立刻执行
 
-当前项目一已经完成 V0、V1、V2、V3、V4、V5、V6。下一步建议进入 V7：
+当前项目一已经完成 V0、V1、V2、V3、V4、V5、V6、V7。下一步建议进入 V8 收口：
 
 ```text
 1. 保持 IM 主链路、AI summary 和 group-transfer-demo 稳定可演示。
-2. 做知识库问答最小闭环。
+2. 把 ai-demo 和 ai-ask-demo 固定成标准演示流程。
 3. 准备简历 bullet、演示脚本和面试讲法。
 ```

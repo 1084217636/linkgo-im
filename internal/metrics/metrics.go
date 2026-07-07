@@ -49,6 +49,11 @@ var (
 		Help: "AI group summary requests by provider and result.",
 	}, []string{"provider", "result"})
 
+	AIAskRequests = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "linkgo_ai_ask_requests_total",
+		Help: "AI knowledge ask requests by provider and result.",
+	}, []string{"provider", "result"})
+
 	AIProviderLatencySeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "linkgo_ai_provider_latency_seconds",
 		Help:    "AI provider call latency in seconds by provider and result.",

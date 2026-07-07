@@ -26,6 +26,7 @@ type ServiceContext struct {
 	RetryEvery  time.Duration
 	AIProvider  ai.Provider
 	AISummary   *ai.SummaryService
+	AIAsk       *ai.AskService
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
@@ -92,6 +93,10 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		Timeout:        time.Duration(c.AI.TimeoutSeconds) * time.Second,
 		FallbackToMock: c.AI.FallbackToMock,
 	})
+	knowledgeBase, err := ai.NewKnowledgeBase(c.AI.KnowledgePaths)
+	if err != nil {
+		logx.Errorf("load ai knowledge base: %v", err)
+	}
 
 	return &ServiceContext{
 		Config: c,
@@ -111,6 +116,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		RetryEvery:  time.Duration(retryIntervalSeconds) * time.Second,
 		AIProvider:  aiProvider,
 		AISummary:   ai.NewSummaryService(db, aiProvider, c.AI.MaxMessages),
+		AIAsk:       ai.NewAskService(db, aiProvider, knowledgeBase, c.AI.KnowledgeTopK),
 	}
 }
 

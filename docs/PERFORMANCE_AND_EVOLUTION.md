@@ -237,3 +237,48 @@ RedactSensitive 过滤 token/password/API key/Bearer
 2. 增加 token/cost 字段。
 3. 引入更完整的敏感信息检测规则。
 ```
+
+## V7：AI FAQ/RAG 问答闭环
+
+本版目标是把 AI 从“总结群聊”扩成“回答项目知识问题”，但保持范围可控，不把 IM 主项目带偏成独立 AI 平台。
+
+当前能力：
+
+```text
+/api/v1/ai/ask
+  ↓
+AskService
+  ↓
+KnowledgeBase 从 README / CODE_MAP / CORE_LINKS / INTERVIEW_QA / AI_FAQ 检索
+  ↓
+provider Answer
+  ↓
+ai_qa_records 留痕
+  ↓
+ai_provider_attempt_logs 记录 fallback attempt
+```
+
+相比 V6 的改进：
+
+```text
+1. AI 不再只有群聊总结接口，新增项目知识问答第二条业务链路。
+2. 检索层先用项目文档做最小 FAQ/RAG，而不是一开始接向量库。
+3. 问答结果和失败信息会写入 ai_qa_records，形成可审计闭环。
+4. 新增 docs/AI_FAQ.md 和 ai-ask-demo，秋招演示更完整。
+```
+
+当前边界：
+
+```text
+1. 关键词召回适合当前规模，但对复杂自然语言问题的召回精度有限。
+2. sources 是文档段落级，不是代码符号级或知识图谱级索引。
+3. 还没有 token/cost、知识库热更新和更完整的资料权限控制。
+```
+
+下一步建议：
+
+```text
+1. 做项目一最终收口：统一简历 bullet、demo 流程和面试问答。
+2. 增加 token/cost 或 knowledge hit 指标。
+3. 把 FAQ/RAG 的生产化升级路线说清楚：BM25、embedding、权限分级、热更新。
+```

@@ -20,5 +20,7 @@ COPY --from=builder /app/logic .
 COPY --from=builder /app/transfer .
 COPY --from=builder /app/cmd/gateway/etc /root/cmd/gateway/etc
 COPY --from=builder /app/cmd/logic/etc /root/cmd/logic/etc
+COPY --from=builder /app/README.md /root/README.md
+COPY --from=builder /app/docs /root/docs
 # 给执行权限
 RUN chmod +x /root/gateway /root/logic /root/transfer

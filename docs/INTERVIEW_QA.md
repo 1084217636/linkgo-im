@@ -317,3 +317,71 @@ Bearer ...
 ```
 
 这些进入 `ai_call_logs` 或 `ai_provider_attempt_logs` 前会替换成 `[REDACTED]`。当前还是基础正则，不是完整 DLP，面试时要承认这个边界。
+
+## 25. 为什么 V7 先做 FAQ/RAG，而不是直接上向量库？
+
+因为项目一的主线是 Go 后端 IM，不是单独的 AI 平台。V7 的目标是先把知识库问答的业务闭环做出来：
+
+```text
+question
+  ↓
+检索项目文档
+  ↓
+provider answer
+  ↓
+ai_qa_records 留痕
+```
+
+这样能先证明业务价值、接口设计、provider 抽象和审计闭环。向量库、embedding、BM25 属于下一步的召回优化，而不是第一版必须品。
+
+## 26. /api/v1/ai/ask 用了哪些资料？
+
+当前默认使用：
+
+```text
+docs/AI_FAQ.md
+README.md
+docs/CODE_MAP.md
+docs/CORE_LINKS.md
+docs/INTERVIEW_QA.md
+```
+
+这些都是项目自己沉淀的研发知识文档，所以问答更像企业内部知识助手，而不是公域搜索。
+
+## 27. ai_qa_records 和 ai_summary_records 有什么区别？
+
+`ai_summary_records` 记录的是针对某段群聊消息做总结，核心字段是：
+
+```text
+group_id
+conversation_id
+message_start_seq / message_end_seq
+summary
+todos_json
+risks_json
+```
+
+`ai_qa_records` 记录的是知识库问答，核心字段是：
+
+```text
+question
+answer
+sources_json
+knowledge_hits
+status
+error_message
+```
+
+一个是“从消息生成结构化复盘”，一个是“从项目文档回答问题”。
+
+## 28. V7 当前最大的边界是什么？
+
+当前最大的边界是检索层：
+
+```text
+1. 还是关键词召回，不是向量索引。
+2. sources 是文档段落级，不是代码符号级。
+3. 没有知识库热更新和更细的权限控制。
+```
+
+但这正好可以作为面试中的升级路线来讲：先有最小闭环，再做检索和治理优化。
