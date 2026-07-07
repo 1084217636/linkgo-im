@@ -192,3 +192,48 @@ Prometheus 暴露 linkgo_ai_provider_latency_seconds
 2. 增加脱敏工具，过滤手机号、token、API key 等敏感字段。
 3. 接 /api/v1/ai/ask，用 FAQ/项目文档做知识库问答。
 ```
+
+## V6：Provider attempt 明细与敏感信息脱敏
+
+本版目标是补齐真实 provider fallback 时的内部过程留痕，并避免错误信息里泄露 token/API key。
+
+当前能力：
+
+```text
+SummaryService
+  ↓
+AttemptRecorder 注入 context
+  ↓
+provider 记录每次 attempt
+  ↓
+ai_call_logs 记录汇总调用
+  ↓
+ai_provider_attempt_logs 记录每次 provider 尝试
+  ↓
+RedactSensitive 过滤 token/password/API key/Bearer
+```
+
+相比 V5 的改进：
+
+```text
+1. fallback 不再只有最终 provider 字段，可以按 attempt_order 看 primary/fallback 尝试。
+2. provider 错误信息进入审计表前会做基础脱敏。
+3. mock/openai-compatible provider 都会通过 AttemptRecorder 记录耗时和状态。
+4. ai_demo 会自动应用 ai_provider_attempt_logs 迁移。
+```
+
+当前边界：
+
+```text
+1. 脱敏规则是基础正则，还不是完整 DLP。
+2. attempt 表没有记录 token 成本和模型返回原文。
+3. fallback 的错误传播仍以最终返回为主，后续可以把 attempt 摘要也返回给运维日志。
+```
+
+下一步建议：
+
+```text
+1. 做 /api/v1/ai/ask 知识库问答闭环。
+2. 增加 token/cost 字段。
+3. 引入更完整的敏感信息检测规则。
+```

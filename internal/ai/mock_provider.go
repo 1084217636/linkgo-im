@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -20,8 +21,21 @@ func (p *MockProvider) Name() string {
 }
 
 func (p *MockProvider) Summarize(ctx context.Context, req SummaryRequest) (*SummaryResult, error) {
+	start := time.Now()
+	status := "success"
+	errMessage := ""
+	defer func() {
+		RecordProviderAttempt(ctx, ProviderAttempt{
+			Provider:     p.Name(),
+			Status:       status,
+			DurationMs:   time.Since(start).Milliseconds(),
+			ErrorMessage: errMessage,
+		})
+	}()
 	select {
 	case <-ctx.Done():
+		status = "error"
+		errMessage = ctx.Err().Error()
 		return nil, ctx.Err()
 	default:
 	}

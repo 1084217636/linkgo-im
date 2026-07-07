@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -27,6 +28,9 @@ func TestSummaryServiceGenerate(t *testing.T) {
 			AddRow("m1", "group:G100", int64(1), "1001", "今天完成登录链路联调", int64(1000)))
 	mock.ExpectExec("INSERT INTO ai_call_logs").
 		WithArgs(sqlmock.AnyArg(), "mock", "G100", "group:G100", "1001", 3, int64(1), int64(3), sqlmock.AnyArg(), "success", "", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO ai_provider_attempt_logs").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), 1, "mock", "success", sqlmock.AnyArg(), "", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("INSERT INTO ai_summary_records").
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -76,6 +80,9 @@ func TestSummaryServiceAuditsProviderErrorBestEffort(t *testing.T) {
 	mock.ExpectExec("INSERT INTO ai_call_logs").
 		WithArgs(sqlmock.AnyArg(), "failing", "G100", "group:G100", "1001", 1, int64(1), int64(1), sqlmock.AnyArg(), "error", "provider unavailable", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO ai_provider_attempt_logs").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), 1, "failing", "error", sqlmock.AnyArg(), "provider unavailable", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	service := NewSummaryService(db, failingProvider{}, 50)
 	_, err = service.Generate(context.Background(), GenerateSummaryParams{
@@ -123,4 +130,12 @@ func (failingProvider) Name() string {
 
 func (failingProvider) Summarize(context.Context, SummaryRequest) (*SummaryResult, error) {
 	return nil, errors.New("provider unavailable")
+}
+
+func TestRedactSensitive(t *testing.T) {
+	input := "request failed: token=abc123 password:secret Bearer sk-test123"
+	got := RedactSensitive(input)
+	if strings.Contains(got, "abc123") || strings.Contains(got, "secret") || strings.Contains(got, "sk-test123") {
+		t.Fatalf("sensitive value leaked: %s", got)
+	}
 }

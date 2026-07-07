@@ -52,6 +52,8 @@ Redis 和 MySQL 分别承担什么角色？
 3. AI 为什么不能阻塞实时消息链路。
 4. 群聊总结如何做权限校验和结果留痕。
 5. ai_call_logs 和 provider latency 指标如何定位模型问题。
+6. ai_provider_attempt_logs 如何解释 fallback 和失败降级。
+7. 错误日志为什么要做敏感信息脱敏。
 ```
 
 面试重点：

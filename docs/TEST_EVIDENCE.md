@@ -461,3 +461,36 @@ linkgo_ai_provider_latency_seconds_count{provider,result}
 审计日志 best-effort 写入，失败不阻断总结接口。
 真实 provider fallback 的 primary failure 还没有 attempt 级拆分记录。
 ```
+
+## 9. V6 Provider Attempt 与脱敏验证
+
+本版新增：
+
+```text
+AttemptRecorder
+ai_provider_attempt_logs
+sql/20260707_ai_provider_attempt_logs.sql
+RedactSensitive
+provider attempt audit tests
+```
+
+验证命令：
+
+```bash
+go test ./internal/ai ./cmd/gateway
+```
+
+实际结果：
+
+```text
+ok github.com/1084217636/linkgo-im/internal/ai
+ok github.com/1084217636/linkgo-im/cmd/gateway
+```
+
+测试覆盖：
+
+```text
+1. summary success 写入 ai_call_logs 和 ai_provider_attempt_logs。
+2. provider error 写入 ai_call_logs 和 ai_provider_attempt_logs。
+3. RedactSensitive 会过滤 token/password/Bearer。
+```

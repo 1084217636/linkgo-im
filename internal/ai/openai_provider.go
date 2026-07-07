@@ -62,6 +62,24 @@ func (p *OpenAICompatibleProvider) Name() string {
 }
 
 func (p *OpenAICompatibleProvider) Summarize(ctx context.Context, req SummaryRequest) (*SummaryResult, error) {
+	start := time.Now()
+	result, err := p.summarize(ctx, req)
+	status := "success"
+	errMessage := ""
+	if err != nil {
+		status = "error"
+		errMessage = err.Error()
+	}
+	RecordProviderAttempt(ctx, ProviderAttempt{
+		Provider:     p.Name(),
+		Status:       status,
+		DurationMs:   time.Since(start).Milliseconds(),
+		ErrorMessage: errMessage,
+	})
+	return result, err
+}
+
+func (p *OpenAICompatibleProvider) summarize(ctx context.Context, req SummaryRequest) (*SummaryResult, error) {
 	if p.apiKey == "" {
 		return nil, errors.New("ai api key is required for openai-compatible provider")
 	}

@@ -11,6 +11,7 @@
 - `20260703_red_packets.sql`：旧库补齐红包主表和领取记录表。
 - `20260705_ai_summary.sql`：旧库补齐 AI 群聊总结记录表。
 - `20260707_ai_call_logs.sql`：旧库补齐 AI provider 调用审计日志表。
+- `20260707_ai_provider_attempt_logs.sql`：旧库补齐 AI provider attempt 明细表。
 
 ## 关键表设计
 
@@ -21,3 +22,4 @@
 - `red_packets / red_packet_claims`：保存红包主状态和领取记录，使用红包主行锁和 `red_packet_id + user_id` 唯一索引防止并发超卖与重复领取。
 - `ai_summary_records`：保存 AI 总结、待办、风险、触发人和覆盖消息 seq 范围，支撑群聊总结审计与回放。
 - `ai_call_logs`：保存 provider、调用耗时、输入消息数、状态和失败原因，支撑 AI 调用审计和性能优化。
+- `ai_provider_attempt_logs`：保存每次 provider 尝试，支撑 fallback primary/fallback 过程复盘。

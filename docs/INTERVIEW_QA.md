@@ -293,3 +293,27 @@ operator_id
 ## 22. ai_call_logs 写失败怎么办？
 
 当前是 best-effort，不阻断总结主流程。理由是 AI 总结本身是用户可见功能，审计表临时故障不应该让接口完全不可用。但这个边界要说清楚：生产上可以把失败日志打到错误日志或消息队列，后续异步补偿。
+
+## 23. V6 为什么还要 ai_provider_attempt_logs？
+
+因为 fallback 场景下，一个用户请求可能经历多次 provider 尝试：
+
+```text
+openai-compatible -> error
+mock -> success
+```
+
+如果只看最终 summary，会以为 provider 是 `openai-compatible:fallback:mock`，但看不到 primary 失败耗时和原因。attempt 表可以按 `call_id + attempt_order` 还原全过程，便于排查模型超时、限流和降级频率。
+
+## 24. AI 错误日志怎么避免泄露密钥？
+
+V6 增加了基础脱敏：
+
+```text
+token=...
+password=...
+api_key=...
+Bearer ...
+```
+
+这些进入 `ai_call_logs` 或 `ai_provider_attempt_logs` 前会替换成 `[REDACTED]`。当前还是基础正则，不是完整 DLP，面试时要承认这个边界。

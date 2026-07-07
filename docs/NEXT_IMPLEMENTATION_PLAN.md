@@ -377,6 +377,32 @@ V5 当前边界：
 3. 新增 /api/v1/ai/ask，基于 FAQ/项目文档做 RAG 问答。
 ```
 
+V6 已落地：
+
+```text
+1. 新增 AttemptRecorder，通过 context 收集 provider attempt。
+2. mock/openai-compatible provider 写入 attempt 状态、耗时和错误信息。
+3. 新增 ai_provider_attempt_logs 表和迁移脚本。
+4. 新增 RedactSensitive，对 token/password/API key/Bearer 做基础脱敏。
+5. scripts/ai_demo.sh 自动应用 attempt 迁移。
+```
+
+V6 当前边界：
+
+```text
+1. 脱敏规则仍是基础正则。
+2. 没有 token 成本和模型输入摘要。
+3. 还没做知识库问答。
+```
+
+下一步 V7：
+
+```text
+1. 新增 /api/v1/ai/ask。
+2. 用企业 FAQ/项目文档实现最小 RAG 闭环。
+3. 整理最终简历 bullet 和 demo 脚本。
+```
+
 ## 3. 每次 AI 帮你改完必须补的内容
 
 每做完一个功能，都要补：
@@ -403,10 +429,10 @@ docs/INTERVIEW_QA.md
 
 ## 4. 下一步立刻执行
 
-当前项目一已经完成 V0、V1、V2、V3、V4、V5。下一步建议进入 V6：
+当前项目一已经完成 V0、V1、V2、V3、V4、V5、V6。下一步建议进入 V7：
 
 ```text
 1. 保持 IM 主链路、AI summary 和 group-transfer-demo 稳定可演示。
-2. 补 provider attempt 明细和敏感信息脱敏。
-3. 再做知识库问答，不要一口气重构消息主链路。
+2. 做知识库问答最小闭环。
+3. 准备简历 bullet、演示脚本和面试讲法。
 ```

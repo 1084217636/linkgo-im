@@ -558,3 +558,44 @@ linkgo_ai_provider_latency_seconds{provider,result}
 ```text
 审计日志是 best-effort，不阻断 summary 主流程；fallback 内部的 primary/fallback attempt 还没有展开成多条日志。
 ```
+
+## 13. AI Provider Attempts
+
+位置：
+
+```text
+internal/ai/attempt.go
+internal/ai/redact.go
+sql/20260707_ai_provider_attempt_logs.sql
+```
+
+职责：
+
+```text
+记录一次 AI 调用内部的 provider 尝试明细，尤其是 openai-compatible 失败后 fallback 到 mock 的过程。
+```
+
+表：
+
+```text
+ai_provider_attempt_logs
+```
+
+关键字段：
+
+```text
+attempt_id
+call_id
+attempt_order
+provider
+status
+duration_ms
+error_message
+created_at
+```
+
+安全处理：
+
+```text
+RedactSensitive 会对 token/password/API key/Bearer 做基础脱敏，避免错误日志泄露密钥。
+```

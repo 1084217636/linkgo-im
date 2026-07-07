@@ -94,16 +94,21 @@ func (s *SummaryService) Generate(ctx context.Context, params GenerateSummaryPar
 		IncludeTodos:   params.IncludeTodos,
 		IncludeRisks:   params.IncludeRisks,
 	}
+	callID := newSummaryID(time.Now().UnixMilli())
+	recorder := NewAttemptRecorder()
+	providerCtx := WithAttemptRecorder(ctx, recorder)
 	providerStart := time.Now()
-	result, err := s.provider.Summarize(ctx, request)
+	result, err := s.provider.Summarize(providerCtx, request)
 	durationMs := time.Since(providerStart).Milliseconds()
 	if err != nil {
-		_ = s.saveCallLog(ctx, buildCallLog(s.provider.Name(), operatorID, request, nil, durationMs, "error", err.Error()))
+		_ = s.saveCallLog(ctx, buildCallLog(callID, s.provider.Name(), operatorID, request, nil, durationMs, "error", err.Error()))
+		_ = s.saveProviderAttempts(ctx, callID, ensureAttempts(s.provider.Name(), recorder.Attempts(), durationMs, "error", err.Error()))
 		return nil, err
 	}
 	now := time.Now().UnixMilli()
 	completeSummaryResult(result, groupID, conversationID, s.provider.Name(), messages, now)
-	_ = s.saveCallLog(ctx, buildCallLog(result.Provider, operatorID, request, result, durationMs, "success", ""))
+	_ = s.saveCallLog(ctx, buildCallLog(callID, result.Provider, operatorID, request, result, durationMs, "success", ""))
+	_ = s.saveProviderAttempts(ctx, callID, ensureAttempts(result.Provider, recorder.Attempts(), durationMs, "success", ""))
 	if err := s.saveResult(ctx, operatorID, result); err != nil {
 		return nil, err
 	}
@@ -234,7 +239,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	return err
 }
 
-func buildCallLog(provider, operatorID string, req SummaryRequest, result *SummaryResult, durationMs int64, status, errMessage string) CallLog {
+func buildCallLog(callID, provider, operatorID string, req SummaryRequest, result *SummaryResult, durationMs int64, status, errMessage string) CallLog {
 	log := CallLog{
 		Provider:       provider,
 		GroupID:        req.GroupID,
@@ -243,7 +248,7 @@ func buildCallLog(provider, operatorID string, req SummaryRequest, result *Summa
 		MessageCount:   len(req.Messages),
 		DurationMs:     durationMs,
 		Status:         status,
-		ErrorMessage:   truncateRunes(errMessage, 512),
+		ErrorMessage:   truncateRunes(RedactSensitive(errMessage), 512),
 		CreatedAt:      time.Now().UnixMilli(),
 	}
 	if len(req.Messages) > 0 {
@@ -254,7 +259,7 @@ func buildCallLog(provider, operatorID string, req SummaryRequest, result *Summa
 		log.MessageStartSeq = result.MessageStartSeq
 		log.MessageEndSeq = result.MessageEndSeq
 	}
-	log.CallID = newSummaryID(log.CreatedAt)
+	log.CallID = callID
 	return log
 }
 
@@ -265,6 +270,33 @@ INSERT INTO ai_call_logs
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `, item.CallID, item.Provider, item.GroupID, item.ConversationID, item.OperatorID, item.MessageCount, item.MessageStartSeq, item.MessageEndSeq, item.DurationMs, item.Status, item.ErrorMessage, item.CreatedAt)
 	return err
+}
+
+func ensureAttempts(provider string, attempts []ProviderAttempt, durationMs int64, status, errMessage string) []ProviderAttempt {
+	if len(attempts) > 0 {
+		return attempts
+	}
+	return []ProviderAttempt{{
+		Provider:     provider,
+		Status:       status,
+		DurationMs:   durationMs,
+		ErrorMessage: errMessage,
+		CreatedAt:    time.Now().UnixMilli(),
+	}}
+}
+
+func (s *SummaryService) saveProviderAttempts(ctx context.Context, callID string, attempts []ProviderAttempt) error {
+	for idx, attempt := range attempts {
+		_, err := s.db.ExecContext(ctx, `
+INSERT INTO ai_provider_attempt_logs
+  (attempt_id, call_id, attempt_order, provider, status, duration_ms, error_message, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`, newSummaryID(time.Now().UnixMilli()), callID, idx+1, attempt.Provider, attempt.Status, attempt.DurationMs, truncateRunes(RedactSensitive(attempt.ErrorMessage), 512), attempt.CreatedAt)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func newSummaryID(now int64) string {
