@@ -429,6 +429,25 @@ V7 当前边界：
 3. 明确生产化升级边界：向量索引、完整 DLP、权限分级、知识库热更新。
 ```
 
+V8 已落地：
+
+```text
+1. 新增 linkgo_ai_ask_knowledge_hits 指标，记录知识问答命中文档数。
+2. 新增 scripts/final_im_ai_demo.sh 和 make im-ai-final-demo，统一 core IM、AI summary、AI ask 演示入口。
+3. 新增 FINAL_PROJECT_LEARNING_PACKAGE / FINAL_RESUME_AND_INTERVIEW_PACK / FINAL_DEMO_RUNBOOK。
+4. 统一 README、学习文档、版本台账和测试证据。
+```
+
+V8 当前边界：
+
+```text
+1. FAQ/RAG 仍是关键词召回，不是向量索引。
+2. AI 审计还没有 token/cost 字段。
+3. full transfer demo 仍需完整 compose，不放进默认 light stack。
+```
+
+后续不再继续扩大功能面，项目一进入最终学习和面试阶段。
+
 ## 3. 每次 AI 帮你改完必须补的内容
 
 每做完一个功能，都要补：
@@ -455,10 +474,10 @@ docs/INTERVIEW_QA.md
 
 ## 4. 下一步立刻执行
 
-当前项目一已经完成 V0、V1、V2、V3、V4、V5、V6、V7。下一步建议进入 V8 收口：
+当前项目一已经完成 V0、V1、V2、V3、V4、V5、V6、V7、V8。下一步进入学习和演示阶段：
 
 ```text
-1. 保持 IM 主链路、AI summary 和 group-transfer-demo 稳定可演示。
-2. 把 ai-demo 和 ai-ask-demo 固定成标准演示流程。
-3. 准备简历 bullet、演示脚本和面试讲法。
+1. 以 make im-ai-final-demo 作为标准演示入口。
+2. 以 FINAL_PROJECT_LEARNING_PACKAGE / FINAL_RESUME_AND_INTERVIEW_PACK 作为学习主文档。
+3. 不再继续堆新功能，优先补压测、bugfix 和表达打磨。
 ```

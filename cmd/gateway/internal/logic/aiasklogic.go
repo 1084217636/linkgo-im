@@ -54,6 +54,7 @@ func (l *AIAskLogic) Ask(req *types.AIAskReq) (*types.AIAskResp, error) {
 		return nil, err
 	}
 	metrics.AIAskRequests.WithLabelValues(result.Provider, "success").Inc()
+	metrics.AIAskKnowledgeHits.WithLabelValues(result.Provider).Observe(float64(result.KnowledgeHits))
 	metrics.AIProviderLatencySeconds.WithLabelValues(result.Provider, "success").Observe(time.Since(start).Seconds())
 	return toAIAskResp(result), nil
 }

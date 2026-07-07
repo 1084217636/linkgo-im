@@ -282,3 +282,35 @@ ai_provider_attempt_logs 记录 fallback attempt
 2. 增加 token/cost 或 knowledge hit 指标。
 3. 把 FAQ/RAG 的生产化升级路线说清楚：BM25、embedding、权限分级、热更新。
 ```
+
+## V8：最终收口与标准演示流程
+
+本版目标不是继续扩功能，而是把项目一收成真正适合秋招学习和面试的最终版本。
+
+相比 V7 的改进：
+
+```text
+1. 新增 linkgo_ai_ask_knowledge_hits 指标，补齐 FAQ/RAG 命中口径。
+2. 新增 final_im_ai_demo.sh，把 core IM、AI summary、AI ask 串成标准演示流程。
+3. 新增最终学习包、简历包和 demo runbook，方便按版本演化复盘。
+4. 修复了容器运行时缺少 docs/README 造成 knowledge_hits=0 的问题。
+```
+
+为什么这里要收口：
+
+```text
+项目一已经具备秋招主线：
+1. IM 主链路完整。
+2. Kafka/Transfer 群聊扩散可讲。
+3. AI summary 和 AI ask 都能独立演示。
+4. provider / fallback / audit / 脱敏 / FAQ-RAG 已经形成工程闭环。
+```
+
+后续只建议做：
+
+```text
+1. bugfix。
+2. 补压测证据。
+3. 补性能口径。
+4. 打磨面试表达。
+```

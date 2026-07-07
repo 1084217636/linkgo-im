@@ -54,6 +54,12 @@ var (
 		Help: "AI knowledge ask requests by provider and result.",
 	}, []string{"provider", "result"})
 
+	AIAskKnowledgeHits = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "linkgo_ai_ask_knowledge_hits",
+		Help:    "Knowledge document hits per AI ask request by provider.",
+		Buckets: []float64{0, 1, 2, 3, 5, 8},
+	}, []string{"provider"})
+
 	AIProviderLatencySeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "linkgo_ai_provider_latency_seconds",
 		Help:    "AI provider call latency in seconds by provider and result.",

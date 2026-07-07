@@ -550,3 +550,52 @@ knowledge_hits = 3
 provider = mock
 sources = docs/AI_FAQ.md, docs/INTERVIEW_QA.md, docs/CORE_LINKS.md
 ```
+
+## 11. V8 最终收口与统一 demo 验证
+
+本版新增：
+
+```text
+linkgo_ai_ask_knowledge_hits
+scripts/final_im_ai_demo.sh
+make im-ai-final-demo
+FINAL_PROJECT_LEARNING_PACKAGE
+FINAL_RESUME_AND_INTERVIEW_PACK
+FINAL_DEMO_RUNBOOK
+```
+
+验证命令：
+
+```bash
+go test ./...
+make build
+docker compose config
+docker compose -f docker-compose.light.yml config
+START_STACK=1 make im-ai-final-demo
+```
+
+当前已验证：
+
+```text
+go test ./...：通过。
+make build：通过。
+docker compose config：通过。
+docker compose -f docker-compose.light.yml config：通过。
+START_STACK=1 make im-ai-final-demo：通过。
+START_STACK=0 make im-ai-final-demo：通过，确认统一 demo 不会重复拉起 light stack。
+```
+
+统一 demo 实际结果：
+
+```text
+core IM demo：通过
+AI summary demo：通过
+AI ask demo：通过，knowledge_hits = 3
+```
+
+指标抽样：
+
+```text
+curl /metrics 可看到 linkgo_ai_ask_knowledge_hits_sum{provider="mock"} = 3
+curl /metrics 可看到 linkgo_ai_ask_knowledge_hits_count{provider="mock"} = 1
+```

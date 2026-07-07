@@ -639,6 +639,7 @@ ai_provider_attempt_logs
 
 ```text
 linkgo_ai_ask_requests_total{provider,result}
+linkgo_ai_ask_knowledge_hits{provider}
 linkgo_ai_provider_latency_seconds{provider,result}
 ```
 
