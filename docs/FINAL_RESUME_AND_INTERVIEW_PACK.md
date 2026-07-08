@@ -3,7 +3,7 @@
 ## 1. 简历项目名
 
 ```text
-基于 Go-Zero 的企业研发协同 IM 与 AI 助手平台
+LinkGo Chat：AI 好友与红包协同 IM 系统
 ```
 
 技术栈：

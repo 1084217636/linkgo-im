@@ -8,6 +8,7 @@ type Config struct {
 	Database DatabaseConf
 	Kafka    KafkaConf
 	JWT      JWTConf
+	AI       AIConf `json:",optional"`
 }
 
 type RedisConf struct {
@@ -30,4 +31,16 @@ type KafkaConf struct {
 
 type JWTConf struct {
 	AccessSecret string
+}
+
+type AIConf struct {
+	Provider       string   `json:",optional"`
+	Model          string   `json:",optional"`
+	BaseURL        string   `json:",optional"`
+	APIKey         string   `json:",optional"`
+	TimeoutSeconds int64    `json:",default=10"`
+	FallbackToMock bool     `json:",default=true"`
+	KnowledgePaths []string `json:",optional"`
+	KnowledgeTopK  int      `json:",default=3"`
+	BotUserID      string   `json:",optional"`
 }

@@ -1,0 +1,13 @@
+阶段,任务,目标,当前状态,备注
+第一阶段,微信风演示页整理,让项目先有直观演示面,completed,已复用public/index.html作为轻演示页
+第一阶段,会话/好友/群聊基础演示收口,保证基础IM链路能稳定展示,completed,当前已具备登录/好友/群聊/历史/红包演示基础
+第二阶段,ai_bot虚拟用户初始化,让AI作为系统内真实用户存在,completed,补默认AI用户与演示好友关系并在好友列表展示
+第二阶段,主线命名与岗位匹配口径,统一项目名并对齐AI原生岗位要求,completed,项目名统一为LinkGo Chat：AI好友与红包协同IM系统
+第二阶段,AI私聊最小闭环,用户可像微信一样私聊AI,completed,已接入Logic异步BotResponder并用AskService生成普通IM回复
+第三阶段,群聊@AI或/summary,让AI成为群助手,planned,复用SummaryService
+第三阶段,总结/待办/风险回写群消息,结果走普通消息链路,planned,不要单独弹窗
+第三阶段,红包链路整理,把红包收成业务亮点,planned,聚焦创建/领取/详情/过期
+第三阶段,红包并发测试证据补齐,支撑面试追问,planned,整理事务/唯一索引/防超卖材料
+第四阶段,Bot Worker异步执行,AI不阻塞实时消息链路,planned,优先Redis或内存队列
+第四阶段,AI调用审计与重试,证明工程边界,planned,复用ai_call_logs与attempt
+第四阶段,最终demo脚本与口径统一,支持秋招展示与复盘,planned,同步README/简历/面试稿

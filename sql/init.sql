@@ -215,13 +215,24 @@ CREATE TABLE IF NOT EXISTS `ai_qa_records` (
 INSERT INTO `users` (`user_id`, `username`, `password`, `created_at`, `updated_at`) VALUES 
 ('1001', 'userA', '123456', 1710100000000, 1710100000000), 
 ('1002', 'userB', '123456', 1710100000000, 1710100000000), 
-('1003', 'userC', '123456', 1710100000000, 1710100000000);
+('1003', 'userC', '123456', 1710100000000, 1710100000000),
+('9001', 'ai_assistant', 'bot-only', 1710100000000, 1710100000000)
+ON DUPLICATE KEY UPDATE
+  username = VALUES(username),
+  password = VALUES(password),
+  updated_at = VALUES(updated_at);
 
 INSERT INTO `friend_relations` (`user_id`, `friend_id`, `status`, `created_at`, `updated_at`) VALUES
 ('1001', '1002', 'normal', 1710100000000, 1710100000000),
 ('1002', '1001', 'normal', 1710100000000, 1710100000000),
 ('1001', '1003', 'normal', 1710100000000, 1710100000000),
-('1003', '1001', 'normal', 1710100000000, 1710100000000)
+('1003', '1001', 'normal', 1710100000000, 1710100000000),
+('1001', '9001', 'normal', 1710100000000, 1710100000000),
+('9001', '1001', 'normal', 1710100000000, 1710100000000),
+('1002', '9001', 'normal', 1710100000000, 1710100000000),
+('9001', '1002', 'normal', 1710100000000, 1710100000000),
+('1003', '9001', 'normal', 1710100000000, 1710100000000),
+('9001', '1003', 'normal', 1710100000000, 1710100000000)
 ON DUPLICATE KEY UPDATE status = VALUES(status), updated_at = VALUES(updated_at);
 -- CREATE TABLE IF NOT EXISTS `messages` (
 --   `id` int(11) NOT NULL AUTO_INCREMENT,

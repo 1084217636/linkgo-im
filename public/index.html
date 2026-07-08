@@ -879,7 +879,7 @@
             const row = document.createElement("div");
             row.className = "item";
             row.onclick = () => {
-                addConversation(friend.user_id, "user", { title: friend.user_id });
+                addConversation(friend.user_id, "user", { title: friend.username || friend.user_id });
                 setCurrent(friend.user_id, "user");
                 loadHistory();
             };
@@ -889,9 +889,9 @@
                     <div class="title"></div>
                     <div class="sub"></div>
                 </div>
-                <span class="badge">好友</span>
+                <span class="badge">${friend.is_bot ? "AI" : "好友"}</span>
             `;
-            row.querySelector(".title").textContent = friend.user_id;
+            row.querySelector(".title").textContent = friend.username || friend.user_id;
             row.querySelector(".sub").textContent = friend.status || "normal";
             box.appendChild(row);
         }
@@ -1158,7 +1158,7 @@
         try {
             const payload = await apiFetch("/api/v1/friends");
             state.friends = payload.friends || [];
-            for (const friend of state.friends) addConversation(friend.user_id, "user", { title: friend.user_id });
+            for (const friend of state.friends) addConversation(friend.user_id, "user", { title: friend.username || friend.user_id });
             renderLists();
             log("ok", "好友列表已刷新", { count: state.friends.length });
         } catch (err) {

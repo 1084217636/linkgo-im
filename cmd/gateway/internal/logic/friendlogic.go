@@ -123,10 +123,11 @@ func (l *FriendLogic) ListFriends() (*types.FriendListResp, error) {
 	}
 	uid := gwmiddleware.UserIDFromContext(l.ctx)
 	rows, err := l.svcCtx.DB.QueryContext(l.ctx, `
-SELECT friend_id, status, updated_at
-FROM friend_relations
-WHERE user_id = ? AND status = 'normal'
-ORDER BY updated_at DESC
+SELECT fr.friend_id, COALESCE(u.username, ''), COALESCE(u.avatar, ''), fr.status, fr.updated_at
+FROM friend_relations fr
+LEFT JOIN users u ON u.user_id = fr.friend_id
+WHERE fr.user_id = ? AND fr.status = 'normal'
+ORDER BY fr.updated_at DESC
 `, uid)
 	if err != nil {
 		return nil, err
@@ -136,9 +137,10 @@ ORDER BY updated_at DESC
 	friends := make([]types.FriendInfo, 0)
 	for rows.Next() {
 		var item types.FriendInfo
-		if err := rows.Scan(&item.UserID, &item.Status, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.UserID, &item.Username, &item.Avatar, &item.Status, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
+		item.IsBot = strings.HasPrefix(strings.ToLower(item.Username), "ai_") || strings.Contains(strings.ToLower(item.Username), "assistant")
 		friends = append(friends, item)
 	}
 	return &types.FriendListResp{Friends: friends}, rows.Err()

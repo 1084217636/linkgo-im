@@ -13,10 +13,11 @@
 - `20260707_ai_call_logs.sql`：旧库补齐 AI provider 调用审计日志表。
 - `20260707_ai_provider_attempt_logs.sql`：旧库补齐 AI provider attempt 明细表。
 - `20260707_ai_qa_records.sql`：旧库补齐 AI 知识问答记录表。
+- `20260708_ai_bot_seed.sql`：旧库补齐默认 AI 助手账号和演示好友关系。
 
 ## 关键表设计
 
-- `users`：登录账号与用户 ID 映射。
+- `users`：登录账号与用户 ID 映射，也承载 AI 助手这类系统虚拟用户。
 - `messages`：保存 `message_id / client_msg_id / conversation_id / session_id / seq / from_uid / to_id / to_type / create_time`，支撑历史消息查询、会话顺序展示和发送幂等。
 - `friend_requests / friend_relations`：保存好友申请和双向好友关系，支撑单聊权限校验。
 - `im_groups / group_members`：保存群组和群成员关系，支撑群聊权限校验和扩散成员来源。

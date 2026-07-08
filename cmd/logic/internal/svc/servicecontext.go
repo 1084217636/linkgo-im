@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/1084217636/linkgo-im/cmd/logic/internal/config"
+	"github.com/1084217636/linkgo-im/internal/ai"
 	"github.com/1084217636/linkgo-im/internal/delivery"
 	corelogic "github.com/1084217636/linkgo-im/internal/logic"
 	_ "github.com/go-sql-driver/mysql"
@@ -63,12 +64,32 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		RequiredAcks: kafka.RequireOne,
 		Balancer:     &kafka.Hash{},
 	}
+	aiProvider := ai.NewProviderWithOptions(ai.ProviderOptions{
+		Name:           c.AI.Provider,
+		Model:          c.AI.Model,
+		BaseURL:        c.AI.BaseURL,
+		APIKey:         c.AI.APIKey,
+		Timeout:        time.Duration(c.AI.TimeoutSeconds) * time.Second,
+		FallbackToMock: c.AI.FallbackToMock,
+	})
+	knowledgeBase, err := ai.NewKnowledgeBase(c.AI.KnowledgePaths)
+	if err != nil {
+		logx.Errorf("load logic ai knowledge base: %v", err)
+	}
+	botID := c.AI.BotUserID
+	if botID == "" {
+		botID = corelogic.DefaultAIBotUserID
+	}
 
 	core := &corelogic.LogicHandler{
 		Rdb:             rdb,
 		DB:              db,
 		Delivery:        &delivery.RedisDelivery{Rdb: rdb},
 		GroupDispatcher: &kafkaDispatcher{writer: kafkaWriter},
+		BotResponder: &aiBotResponder{
+			botID: botID,
+			ask:   ai.NewAskService(db, aiProvider, knowledgeBase, c.AI.KnowledgeTopK),
+		},
 	}
 
 	return &ServiceContext{

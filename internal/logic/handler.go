@@ -46,6 +46,7 @@ type LogicHandler struct {
 	DB              *sql.DB
 	Delivery        *delivery.RedisDelivery
 	GroupDispatcher GroupDispatcher
+	BotResponder    BotResponder
 }
 
 func (h *LogicHandler) PushMessage(ctx context.Context, req *api.PushMsgReq) (*api.PushMsgReply, error) {
@@ -131,6 +132,7 @@ func (h *LogicHandler) PushMessage(ctx context.Context, req *api.PushMsgReq) (*a
 		logx.Field("target_id", frame.To),
 		logx.Field("to_type", frame.ToType),
 	)
+	h.triggerBotResponse(&frame)
 	return &api.PushMsgReply{}, nil
 }
 

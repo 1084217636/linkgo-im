@@ -1,11 +1,11 @@
-# Enterprise IM AI
+# LinkGo Chat
 
-Enterprise IM AI 由原 `LinkGo-IM` 收敛升级而来，定位为秋招主项目：**Go 企业级 IM / 协同通信系统 + 轻量 AI 助手**。项目主线仍然是 Go 后端工程能力，AI 能力只作为企业协同场景中的消息总结、待办提取和知识库问答增强。
+LinkGo Chat 由原 `LinkGo-IM` 收敛升级而来，定位为秋招主项目：**AI 好友与红包协同 IM 系统**。项目主线是 Go 后端实时通信工程能力，同时把红包并发一致性和 AI 聊天好友接入消息链路，形成 `IM + 红包 + AI` 的可演示业务闭环。
 
 秋招目标、CodeRepair 归并方式和下一步开发清单见 [docs/AUTUMN_RECRUIT_TARGET.md](docs/AUTUMN_RECRUIT_TARGET.md)。
 当前 V0 代码地图和面试材料见 [docs/CODE_MAP.md](docs/CODE_MAP.md)、[docs/CORE_LINKS.md](docs/CORE_LINKS.md)、[docs/MODULE_CARDS.md](docs/MODULE_CARDS.md)、[docs/TEST_EVIDENCE.md](docs/TEST_EVIDENCE.md)、[docs/INTERVIEW_QA.md](docs/INTERVIEW_QA.md)。
 
-本项目是一个基于 `Go + Go-Zero` 的分布式即时通讯系统，当前版本已经补齐到更接近简历描述的工程形态：`go-zero REST + zRPC` 脚手架、`WebSocket + gRPC` 分层、`Etcd` 服务发现、`Redis` 在线状态中心、`Lua` 会话序列号、`Kafka` 群聊异步分发、`Protobuf` 二进制消息协议、`JWT + 令牌桶限流`、`MySQL` 历史消息持久化。
+本项目是一个基于 `Go + Go-Zero` 的分布式即时通讯系统，当前版本已经补齐到更接近简历描述的工程形态：`go-zero REST + zRPC` 脚手架、`WebSocket + gRPC` 分层、`Etcd` 服务发现、`Redis` 在线状态中心、`Lua` 会话序列号、`Kafka` 群聊异步分发、`Protobuf` 二进制消息协议、`JWT + 令牌桶限流`、`MySQL` 历史消息持久化、红包事务模型和 AI 助手审计链路。
 
 说明：
 当前项目已经把 `gateway` 和 `logic` 迁移到 `go-zero` 官方脚手架结构：`gateway` 采用 REST 的 `config / handler / logic / svc / types` 分层，`logic` 采用 zRPC 的 `config / server / logic / svc` 分层；`transfer` 保持独立 Kafka 消费进程，负责异步扩散与重试死信。

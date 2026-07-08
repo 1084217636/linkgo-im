@@ -67,6 +67,9 @@ type FriendRespondResp struct {
 
 type FriendInfo struct {
 	UserID    string `json:"user_id"`
+	Username  string `json:"username,optional"`
+	Avatar    string `json:"avatar,optional"`
+	IsBot     bool   `json:"is_bot,optional"`
 	Status    string `json:"status"`
 	UpdatedAt int64  `json:"updated_at"`
 }
