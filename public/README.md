@@ -10,6 +10,14 @@
 
 当前版本会把默认的 `AI 助手` 作为好友展示出来，后续私聊问答和群聊总结都会沿着“AI 作为系统内虚拟用户”的方向继续收口。
 
+前端本地验收可以直接使用：
+
+```bash
+START_STACK=1 COMPOSE_FILE_PATH=docker-compose.light.yml FRONTEND_PORT=8088 make frontend-smoke
+```
+
+验收通过后访问 `http://127.0.0.1:8088/`，可以开两个浏览器标签页分别登录 `userA` 和 `userB` 做对聊；单个标签页登录 `userA` 后点击 `AI 助手`，即可测试用户与 AI 好友私聊。
+
 如果只是做页面联调，可以先启动轻量环境：
 
 ```bash

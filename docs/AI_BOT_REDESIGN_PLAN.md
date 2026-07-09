@@ -658,6 +658,15 @@ public/index.html
 4. AI 回复以 9001 身份再次走 Logic.PushMessage，所以仍然拥有 seq、落库、ACK、离线补偿和历史查询。
 ```
 
+前端验收方式：
+
+```text
+1. 运行 make frontend-smoke。
+2. 打开 http://127.0.0.1:8088/。
+3. 两个标签页分别登录 userA / userB，点击“打开对聊”验证普通私聊。
+4. 单个标签页登录 userA，点击“AI 助手”后发送“项目里 Redis 用来做什么？”验证 AI 私聊。
+```
+
 重点目标：
 
 ```text

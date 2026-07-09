@@ -102,6 +102,10 @@ func run(cfg demoConfig) error {
 		return fmt.Errorf("mysql ping: %w", err)
 	}
 	report.pass("mysql ping", "linkgo_im")
+	if err := ensureAIBotSeed(ctx, db); err != nil {
+		return fmt.Errorf("ai bot seed: %w", err)
+	}
+	report.pass("ai bot seed", "9001 ai_assistant")
 
 	connA, err := connectWS(cfg.GatewayBase, userA.Token)
 	if err != nil {
@@ -131,6 +135,19 @@ func run(cfg demoConfig) error {
 	}
 	report.pass("ack clears pending", gotOnline.MessageId)
 
+	aiQuestion := "项目里 Redis 用来做什么？ " + time.Now().Format("150405.000")
+	aiClientID := "demo-ai-" + fmt.Sprint(time.Now().UnixNano())
+	if err := sendNormal(connA, "9001", "user", aiQuestion, aiClientID); err != nil {
+		return err
+	}
+	gotAI, err := waitMatchAndAck(connA, func(frame *api.WireMessage) bool {
+		return frame.From == "9001" && frame.To == userA.UserID && strings.TrimSpace(frame.Body) != ""
+	}, cfg.Timeout)
+	if err != nil {
+		return fmt.Errorf("ai bot private reply: %w", err)
+	}
+	report.pass("ai bot private reply", truncateDetail(gotAI.Body, 80))
+
 	if err := connB.Close(); err != nil {
 		return err
 	}
@@ -156,7 +173,7 @@ func run(cfg demoConfig) error {
 	}
 	report.pass("offline replay + ack", gotOffline.MessageId)
 
-	clientIDs := []string{onlineClientID, offlineClientID}
+	clientIDs := []string{onlineClientID, offlineClientID, aiClientID}
 	if transferAvailable(ctx, cfg.TransferBase) {
 		groupID := "Gdemo" + time.Now().Format("150405")
 		if err := createGroup(ctx, cfg.GatewayBase, userA.Token, groupID, []string{userB.UserID}); err != nil {
@@ -260,13 +277,19 @@ func sendNormal(conn *websocket.Conn, to, toType, body, clientMsgID string) erro
 }
 
 func waitAndAck(conn *websocket.Conn, expectedBody string, timeout time.Duration) (*api.WireMessage, error) {
+	return waitMatchAndAck(conn, func(frame *api.WireMessage) bool {
+		return frame.Body == expectedBody
+	}, timeout)
+}
+
+func waitMatchAndAck(conn *websocket.Conn, match func(*api.WireMessage) bool, timeout time.Duration) (*api.WireMessage, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		_ = conn.SetReadDeadline(deadline)
 		_, payload, err := conn.ReadMessage()
 		if err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				return nil, fmt.Errorf("timed out waiting for message body %q", expectedBody)
+				return nil, fmt.Errorf("timed out waiting for matching message")
 			}
 			return nil, err
 		}
@@ -282,11 +305,49 @@ func waitAndAck(conn *websocket.Conn, expectedBody string, timeout time.Duration
 			})
 			_ = conn.WriteMessage(websocket.BinaryMessage, ack)
 		}
-		if frame.Body == expectedBody {
+		if match != nil && match(&frame) {
 			return &frame, nil
 		}
 	}
-	return nil, fmt.Errorf("timed out waiting for message body %q", expectedBody)
+	return nil, fmt.Errorf("timed out waiting for matching message")
+}
+
+func ensureAIBotSeed(ctx context.Context, db *sql.DB) error {
+	if db == nil {
+		return nil
+	}
+	if _, err := db.ExecContext(ctx, `
+INSERT INTO users (user_id, username, password, created_at, updated_at)
+VALUES ('9001', 'ai_assistant', 'bot-only', 1710100000000, 1710100000000)
+ON DUPLICATE KEY UPDATE
+  username = VALUES(username),
+  password = VALUES(password),
+  updated_at = VALUES(updated_at)
+`); err != nil {
+		return err
+	}
+	_, err := db.ExecContext(ctx, `
+INSERT INTO friend_relations (user_id, friend_id, status, created_at, updated_at) VALUES
+('1001', '9001', 'normal', 1710100000000, 1710100000000),
+('9001', '1001', 'normal', 1710100000000, 1710100000000),
+('1002', '9001', 'normal', 1710100000000, 1710100000000),
+('9001', '1002', 'normal', 1710100000000, 1710100000000),
+('1003', '9001', 'normal', 1710100000000, 1710100000000),
+('9001', '1003', 'normal', 1710100000000, 1710100000000)
+ON DUPLICATE KEY UPDATE
+  status = VALUES(status),
+  updated_at = VALUES(updated_at)
+`)
+	return err
+}
+
+func truncateDetail(value string, max int) string {
+	value = strings.TrimSpace(value)
+	if max <= 0 || len([]rune(value)) <= max {
+		return value
+	}
+	runes := []rune(value)
+	return string(runes[:max]) + "..."
 }
 
 func waitPendingCleared(ctx context.Context, rdb *redis.Client, uid, messageID string, timeout time.Duration) error {

@@ -1,6 +1,7 @@
 阶段,任务,目标,当前状态,备注
 第一阶段,微信风演示页整理,让项目先有直观演示面,completed,已复用public/index.html作为轻演示页
 第一阶段,会话/好友/群聊基础演示收口,保证基础IM链路能稳定展示,completed,当前已具备登录/好友/群聊/历史/红包演示基础
+第一阶段,前端快捷联调入口,让登录/对聊/AI/红包测试路径更短,completed,新增打开对聊/AI助手/填充消息/重连WS入口并通过frontend-smoke
 第二阶段,ai_bot虚拟用户初始化,让AI作为系统内真实用户存在,completed,补默认AI用户与演示好友关系并在好友列表展示
 第二阶段,主线命名与岗位匹配口径,统一项目名并对齐AI原生岗位要求,completed,项目名统一为LinkGo Chat：AI好友与红包协同IM系统
 第二阶段,AI私聊最小闭环,用户可像微信一样私聊AI,completed,已接入Logic异步BotResponder并用AskService生成普通IM回复

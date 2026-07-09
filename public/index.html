@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LinkGo IM 调试台</title>
+    <title>LinkGo Chat</title>
     <style>
         :root {
             --bg: #f3f5f7;
@@ -14,6 +14,8 @@
             --muted: #65758b;
             --brand: #1677ff;
             --brand-weak: #e7f1ff;
+            --ai: #7c3aed;
+            --money: #f97316;
             --ok: #18a058;
             --warn: #d97706;
             --bad: #d92d20;
@@ -77,7 +79,7 @@
 
         .topbar {
             display: grid;
-            grid-template-columns: 250px 180px 88px 120px 120px 132px 132px;
+            grid-template-columns: 220px 180px 88px 120px 120px 110px 150px;
             gap: 10px;
             align-items: center;
             justify-content: start;
@@ -252,7 +254,8 @@
             font-weight: 700;
         }
 
-        .avatar.group { background: #7c3aed; }
+        .avatar.group { background: #0f766e; }
+        .avatar.ai { background: var(--ai); }
         .avatar.req { background: #0f766e; }
 
         .title {
@@ -327,6 +330,18 @@
             color: var(--muted);
             font-size: 12px;
             font-weight: 500;
+        }
+
+        .badge.ai {
+            border-color: #ddd6fe;
+            background: #f3efff;
+            color: var(--ai);
+        }
+
+        .badge.money {
+            border-color: #fed7aa;
+            background: #fff7ed;
+            color: var(--money);
         }
 
         .messages {
@@ -423,6 +438,17 @@
         .log-error { color: #fca5a5; }
         .log-info { color: #bfdbfe; }
 
+        .quick-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .quick-actions button {
+            height: 32px;
+        }
+
         @media (max-width: 980px) {
             body { height: auto; min-height: 100vh; }
             .shell { height: auto; min-height: 100vh; grid-template-rows: auto auto; }
@@ -442,7 +468,7 @@
     <header class="topbar">
         <div class="brand">
             <div class="brand-mark">IM</div>
-            <div>LinkGo IM 调试台</div>
+            <div>LinkGo Chat</div>
         </div>
         <input id="host" aria-label="Gateway Host">
         <input id="port" aria-label="Gateway Port" value="8090">
@@ -463,6 +489,12 @@
                     <button data-account="userA">userA</button>
                     <button data-account="userB">userB</button>
                     <button data-account="userC">userC</button>
+                </div>
+                <div class="quick-actions">
+                    <button id="open-peer-btn">打开对聊</button>
+                    <button id="open-ai-btn">AI 助手</button>
+                    <button id="fill-demo-btn">填充消息</button>
+                    <button id="connect-btn">重连 WS</button>
                 </div>
                 <div class="row">
                     <input id="friend-target" placeholder="目标用户ID">
@@ -497,7 +529,7 @@
                 </div>
                 <div class="row">
                     <input id="red-packet-greeting" placeholder="祝福语">
-                    <button id="red-packet-create-btn">发送</button>
+                    <button id="red-packet-create-btn">发红包</button>
                 </div>
                 <div class="row">
                     <input id="red-packet-id" placeholder="红包ID">
@@ -552,6 +584,8 @@
 (() => {
     const textEncoder = new TextEncoder();
     const textDecoder = new TextDecoder();
+    const AI_BOT_ID = "9001";
+    const AI_BOT_NAME = "ai_assistant";
 
     const state = {
         token: "",
@@ -563,6 +597,7 @@
         currentType: "user",
         conversations: new Map(),
         friends: [],
+        friendMeta: new Map(),
         requests: [],
         renderedMessageIds: new Set(),
         lastSeqBySession: new Map(),
@@ -799,12 +834,23 @@
         return msg.from === state.userId ? msg.to : msg.from;
     }
 
+    function isAIUser(id) {
+        return String(id || "") === AI_BOT_ID;
+    }
+
+    function displayName(id, fallback = "") {
+        if (isAIUser(id)) return AI_BOT_NAME;
+        const meta = state.friendMeta.get(String(id || ""));
+        return meta && meta.username ? meta.username : (fallback || id || "");
+    }
+
     function setCurrent(target, type) {
         state.currentTarget = target;
         state.currentType = type || (String(target).startsWith("G") ? "group" : "user");
         $("target-id").value = target;
         $("target-type").value = state.currentType;
-        $("current-title").textContent = target ? `${state.currentType === "group" ? "群聊" : "私聊"} ${target}` : "未选择会话";
+        const name = state.currentType === "group" ? target : displayName(target);
+        $("current-title").textContent = target ? `${state.currentType === "group" ? "群聊" : "私聊"} ${name}` : "未选择会话";
         updateCurrentMeta();
         renderLists();
     }
@@ -847,22 +893,23 @@
             return;
         }
         for (const item of items) {
-            const row = document.createElement("div");
-            row.className = `item ${item.target === state.currentTarget && item.type === state.currentType ? "active" : ""}`;
+        const row = document.createElement("div");
+        row.className = `item ${item.target === state.currentTarget && item.type === state.currentType ? "active" : ""}`;
             row.onclick = () => {
                 setCurrent(item.target, item.type);
                 loadHistory();
                 if (item.type === "group") loadGroupMembers(item.target);
             };
+            const ai = item.type === "user" && isAIUser(item.target);
             row.innerHTML = `
-                <div class="avatar ${item.type === "group" ? "group" : ""}">${item.type === "group" ? "群" : shortId(item.target)}</div>
+                <div class="avatar ${item.type === "group" ? "group" : ai ? "ai" : ""}">${item.type === "group" ? "群" : ai ? "AI" : shortId(item.target)}</div>
                 <div>
                     <div class="title"></div>
                     <div class="sub"></div>
                 </div>
-                <span class="badge">${item.type === "group" ? "群" : "人"}</span>
+                <span class="badge ${ai ? "ai" : ""}">${item.type === "group" ? "群" : ai ? "AI" : "人"}</span>
             `;
-            row.querySelector(".title").textContent = item.title || item.target;
+            row.querySelector(".title").textContent = item.title || displayName(item.target);
             row.querySelector(".sub").textContent = item.last_msg || `last_seq ${item.last_seq || 0}`;
             box.appendChild(row);
         }
@@ -883,13 +930,14 @@
                 setCurrent(friend.user_id, "user");
                 loadHistory();
             };
+            const ai = friend.is_bot || isAIUser(friend.user_id);
             row.innerHTML = `
-                <div class="avatar">${shortId(friend.user_id)}</div>
+                <div class="avatar ${ai ? "ai" : ""}">${ai ? "AI" : shortId(friend.user_id)}</div>
                 <div>
                     <div class="title"></div>
                     <div class="sub"></div>
                 </div>
-                <span class="badge">${friend.is_bot ? "AI" : "好友"}</span>
+                <span class="badge ${ai ? "ai" : ""}">${ai ? "AI" : "好友"}</span>
             `;
             row.querySelector(".title").textContent = friend.username || friend.user_id;
             row.querySelector(".sub").textContent = friend.status || "normal";
@@ -969,6 +1017,7 @@
 
         const row = document.createElement("div");
         const isSelf = msg.from === state.userId;
+        const isAI = isAIUser(msg.from);
         row.className = `msg ${isSelf ? "self" : "other"}`;
         const meta = [
             msg.from || state.userId || "-",
@@ -978,7 +1027,7 @@
         ].filter(Boolean).join(" ");
 
         row.innerHTML = `
-            <div class="avatar ${msg.to_type === "group" ? "group" : ""}">${shortId(msg.from || state.userId)}</div>
+            <div class="avatar ${msg.to_type === "group" ? "group" : isAI ? "ai" : ""}">${isAI ? "AI" : shortId(msg.from || state.userId)}</div>
             <div>
                 <div class="meta"></div>
                 <div class="bubble"></div>
@@ -1003,6 +1052,7 @@
             state.userId = payload.user_id;
             state.conversations.clear();
             state.lastSeqBySession.clear();
+            state.friendMeta.clear();
             for (const conv of payload.conversations || []) {
                 const target = targetFromConversation(conv);
                 if (target) {
@@ -1108,7 +1158,7 @@
 
             const peer = peerOfMessage(msg);
             addConversation(peer, msg.to_type || "user", {
-                title: peer,
+                title: displayName(peer, peer),
                 last_msg: msg.body,
                 last_seq: msg.seq,
                 updated_at: msg.sent_at || Date.now()
@@ -1158,7 +1208,11 @@
         try {
             const payload = await apiFetch("/api/v1/friends");
             state.friends = payload.friends || [];
-            for (const friend of state.friends) addConversation(friend.user_id, "user", { title: friend.username || friend.user_id });
+            state.friendMeta.clear();
+            for (const friend of state.friends) {
+                state.friendMeta.set(friend.user_id, friend);
+                addConversation(friend.user_id, "user", { title: friend.username || friend.user_id });
+            }
             renderLists();
             log("ok", "好友列表已刷新", { count: state.friends.length });
         } catch (err) {
@@ -1369,7 +1423,7 @@
 
         ws.send(encodeWireMessage(wire));
         addConversation(state.currentTarget, state.currentType, {
-            title: state.currentTarget,
+            title: state.currentType === "group" ? state.currentTarget : displayName(state.currentTarget),
             last_msg: wire.body,
             updated_at: Date.now()
         });
@@ -1406,7 +1460,36 @@
         document.querySelectorAll(".list").forEach((el) => el.classList.toggle("active", el.id === `${tab}-list`));
     }
 
+    function openPeerChat() {
+        const peer = state.userId === "1002" ? "1001" : "1002";
+        addConversation(peer, "user", { title: displayName(peer, peer) });
+        setCurrent(peer, "user");
+        loadHistory();
+    }
+
+    function openAIChat() {
+        addConversation(AI_BOT_ID, "user", { title: AI_BOT_NAME });
+        setCurrent(AI_BOT_ID, "user");
+        loadHistory();
+    }
+
+    function fillDemoMessage() {
+        if (isAIUser(state.currentTarget)) {
+            $("message-input").value = "项目里 Redis 用来做什么？";
+            return;
+        }
+        if (state.currentType === "group") {
+            $("message-input").value = "/summary";
+            return;
+        }
+        $("message-input").value = `你好，这是一条前端联调消息 ${nowText()}`;
+    }
+
     $("login-btn").onclick = login;
+    $("connect-btn").onclick = connectWebSocket;
+    $("open-peer-btn").onclick = openPeerChat;
+    $("open-ai-btn").onclick = openAIChat;
+    $("fill-demo-btn").onclick = fillDemoMessage;
     $("ready-btn").onclick = checkReady;
     $("apply-btn").onclick = applyFriend;
     $("friends-btn").onclick = () => Promise.allSettled([refreshFriends(), refreshRequests()]);
