@@ -667,6 +667,19 @@ public/index.html
 4. 单个标签页登录 userA，点击“AI 助手”后发送“项目里 Redis 用来做什么？”验证 AI 私聊。
 ```
 
+DeepSeek 接入方式：
+
+```text
+当前仓库不会保存真实 API key。
+如果要使用 DeepSeek，把本机环境变量设置为：
+AI_PROVIDER=deepseek
+AI_MODEL=deepseek-v4-flash
+AI_BASE_URL=https://api.deepseek.com
+DEEPSEEK_API_KEY=<真实 key>
+
+Logic 服务里的 AI 好友和 Gateway 的 AI HTTP 接口都会读取这些变量。
+```
+
 重点目标：
 
 ```text

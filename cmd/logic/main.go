@@ -93,6 +93,41 @@ func overrideConfigFromEnv(c *config.Config) {
 			c.CpuThreshold = threshold
 		}
 	}
+	if value := os.Getenv("AI_PROVIDER"); value != "" {
+		c.AI.Provider = value
+	}
+	if value := os.Getenv("AI_MODEL"); value != "" {
+		c.AI.Model = value
+	}
+	if value := os.Getenv("AI_BASE_URL"); value != "" {
+		c.AI.BaseURL = value
+	}
+	if value := os.Getenv("AI_API_KEY"); value != "" {
+		c.AI.APIKey = value
+	} else if value := os.Getenv("DEEPSEEK_API_KEY"); value != "" {
+		c.AI.APIKey = value
+	}
+	if value := os.Getenv("AI_TIMEOUT_SECONDS"); value != "" {
+		if ttl, err := strconv.ParseInt(value, 10, 64); err == nil {
+			c.AI.TimeoutSeconds = ttl
+		}
+	}
+	if value := os.Getenv("AI_FALLBACK_TO_MOCK"); value != "" {
+		if enabled, err := strconv.ParseBool(value); err == nil {
+			c.AI.FallbackToMock = enabled
+		}
+	}
+	if value := os.Getenv("AI_KNOWLEDGE_PATHS"); value != "" {
+		c.AI.KnowledgePaths = parseEndpoints(value)
+	}
+	if value := os.Getenv("AI_KNOWLEDGE_TOP_K"); value != "" {
+		if n, err := strconv.Atoi(value); err == nil {
+			c.AI.KnowledgeTopK = n
+		}
+	}
+	if value := os.Getenv("AI_BOT_USER_ID"); value != "" {
+		c.AI.BotUserID = value
+	}
 }
 
 func parseEndpoints(raw string) []string {

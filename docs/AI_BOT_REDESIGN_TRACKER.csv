@@ -5,6 +5,7 @@
 第二阶段,ai_bot虚拟用户初始化,让AI作为系统内真实用户存在,completed,补默认AI用户与演示好友关系并在好友列表展示
 第二阶段,主线命名与岗位匹配口径,统一项目名并对齐AI原生岗位要求,completed,项目名统一为LinkGo Chat：AI好友与红包协同IM系统
 第二阶段,AI私聊最小闭环,用户可像微信一样私聊AI,completed,已接入Logic异步BotResponder并用AskService生成普通IM回复
+第二阶段,DeepSeek API配置接入,让AI好友可切换真实模型,completed,支持AI_PROVIDER=deepseek和DEEPSEEK_API_KEY环境变量
 第三阶段,群聊@AI或/summary,让AI成为群助手,planned,复用SummaryService
 第三阶段,总结/待办/风险回写群消息,结果走普通消息链路,planned,不要单独弹窗
 第三阶段,红包链路整理,把红包收成业务亮点,planned,聚焦创建/领取/详情/过期

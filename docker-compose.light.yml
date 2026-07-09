@@ -59,6 +59,14 @@ services:
       - ETCD_ENDPOINTS=etcd:2379
       - KAFKA_BROKERS=127.0.0.1:9092
       - KAFKA_GROUP_TOPIC=group_message_dispatch
+      - AI_PROVIDER=${AI_PROVIDER:-mock}
+      - AI_MODEL=${AI_MODEL:-}
+      - AI_BASE_URL=${AI_BASE_URL:-}
+      - AI_API_KEY=${AI_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - AI_TIMEOUT_SECONDS=${AI_TIMEOUT_SECONDS:-10}
+      - AI_FALLBACK_TO_MOCK=${AI_FALLBACK_TO_MOCK:-true}
+      - AI_BOT_USER_ID=${AI_BOT_USER_ID:-9001}
 
   gateway-a:
     build:
@@ -84,6 +92,13 @@ services:
       - DB_MAX_IDLE_CONNS=15
       - ETCD_ENDPOINTS=etcd:2379
       - LOGIC_ADDR=logic:9001
+      - AI_PROVIDER=${AI_PROVIDER:-mock}
+      - AI_MODEL=${AI_MODEL:-}
+      - AI_BASE_URL=${AI_BASE_URL:-}
+      - AI_API_KEY=${AI_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - AI_TIMEOUT_SECONDS=${AI_TIMEOUT_SECONDS:-10}
+      - AI_FALLBACK_TO_MOCK=${AI_FALLBACK_TO_MOCK:-true}
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8090/healthz"]
       interval: 10s

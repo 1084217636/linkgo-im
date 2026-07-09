@@ -143,6 +143,8 @@ func overrideConfigFromEnv(c *config.Config) {
 	}
 	if value := os.Getenv("AI_API_KEY"); value != "" {
 		c.AI.APIKey = value
+	} else if value := os.Getenv("DEEPSEEK_API_KEY"); value != "" {
+		c.AI.APIKey = value
 	}
 	if value := os.Getenv("AI_TIMEOUT_SECONDS"); value != "" {
 		if ttl, err := strconv.ParseInt(value, 10, 64); err == nil {

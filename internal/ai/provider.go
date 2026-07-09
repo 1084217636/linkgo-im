@@ -33,7 +33,15 @@ func NewProviderWithOptions(opts ProviderOptions) Provider {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "", "mock":
 		return NewMockProvider()
-	case "openai", "openai-compatible", "siliconflow":
+	case "openai", "openai-compatible", "siliconflow", "deepseek":
+		if name == "deepseek" {
+			if strings.TrimSpace(opts.BaseURL) == "" {
+				opts.BaseURL = "https://api.deepseek.com"
+			}
+			if strings.TrimSpace(opts.Model) == "" {
+				opts.Model = "deepseek-v4-flash"
+			}
+		}
 		primary := NewOpenAICompatibleProvider(OpenAICompatibleConfig{
 			ProviderName: name,
 			Model:        opts.Model,

@@ -18,6 +18,18 @@ START_STACK=1 COMPOSE_FILE_PATH=docker-compose.light.yml FRONTEND_PORT=8088 make
 
 验收通过后访问 `http://127.0.0.1:8088/`，可以开两个浏览器标签页分别登录 `userA` 和 `userB` 做对聊；单个标签页登录 `userA` 后点击 `AI 助手`，即可测试用户与 AI 好友私聊。
 
+如果要把 AI 好友从 mock provider 切到 DeepSeek，在本机 shell 设置环境变量后重启 light 栈：
+
+```bash
+export AI_PROVIDER=deepseek
+export AI_MODEL=deepseek-v4-flash
+export AI_BASE_URL=https://api.deepseek.com
+export DEEPSEEK_API_KEY=你的真实 key
+START_STACK=1 COMPOSE_FILE_PATH=docker-compose.light.yml FRONTEND_PORT=8088 make frontend-smoke
+```
+
+真实 key 不要写进仓库，可以参考根目录下的 `.env.ai.example`。
+
 如果只是做页面联调，可以先启动轻量环境：
 
 ```bash
