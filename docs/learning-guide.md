@@ -478,6 +478,8 @@ Submit(ctx, uid, logic, data) → FNV(uid) % 64 → 非阻塞写入对应 shard
 
 **群聊走 Kafka 的核心原因**：一条群聊消息要投递给 N 个人，如果 Transfer 消费时某个用户的 Redis 写入失败了，Kafka offset 不动就能自然重试。实现上使用 `FetchMessage` 拉取并在业务成功后调用 `CommitMessages`；retry/DLQ 发布失败时不能提交，也不能继续处理并提交同分区更高 offset，否则会间接跨过失败消息。Redis Pub/Sub 做不到这种消费进度控制。
 
+**为什么幂等键还需要 owner 和 lease？** 单纯 `SETNX processing` 后进程如果崩溃，键可能永久阻塞；看到 processing 就当成功，又可能提前提交 offset。当前实现用 Lua 原子领取，值中记录 owner 并设置 lease，只有 owner 可以写 done 或释放。竞争消费者保留消息等待，lease 到期后新 owner 可接管。
+
 ### 8.4 为什么用 Redis 做在线路由而不是 Etcd？
 
 - **TTL 语义**：Redis `SETEX` 天然适合「心跳过期」场景。Etcd lease 也可以，但 Etcd 定位是强一致性配置存储，不适合高频写入（每次 WebSocket 连接/重连/心跳都要写 route）。

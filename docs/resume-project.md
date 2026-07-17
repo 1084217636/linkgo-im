@@ -59,6 +59,7 @@ Go、Go-Zero、gRPC、Etcd、Redis、MySQL、Protobuf、Kafka、Prometheus、Doc
 - 设计 Protobuf 二进制消息协议，统一 WebSocket 与内部服务消息模型。
 - 利用 Redis Lua 生成会话 Sequence ID，结合 ACK 未确认消息补偿解决弱网下乱序与漏发。
 - 引入 Kafka + Transfer 服务异步扩散群聊消息，使用手动 offset 提交保证业务处理或 retry/DLQ 发布成功后再确认原消息，降低同步链路压力并避免失败任务静默丢失。
+- 使用 Redis Lua 实现收件人级 `processing(owner, lease) → done` 幂等状态机，支持消费者竞争、非 owner 防误完成以及进程崩溃后的租约接管。
 - 网关层接入 JWT、令牌桶限流、双向心跳和 uid 固定分片的有界 worker pool，在限制并发和内存增长的同时保持同一发送者提交 FIFO。
 - 暴露 Prometheus 指标，支持连接数、消息吞吐、ACK 与 Kafka 异常的可观测监控。
 

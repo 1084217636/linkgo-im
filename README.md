@@ -106,7 +106,7 @@ flowchart LR
 8. Logic/Transfer 按消息维度写 `message_payload:<message_id>` 和 `session_timeline:<session_id>`；RedisDelivery 再按接收人写入 `pending_ack / ack_idx / ack_retry`，在线用户定向 Pub/Sub，离线、无订阅者或推送失败时写入 `offline_msg`。
 9. Logic 同步更新会话热索引：`user:conversations:<uid>` 只存会话 ID，`conversation:last:<cid>` 存最后一条消息摘要，`conversation:members:<cid>` 存成员；MySQL 异步 upsert `conversations / conversation_members`。
 10. 客户端收到消息后回传 ACK，Gateway 删除 `pending_ack / offline_msg / ack_idx / ack_retry`，并推进 Redis `user:conversation:read:<uid>` 中该会话的已收到 seq；ACK 超时则本机 Gateway 按在线反向索引有限重试。这里的 read_seq 表示客户端已确认收到的进度，不等同于完整“已读回执”。
-11. Transfer 按 `group_delivery:<message_id>:<recipient>` 做收件人级幂等；投递失败进入 retry topic，多次失败后进入 dead-letter topic。
+11. Transfer 按 `group_delivery:<message_id>:<recipient>` 做收件人级幂等，通过 Lua 原子维护 `processing(owner, lease) → done`；竞争任务等待，owner 崩溃后 lease 到期可重新领取，普通投递失败进入 retry topic，多次失败后进入 dead-letter topic。
 12. 关键日志均带 `trace_id / message_id / seq / gateway_id`，Gateway / Transfer 暴露 Prometheus 指标。
 13. Logic 同步落库 MySQL 后再进入投递链路，历史消息按 `session_id + seq` 查询。
 

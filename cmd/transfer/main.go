@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,6 +15,7 @@ import (
 	"github.com/1084217636/linkgo-im/internal/delivery"
 	"github.com/1084217636/linkgo-im/internal/discovery"
 	"github.com/1084217636/linkgo-im/internal/health"
+	"github.com/1084217636/linkgo-im/internal/ids"
 	"github.com/1084217636/linkgo-im/internal/metrics"
 	"github.com/1084217636/linkgo-im/internal/server"
 	"github.com/redis/go-redis/v9"
@@ -193,6 +195,10 @@ func processFetchedMessage(
 	var failedRecipient string
 	for _, recipient := range job.Recipients {
 		if err := deliverGroupRecipient(ctx, rdb, redisDelivery, recipient, job.Frame, payload); err != nil {
+			if errors.Is(err, errRecipientLeaseBusy) {
+				metrics.KafkaOperations.WithLabelValues("dedupe", "busy").Inc()
+				return err
+			}
 			failedRecipient = recipient
 			logx.Errorw("deliver group message failed",
 				logx.Field("trace_id", job.Frame.TraceId),
@@ -283,19 +289,33 @@ func waitForKafkaRetry(ctx context.Context) bool {
 
 func deliverGroupRecipient(ctx context.Context, rdb *redis.Client, redisDelivery *delivery.RedisDelivery, recipient string, frame *api.WireMessage, payload []byte) error {
 	key := groupRecipientDedupKey(frame.MessageId, recipient)
-	locked, err := rdb.SetNX(ctx, key, "processing", 5*time.Minute).Result()
+	owner := ids.NewTraceID()
+	claim, err := claimGroupRecipient(ctx, rdb, key, owner, recipientProcessingLease)
 	if err != nil {
 		return err
 	}
-	if !locked {
+	switch claim {
+	case recipientDone:
 		metrics.KafkaOperations.WithLabelValues("dedupe", "skip").Inc()
 		return nil
+	case recipientBusy:
+		return errRecipientLeaseBusy
+	case recipientClaimed:
+	default:
+		return errors.New("unknown recipient claim result: " + string(claim))
 	}
 	if err := redisDelivery.Deliver(ctx, recipient, frame.MessageId, payload, frame.SentAt); err != nil {
-		_ = rdb.Del(ctx, key).Err()
+		_ = releaseGroupRecipient(ctx, rdb, key, owner)
 		return err
 	}
-	return rdb.Set(ctx, key, "done", 7*24*time.Hour).Err()
+	completed, err := completeGroupRecipient(ctx, rdb, key, owner, recipientDoneTTL)
+	if err != nil {
+		return err
+	}
+	if !completed {
+		return errRecipientLeaseBusy
+	}
+	return nil
 }
 
 func writeDeadLetter(ctx context.Context, writer messageWriter, key, value []byte) error {

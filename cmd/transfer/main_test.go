@@ -5,7 +5,10 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/kafka-go"
 )
 
@@ -132,5 +135,56 @@ func TestProcessFetchedMessageDoesNotSucceedWhenDLQPublishFails(t *testing.T) {
 	)
 	if !errors.Is(err, dlqErr) {
 		t.Fatalf("processFetchedMessage() error = %v, want %v", err, dlqErr)
+	}
+}
+
+func TestRecipientLeaseLifecycle(t *testing.T) {
+	srv := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: srv.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	ctx := context.Background()
+	key := groupRecipientDedupKey("msg-lease", "1002")
+
+	result, err := claimGroupRecipient(ctx, rdb, key, "owner-a", time.Minute)
+	if err != nil || result != recipientClaimed {
+		t.Fatalf("first claim = (%s, %v)", result, err)
+	}
+	if value, _ := srv.Get(key); value != "processing:owner-a" {
+		t.Fatalf("processing value = %q", value)
+	}
+	if ttl := srv.TTL(key); ttl <= 0 || ttl > time.Minute {
+		t.Fatalf("processing TTL = %v", ttl)
+	}
+
+	result, err = claimGroupRecipient(ctx, rdb, key, "owner-b", time.Minute)
+	if err != nil || result != recipientBusy {
+		t.Fatalf("competing claim = (%s, %v)", result, err)
+	}
+	if completed, err := completeGroupRecipient(ctx, rdb, key, "owner-b", time.Hour); err != nil || completed {
+		t.Fatalf("wrong owner completion = (%v, %v)", completed, err)
+	}
+	if completed, err := completeGroupRecipient(ctx, rdb, key, "owner-a", time.Hour); err != nil || !completed {
+		t.Fatalf("owner completion = (%v, %v)", completed, err)
+	}
+
+	result, err = claimGroupRecipient(ctx, rdb, key, "owner-b", time.Minute)
+	if err != nil || result != recipientDone {
+		t.Fatalf("claim after done = (%s, %v)", result, err)
+	}
+}
+
+func TestRecipientLeaseCanBeReclaimedAfterExpiry(t *testing.T) {
+	srv := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: srv.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	ctx := context.Background()
+	key := groupRecipientDedupKey("msg-expired", "1003")
+
+	if result, err := claimGroupRecipient(ctx, rdb, key, "owner-a", time.Second); err != nil || result != recipientClaimed {
+		t.Fatalf("first claim = (%s, %v)", result, err)
+	}
+	srv.FastForward(2 * time.Second)
+	if result, err := claimGroupRecipient(ctx, rdb, key, "owner-b", time.Minute); err != nil || result != recipientClaimed {
+		t.Fatalf("reclaim = (%s, %v)", result, err)
 	}
 }

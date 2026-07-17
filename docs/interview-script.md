@@ -14,6 +14,8 @@
 
 第四，群聊场景如果 Logic 直接同步扩散，很容易被大群拖慢。所以我把群聊改成 Kafka 异步分发，Logic 只负责生产任务，Transfer 再异步消费和投递。Transfer 使用 `FetchMessage + CommitMessages` 手动提交：正常投递、retry 发布或 DLQ 发布成功之后才提交原 offset；输出失败或提交失败时停在当前消息退避，避免提交更高 offset 导致失败消息被跨过。
 
+收件人幂等不是简单的永久 `SETNX`。我用 Lua 原子维护 `processing(owner, lease)` 和 `done`：只有 owner 能完成或释放；另一个消费者看到 processing 会保留当前 offset 并等待，进程崩溃后 lease 到期可以重新领取。这样至少一次消费不会因为一个永不释放的锁卡死，也不会把“正在处理”误当成“已经成功”。
+
 第五，我在网关层加了 JWT、令牌桶限流、双向心跳和 worker pool，并且暴露 Prometheus 指标，这样这个项目不仅能跑，还能监控、能定位、能解释工程取舍。
 
 ## 面试官继续追问时可以展开的点
