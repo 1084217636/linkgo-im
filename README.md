@@ -19,6 +19,7 @@ LinkGo Chat 由原 `LinkGo-IM` 收敛升级而来，定位为秋招主项目：*
 - Logic 实例注册到 Etcd，Gateway 通过 go-zero zRPC 服务发现并使用实际配置的 `p2c_ewma` 负载均衡选择健康节点；当前代码没有实现一致性哈希粘滞路由。
 - Gateway 上行调度使用 64 个 uid 固定 shard，每个 shard 由单 worker 串行消费 64 容量的有界队列；同一 uid 保持提交 FIFO，不同 shard 可并行，提交结果明确区分队列满、池关闭和上下文取消。
 - 队列拒绝通过带 `client_msg_id` 的结构化 `SYSTEM` 错误帧返回；网页客户端识别 `SERVER_BUSY` 后复用原消息幂等键，采用指数退避与随机抖动自动重试，最多 5 次。
+- 新增游戏运营控制面安全底座：JWT 之后按 `operator / reviewer / admin` 做平台 RBAC，角色与群聊角色隔离；所有管理写操作统一写入包含 operator、resource、request/trace 和 result 的审计表。
 - 登录密码使用 bcrypt；旧版明文账号仅在首次成功校验时兼容并原子升级，未知用户、错密码和禁用账号统一返回 `invalid credentials`。
 - WebSocket 握手只接受 `Gateway.AllowedOrigins`/`WS_ALLOWED_ORIGINS` 中 scheme、host、port 精确匹配的来源；空 Origin 默认拒绝，受信任的非浏览器客户端必须显式设置 `WS_ALLOW_MISSING_ORIGIN=true` 且仍需 JWT；群历史查询在读库前校验当前群成员身份。
 - WebSocket 消息载荷改为 Protobuf 二进制帧，不再依赖业务 JSON 文本。

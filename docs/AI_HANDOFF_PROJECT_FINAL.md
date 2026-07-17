@@ -9,6 +9,8 @@
 
 LinkGo Chat 是一个基于 Go 和 go-zero 的分布式即时通信系统。系统以 Gateway、Logic、Transfer 三层承载 WebSocket 接入、消息编排和 Kafka 群聊扩散，以 Redis、MySQL、Etcd 保证跨节点路由、会话内有序、幂等、ACK 补偿和历史持久化，并将红包和 AI 助手作为两条差异化业务接入消息场景。
 
+米哈游定向版本在 IM 可靠性底座之上增加游戏运营控制面。平台角色使用独立的 `platform_user_roles`，不复用群聊 owner/admin；管理操作必须通过 JWT、RBAC、限流，并将操作者、资源、请求/Trace、结果和脱敏详情写入 `operation_audit_logs`。
+
 这个项目的主次关系必须始终保持为：
 
 ```text
