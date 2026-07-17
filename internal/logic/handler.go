@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logx"
+	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -163,7 +165,19 @@ func (h *LogicHandler) deliverPersistedMessage(ctx context.Context, frame *api.W
 }
 
 func (h *LogicHandler) GetHistory(ctx context.Context, req *api.GetHistoryReq) (*api.GetHistoryReply, error) {
-	sessionID := buildSessionID(req.UserId, req.TargetId, targetType(req.TargetId))
+	toType := targetType(req.TargetId)
+	targetID := req.TargetId
+	if toType == "group" {
+		targetID = normalizeGroupID(req.TargetId)
+		allowed, err := h.isCurrentGroupMember(ctx, targetID, req.UserId)
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			return nil, fmt.Errorf("user is not an active group member")
+		}
+	}
+	sessionID := buildSessionID(req.UserId, targetID, toType)
 	rows, err := h.DB.QueryContext(ctx, `
 SELECT message_id, client_msg_id, session_id, seq, from_uid, to_id, to_type, content, create_time
 FROM messages
@@ -250,14 +264,22 @@ LIMIT 50
 func (h *LogicHandler) Login(ctx context.Context, req *api.LoginReq) (*api.LoginReply, error) {
 	var uid string
 	var pwdInDB string
+	var status int
 
-	query := "SELECT user_id, password FROM users WHERE username = ? LIMIT 1"
-	if err := h.DB.QueryRowContext(ctx, query, req.Username).Scan(&uid, &pwdInDB); err != nil {
-		return nil, fmt.Errorf("user not found")
+	query := "SELECT user_id, password, status FROM users WHERE username = ? LIMIT 1"
+	if err := h.DB.QueryRowContext(ctx, query, req.Username).Scan(&uid, &pwdInDB, &status); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			logx.Errorw("login query failed", logx.Field("error", err.Error()))
+		}
+		return nil, fmt.Errorf("invalid credentials")
 	}
 
-	if pwdInDB != req.Password {
-		return nil, fmt.Errorf("invalid password")
+	valid, legacy := verifyPassword(pwdInDB, req.Password)
+	if status != 1 || !valid {
+		return nil, fmt.Errorf("invalid credentials")
+	}
+	if legacy {
+		h.upgradeLegacyPassword(ctx, uid, pwdInDB, req.Password)
 	}
 
 	token, err := middleware.GenerateToken(uid)
@@ -278,6 +300,33 @@ func (h *LogicHandler) Login(ctx context.Context, req *api.LoginReq) (*api.Login
 		UserId:        uid,
 		Conversations: conversations,
 	}, nil
+}
+
+func verifyPassword(storedPassword, suppliedPassword string) (valid bool, legacy bool) {
+	if isBcryptHash(storedPassword) {
+		return bcrypt.CompareHashAndPassword([]byte(storedPassword), []byte(suppliedPassword)) == nil, false
+	}
+	return subtle.ConstantTimeCompare([]byte(storedPassword), []byte(suppliedPassword)) == 1, true
+}
+
+func isBcryptHash(password string) bool {
+	return strings.HasPrefix(password, "$2a$") ||
+		strings.HasPrefix(password, "$2b$") ||
+		strings.HasPrefix(password, "$2y$")
+}
+
+func (h *LogicHandler) upgradeLegacyPassword(ctx context.Context, uid, storedPassword, suppliedPassword string) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(suppliedPassword), bcrypt.DefaultCost)
+	if err != nil {
+		logx.Errorw("hash legacy password failed", logx.Field("target_id", uid), logx.Field("error", err.Error()))
+		return
+	}
+	if _, err := h.DB.ExecContext(ctx, `
+UPDATE users SET password = ?
+WHERE user_id = ? AND password = ?
+`, string(hash), uid, storedPassword); err != nil {
+		logx.Errorw("upgrade legacy password failed", logx.Field("target_id", uid), logx.Field("error", err.Error()))
+	}
 }
 
 func normalizeFrame(sender string, frame *api.WireMessage) error {
@@ -636,11 +685,15 @@ func clientMessageKey(uid, clientMsgID string) string {
 
 func buildSessionID(from, to, toType string) string {
 	if toType == "group" {
-		return "group:" + to
+		return "group:" + normalizeGroupID(to)
 	}
 	ids := []string{from, to}
 	sort.Strings(ids)
 	return "c2c:" + strings.Join(ids, ":")
+}
+
+func normalizeGroupID(target string) string {
+	return strings.TrimPrefix(target, "group:")
 }
 
 func targetType(target string) string {

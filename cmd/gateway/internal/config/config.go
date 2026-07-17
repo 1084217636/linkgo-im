@@ -37,11 +37,13 @@ type LogicConf struct {
 }
 
 type GatewayConf struct {
-	ID                   string `json:",optional"`
-	RouteTTLSeconds      int64  `json:",default=75"`
-	AckTimeoutSeconds    int64  `json:",default=5"`
-	AckMaxRetries        int    `json:",default=3"`
-	RetryIntervalSeconds int64  `json:",default=1"`
+	ID                   string   `json:",optional"`
+	AllowedOrigins       []string `json:",optional"`
+	AllowMissingOrigin   bool     `json:",default=false"`
+	RouteTTLSeconds      int64    `json:",default=75"`
+	AckTimeoutSeconds    int64    `json:",default=5"`
+	AckMaxRetries        int      `json:",default=3"`
+	RetryIntervalSeconds int64    `json:",default=1"`
 }
 
 type AuthConf struct {

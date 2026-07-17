@@ -1,5 +1,5 @@
 INSERT INTO `users` (`user_id`, `username`, `password`, `created_at`, `updated_at`) VALUES
-('9001', 'ai_assistant', 'bot-only', 1710100000000, 1710100000000)
+('9001', 'ai_assistant', '$2b$10$THQMtV0aOUVUUUoRC7Sj.unXkjj2.DEKIFQ9nuPj86yaqIc9AbB0q', 1710100000000, 1710100000000)
 ON DUPLICATE KEY UPDATE
   username = VALUES(username),
   password = VALUES(password),

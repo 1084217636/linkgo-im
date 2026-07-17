@@ -23,6 +23,8 @@ func TestOverrideConfigFromEnv(t *testing.T) {
 	t.Setenv("ACK_TIMEOUT_SECONDS", "7")
 	t.Setenv("ACK_MAX_RETRIES", "4")
 	t.Setenv("RETRY_INTERVAL_SECONDS", "2")
+	t.Setenv("WS_ALLOWED_ORIGINS", "https://app.example.com,https://admin.example.com")
+	t.Setenv("WS_ALLOW_MISSING_ORIGIN", "true")
 
 	c := config.Config{}
 	overrideConfigFromEnv(&c)
@@ -65,5 +67,11 @@ func TestOverrideConfigFromEnv(t *testing.T) {
 	}
 	if c.Gateway.RetryIntervalSeconds != 2 {
 		t.Fatalf("RetryIntervalSeconds = %d, want 2", c.Gateway.RetryIntervalSeconds)
+	}
+	if got := c.Gateway.AllowedOrigins; len(got) != 2 || got[0] != "https://app.example.com" || got[1] != "https://admin.example.com" {
+		t.Fatalf("Gateway.AllowedOrigins = %#v", got)
+	}
+	if !c.Gateway.AllowMissingOrigin {
+		t.Fatal("Gateway.AllowMissingOrigin = false, want true")
 	}
 }

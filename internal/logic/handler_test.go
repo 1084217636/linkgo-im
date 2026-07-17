@@ -2,6 +2,8 @@ package logic
 
 import (
 	"context"
+	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +13,145 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/redis/go-redis/v9"
 )
+
+func TestLoginUsesGenericCredentialError(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		username string
+		row      *sqlmock.Rows
+		err      error
+	}{
+		{
+			name:     "unknown user",
+			username: "missing",
+			err:      sql.ErrNoRows,
+		},
+		{
+			name:     "wrong password",
+			username: "userA",
+			row:      sqlmock.NewRows([]string{"user_id", "password", "status"}).AddRow("1001", "123456", 1),
+		},
+		{
+			name:     "disabled user",
+			username: "userA",
+			row:      sqlmock.NewRows([]string{"user_id", "password", "status"}).AddRow("1001", "123456", 0),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatalf("sqlmock.New error = %v", err)
+			}
+			defer db.Close()
+
+			expectation := mock.ExpectQuery("SELECT user_id, password, status").WithArgs(tc.username)
+			if tc.err != nil {
+				expectation.WillReturnError(tc.err)
+			} else {
+				expectation.WillReturnRows(tc.row)
+			}
+
+			h := &LogicHandler{DB: db}
+			_, err = h.Login(context.Background(), &api.LoginReq{Username: tc.username, Password: "wrong"})
+			if err == nil || err.Error() != "invalid credentials" {
+				t.Fatalf("Login error = %v, want invalid credentials", err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("sql expectations: %v", err)
+			}
+		})
+	}
+}
+
+func TestLoginUpgradesLegacyPlaintextPassword(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New error = %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("SELECT user_id, password, status").
+		WithArgs("userA").
+		WillReturnRows(sqlmock.NewRows([]string{"user_id", "password", "status"}).AddRow("1001", "123456", 1))
+	mock.ExpectExec("UPDATE users SET password").
+		WithArgs(sqlmock.AnyArg(), "1001", "123456").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT c.id, c.type").
+		WithArgs("1001", defaultConversationLimit).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "type", "updated_at", "last_seq", "read_seq", "content"}))
+
+	h := &LogicHandler{DB: db}
+	reply, err := h.Login(context.Background(), &api.LoginReq{Username: "userA", Password: "123456"})
+	if err != nil {
+		t.Fatalf("Login error = %v", err)
+	}
+	if reply.UserId != "1001" || strings.TrimSpace(reply.Token) == "" {
+		t.Fatalf("Login reply = %#v", reply)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestVerifyPasswordSupportsBcrypt(t *testing.T) {
+	const hash = "$2b$10$msHwvw.T/fpIilP9oGc3GuIkXKv1m1HtGzWkU.UHzFaEoj.r83SvK"
+	if valid, legacy := verifyPassword(hash, "123456"); !valid || legacy {
+		t.Fatalf("verifyPassword(valid bcrypt) = (%v, %v)", valid, legacy)
+	}
+	if valid, legacy := verifyPassword(hash, "wrong"); valid || legacy {
+		t.Fatalf("verifyPassword(invalid bcrypt) = (%v, %v)", valid, legacy)
+	}
+}
+
+func TestGetHistoryRejectsInactiveGroupMember(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New error = %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("SELECT status").
+		WithArgs("G100", "1001").
+		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("removed"))
+
+	h := &LogicHandler{DB: db}
+	_, err = h.GetHistory(context.Background(), &api.GetHistoryReq{UserId: "1001", TargetId: "group:G100"})
+	if err == nil || !strings.Contains(err.Error(), "active group member") {
+		t.Fatalf("GetHistory error = %v, want group membership error", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestGetHistoryAllowsActiveGroupMember(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New error = %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("SELECT status").
+		WithArgs("G100", "1001").
+		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("active"))
+	mock.ExpectQuery("SELECT message_id, client_msg_id").
+		WithArgs("group:G100").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"message_id", "client_msg_id", "session_id", "seq", "from_uid", "to_id", "to_type", "content", "create_time",
+		}))
+
+	h := &LogicHandler{DB: db}
+	reply, err := h.GetHistory(context.Background(), &api.GetHistoryReq{UserId: "1001", TargetId: "group:G100"})
+	if err != nil {
+		t.Fatalf("GetHistory error = %v", err)
+	}
+	if len(reply.Messages) != 0 {
+		t.Fatalf("GetHistory messages = %#v", reply.Messages)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
 
 func TestReserveClientMessageUsesShortPendingTTL(t *testing.T) {
 	ctx := context.Background()

@@ -78,6 +78,26 @@ LIMIT 1
 	return false, err
 }
 
+func (h *LogicHandler) isCurrentGroupMember(ctx context.Context, groupID, uid string) (bool, error) {
+	if h.DB == nil {
+		return false, fmt.Errorf("group membership store is unavailable")
+	}
+	var status string
+	err := h.DB.QueryRowContext(ctx, `
+SELECT status
+FROM group_members
+WHERE group_id = ? AND user_id = ?
+LIMIT 1
+`, groupID, uid).Scan(&status)
+	if err == nil {
+		return status == "active", nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return false, err
+}
+
 func (h *LogicHandler) validateGroupPermissionFromRedis(ctx context.Context, frame *api.WireMessage) error {
 	if h.Rdb == nil || frame == nil {
 		return nil

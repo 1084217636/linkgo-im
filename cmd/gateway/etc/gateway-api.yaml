@@ -22,6 +22,10 @@ Logic:
 
 Gateway:
   ID: gateway-a
+  AllowedOrigins:
+    - http://127.0.0.1:8088
+    - http://localhost:8088
+  AllowMissingOrigin: false
   RouteTTLSeconds: 75
   AckTimeoutSeconds: 5
   AckMaxRetries: 3

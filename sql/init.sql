@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS `users` (
     `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '自增主键',
     `user_id` VARCHAR(64) NOT NULL UNIQUE COMMENT '对外公开的唯一用户标识',
     `username` VARCHAR(32) NOT NULL UNIQUE COMMENT '登录名',
-    `password` VARCHAR(128) NOT NULL COMMENT '密码哈希值（实验期存明文）',
+    `password` VARCHAR(128) NOT NULL COMMENT 'bcrypt 密码哈希值',
     `avatar` VARCHAR(255) DEFAULT '' COMMENT '头像地址',
     `status` TINYINT(1) DEFAULT 1 COMMENT '状态: 1正常 0禁用',
     `created_at` BIGINT NOT NULL COMMENT '毫秒级创建时间',
@@ -213,10 +213,10 @@ CREATE TABLE IF NOT EXISTS `ai_qa_records` (
 
 -- 11. 预置实验账号（create_time 随便填的当前毫秒值）
 INSERT INTO `users` (`user_id`, `username`, `password`, `created_at`, `updated_at`) VALUES 
-('1001', 'userA', '123456', 1710100000000, 1710100000000), 
-('1002', 'userB', '123456', 1710100000000, 1710100000000), 
-('1003', 'userC', '123456', 1710100000000, 1710100000000),
-('9001', 'ai_assistant', 'bot-only', 1710100000000, 1710100000000)
+('1001', 'userA', '$2b$10$msHwvw.T/fpIilP9oGc3GuIkXKv1m1HtGzWkU.UHzFaEoj.r83SvK', 1710100000000, 1710100000000),
+('1002', 'userB', '$2b$10$msHwvw.T/fpIilP9oGc3GuIkXKv1m1HtGzWkU.UHzFaEoj.r83SvK', 1710100000000, 1710100000000),
+('1003', 'userC', '$2b$10$msHwvw.T/fpIilP9oGc3GuIkXKv1m1HtGzWkU.UHzFaEoj.r83SvK', 1710100000000, 1710100000000),
+('9001', 'ai_assistant', '$2b$10$THQMtV0aOUVUUUoRC7Sj.unXkjj2.DEKIFQ9nuPj86yaqIc9AbB0q', 1710100000000, 1710100000000)
 ON DUPLICATE KEY UPDATE
   username = VALUES(username),
   password = VALUES(password),

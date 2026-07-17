@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	gwmiddleware "github.com/1084217636/linkgo-im/cmd/gateway/internal/middleware"
@@ -18,12 +20,25 @@ import (
 	"github.com/zeromicro/go-zero/zrpc"
 )
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
-
 func WebSocketHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			return webSocketOriginAllowed(
+				r,
+				svcCtx.Config.Gateway.AllowedOrigins,
+				svcCtx.Config.Gateway.AllowMissingOrigin,
+			)
+		},
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
+		if rejectInvalidWebSocketOrigin(
+			w,
+			r,
+			svcCtx.Config.Gateway.AllowedOrigins,
+			svcCtx.Config.Gateway.AllowMissingOrigin,
+		) {
+			return
+		}
 		userID := gwmiddleware.UserIDFromContext(r.Context())
 		if userID == "" {
 			httpx.WriteJsonCtx(r.Context(), w, http.StatusUnauthorized, map[string]string{"error": "missing user context"})
@@ -65,6 +80,54 @@ func WebSocketHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		ctx = zrpc.SetHashKey(ctx, userID)
 		server.StartClientLoop(ctx, userID, clientConn, client, svcCtx.Rdb, routeValue, svcCtx.RouteTTL)
 	}
+}
+
+func rejectInvalidWebSocketOrigin(
+	w http.ResponseWriter,
+	r *http.Request,
+	allowedOrigins []string,
+	allowMissingOrigin bool,
+) bool {
+	if webSocketOriginAllowed(r, allowedOrigins, allowMissingOrigin) {
+		return false
+	}
+	http.Error(w, "websocket origin is not allowed", http.StatusForbidden)
+	return true
+}
+
+func webSocketOriginAllowed(r *http.Request, allowedOrigins []string, allowMissingOrigin bool) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return allowMissingOrigin
+	}
+
+	normalized, ok := canonicalWebOrigin(origin)
+	if !ok {
+		return false
+	}
+
+	for _, allowed := range allowedOrigins {
+		candidate, ok := canonicalWebOrigin(allowed)
+		if ok && candidate == normalized {
+			return true
+		}
+	}
+	return false
+}
+
+func canonicalWebOrigin(raw string) (string, bool) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", false
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", false
+	}
+	if parsed.Path != "" && parsed.Path != "/" {
+		return "", false
+	}
+	return scheme + "://" + strings.ToLower(parsed.Host), true
 }
 
 func parseLastSeq(raw string) int64 {
