@@ -24,11 +24,12 @@ const (
 )
 
 var (
-	ErrInvalidActivity = errors.New("invalid activity configuration")
-	ErrInvalidState    = errors.New("invalid activity state transition")
-	ErrSelfApproval    = errors.New("activity creator cannot approve the same version")
-	ErrForbidden       = errors.New("platform role is not allowed for this operation")
-	activityIDPattern  = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{1,63}$`)
+	ErrInvalidActivity  = errors.New("invalid activity configuration")
+	ErrInvalidState     = errors.New("invalid activity state transition")
+	ErrSelfApproval     = errors.New("activity creator cannot approve the same version")
+	ErrForbidden        = errors.New("platform role is not allowed for this operation")
+	ErrCacheSyncPending = errors.New("activity cache synchronization is pending")
+	activityIDPattern   = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{1,63}$`)
 )
 
 type Actor struct {
@@ -100,17 +101,23 @@ func (s *ActivityService) CreateDraft(ctx context.Context, actor Actor, activity
 	}
 	defer tx.Rollback()
 
+	now := time.Now().UnixMilli()
+	if _, err := tx.ExecContext(ctx, `
+INSERT IGNORE INTO game_activities (activity_id, name, status, current_version, published_version, rollout_percent, created_by, created_at, updated_at)
+VALUES (?, ?, 'draft', 0, 0, ?, ?, ?, ?)
+`, activityID, config.Title, rolloutPercent, actor.UserID, now, now); err != nil {
+		return nil, err
+	}
 	var latest int
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM game_activity_versions WHERE activity_id = ? FOR UPDATE`, activityID).Scan(&latest); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT current_version FROM game_activities WHERE activity_id = ? FOR UPDATE`, activityID).Scan(&latest); err != nil {
 		return nil, err
 	}
 	version := latest + 1
-	now := time.Now().UnixMilli()
 	if _, err := tx.ExecContext(ctx, `
-INSERT INTO game_activities (activity_id, name, status, current_version, published_version, rollout_percent, created_by, created_at, updated_at)
-VALUES (?, ?, 'draft', ?, 0, ?, ?, ?, ?)
-ON DUPLICATE KEY UPDATE name = VALUES(name), status = 'draft', current_version = VALUES(current_version), rollout_percent = VALUES(rollout_percent), updated_at = VALUES(updated_at)
-`, activityID, config.Title, version, rolloutPercent, actor.UserID, now, now); err != nil {
+UPDATE game_activities
+SET name = ?, status = 'draft', current_version = ?, rollout_percent = ?, updated_at = ?
+WHERE activity_id = ?
+`, config.Title, version, rolloutPercent, now, activityID); err != nil {
 		return nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -218,7 +225,7 @@ FOR UPDATE
 		return nil, err
 	}
 	if err := s.applyOutbox(ctx, event); err != nil {
-		return published, fmt.Errorf("activity published; cache sync pending: %w", err)
+		return published, fmt.Errorf("%w: %v", ErrCacheSyncPending, err)
 	}
 	return published, nil
 }
@@ -257,7 +264,7 @@ func (s *ActivityService) Rollback(ctx context.Context, actor Actor, activityID,
 		return err
 	}
 	if err := s.applyOutbox(ctx, event); err != nil {
-		return fmt.Errorf("activity rolled back; cache sync pending: %w", err)
+		return fmt.Errorf("%w: %v", ErrCacheSyncPending, err)
 	}
 	return nil
 }

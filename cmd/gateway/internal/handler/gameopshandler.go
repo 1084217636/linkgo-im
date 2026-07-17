@@ -117,6 +117,10 @@ func writeGameOpsResponse(r *http.Request, w http.ResponseWriter, resp any, err 
 		httpx.WriteJsonCtx(r.Context(), w, http.StatusOK, resp)
 		return
 	}
+	if errors.Is(err, gameops.ErrCacheSyncPending) {
+		httpx.WriteJsonCtx(r.Context(), w, http.StatusAccepted, map[string]any{"data": resp, "warning": err.Error()})
+		return
+	}
 	status := http.StatusInternalServerError
 	switch {
 	case errors.Is(err, gameops.ErrInvalidActivity), errors.Is(err, gameops.ErrInvalidGrant):

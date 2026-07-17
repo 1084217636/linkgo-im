@@ -32,6 +32,33 @@ func TestValidateActivityDraftRejectsInvalidWindowAndRollout(t *testing.T) {
 	}
 }
 
+func TestCreateDraftAllocatesVersionUnderActivityRowLock(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT IGNORE INTO game_activities").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery("SELECT current_version FROM game_activities").WithArgs("summer").WillReturnRows(sqlmock.NewRows([]string{"current_version"}).AddRow(3))
+	mock.ExpectExec("UPDATE game_activities").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO game_activity_versions").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO operation_audit_logs").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	service := NewActivityService(db, nil)
+	version, err := service.CreateDraft(context.Background(), Actor{UserID: "1001", Role: "operator"}, "summer", validActivityConfig(), 20, "req-1", "trace-1", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("CreateDraft() error = %v", err)
+	}
+	if version.Version != 4 {
+		t.Fatalf("version = %d, want 4", version.Version)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPublishActivityWritesStateAuditOutboxAndCache(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
