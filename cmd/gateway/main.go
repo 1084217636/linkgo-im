@@ -5,6 +5,7 @@ import (
 	"flag"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/1084217636/linkgo-im/cmd/gateway/internal/config"
 	"github.com/1084217636/linkgo-im/cmd/gateway/internal/handler"
@@ -32,6 +33,13 @@ func main() {
 
 	runtimeCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		if err := server.ShutdownPushWorkerPool(shutdownCtx); err != nil {
+			logx.Errorf("shutdown push worker pool: %v", err)
+		}
+	}()
 
 	if cleaned, err := server.CleanupGatewayRoutes(runtimeCtx, svcCtx.Rdb, svcCtx.GatewayID); err != nil {
 		logx.Errorf("cleanup gateway routes failed: %v", err)
@@ -130,6 +138,14 @@ func overrideConfigFromEnv(c *config.Config) {
 	if value := os.Getenv("RETRY_INTERVAL_SECONDS"); value != "" {
 		if ttl, err := strconv.ParseInt(value, 10, 64); err == nil {
 			c.Gateway.RetryIntervalSeconds = ttl
+		}
+	}
+	if value := os.Getenv("WS_ALLOWED_ORIGINS"); value != "" {
+		c.Gateway.AllowedOrigins = parseEndpoints(value)
+	}
+	if value := os.Getenv("WS_ALLOW_MISSING_ORIGIN"); value != "" {
+		if enabled, err := strconv.ParseBool(value); err == nil {
+			c.Gateway.AllowMissingOrigin = enabled
 		}
 	}
 	if value := os.Getenv("AI_PROVIDER"); value != "" {

@@ -12,7 +12,11 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-var pushPool = NewPushWorkerPool(64, 4096)
+var pushPool = NewPushWorkerPool(64, 64)
+
+func ShutdownPushWorkerPool(ctx context.Context) error {
+	return pushPool.Close(ctx)
+}
 
 func StartClientLoop(
 	ctx context.Context,
@@ -89,15 +93,16 @@ func StartClientLoop(
 				logx.Field("target_id", frame.To),
 			)
 			logicCtx := ctx
-			if ok := pushPool.Submit(logicCtx, uid, logic, msg, &frame, gatewayID); !ok {
-				logx.Errorw("push queue full",
+			if result := pushPool.Submit(logicCtx, uid, logic, msg, &frame, gatewayID); result != SubmitAccepted {
+				logx.Errorw("push queue rejected",
 					logx.Field("trace_id", frame.TraceId),
 					logx.Field("message_id", frame.MessageId),
 					logx.Field("client_msg_id", frame.ClientMsgId),
 					logx.Field("gateway_id", gatewayID),
 					logx.Field("target_id", frame.To),
+					logx.Field("result", string(result)),
 				)
-				metrics.OutboundMessages.WithLabelValues("logic", "queue_full").Inc()
+				metrics.OutboundMessages.WithLabelValues("logic", string(result)).Inc()
 			}
 		}
 	}

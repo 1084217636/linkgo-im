@@ -24,6 +24,22 @@ var (
 		Help: "Total outbound messages by target and result.",
 	}, []string{"target", "result"})
 
+	PushQueueSubmissions = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "linkgo_push_queue_submissions_total",
+		Help: "Push worker pool submissions by result.",
+	}, []string{"result"})
+
+	PushQueueDepth = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "linkgo_push_queue_depth",
+		Help: "Current queued push tasks by shard.",
+	}, []string{"shard"})
+
+	PushProcessingLatencySeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "linkgo_push_processing_latency_seconds",
+		Help:    "Push task processing latency by result.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"result"})
+
 	AckOperations = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "linkgo_ack_operations_total",
 		Help: "Total ack operations by result.",
