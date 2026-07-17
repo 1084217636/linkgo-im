@@ -51,6 +51,7 @@ func main() {
 	}
 	go server.StartGatewayHeartbeat(runtimeCtx, svcCtx.Rdb, svcCtx.GatewayID, svcCtx.RouteTTL)
 	go server.StartPendingRetryLoop(runtimeCtx, svcCtx.Rdb, svcCtx.GatewayID, svcCtx.AckTimeout, svcCtx.AckRetries, svcCtx.RetryEvery)
+	go svcCtx.ActivityOps.StartOutboxLoop(runtimeCtx, 2*time.Second)
 	go serverSubscribe(runtimeCtx, svcCtx)
 
 	restServer := rest.MustNewServer(c.RestConf, rest.WithCors())

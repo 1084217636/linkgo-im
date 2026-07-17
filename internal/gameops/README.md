@@ -9,3 +9,5 @@
 - `admin`：拥有运营控制面全部权限，并负责回滚。
 
 `platform_user_roles` 与 IM 群角色相互独立，避免把群管理员误当成平台管理员。审计日志记录 operator、role、operation、resource、request/trace、result 和脱敏后的 detail，不记录密码、Token 或 Secret。
+
+活动配置使用 `draft → pending → published → rolled_back` 状态机，每次修改创建不可覆盖的版本。reviewer 不能发布自己创建的版本；发布事务同时写审计和 `gameops_outbox`，事务提交后同步刷新 Redis，失败的 Outbox 由 Gateway 周期重放。灰度比例限制为 0–100，配置必须具有有效起止时间和正数奖励。

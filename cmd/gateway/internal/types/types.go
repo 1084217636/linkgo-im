@@ -221,3 +221,26 @@ type AIAskResp struct {
 	Provider      string              `json:"provider"`
 	CreatedAt     int64               `json:"created_at"`
 }
+
+type ActivityConfig struct {
+	Title          string `json:"title"`
+	StartAt        int64  `json:"start_at"`
+	EndAt          int64  `json:"end_at"`
+	RewardItemID   string `json:"reward_item_id"`
+	RewardQuantity int64  `json:"reward_quantity"`
+}
+
+type ActivityDraftReq struct {
+	ActivityID     string         `json:"activity_id"`
+	Config         ActivityConfig `json:"config"`
+	RolloutPercent int            `json:"rollout_percent"`
+}
+
+type ActivityTransitionReq struct {
+	ActivityID string `json:"activity_id"`
+	Version    int    `json:"version"`
+}
+
+type ActivityRollbackReq struct {
+	ActivityID string `json:"activity_id"`
+}

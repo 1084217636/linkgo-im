@@ -6,6 +6,7 @@ import (
 
 	"github.com/1084217636/linkgo-im/cmd/gateway/internal/config"
 	"github.com/1084217636/linkgo-im/internal/ai"
+	"github.com/1084217636/linkgo-im/internal/gameops"
 	authutil "github.com/1084217636/linkgo-im/internal/middleware"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/redis/go-redis/v9"
@@ -27,6 +28,7 @@ type ServiceContext struct {
 	AIProvider  ai.Provider
 	AISummary   *ai.SummaryService
 	AIAsk       *ai.AskService
+	ActivityOps *gameops.ActivityService
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
@@ -98,13 +100,14 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		logx.Errorf("load ai knowledge base: %v", err)
 	}
 
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     c.Redis.Addr,
+		Password: c.Redis.Password,
+		DB:       0,
+	})
 	return &ServiceContext{
-		Config: c,
-		Rdb: redis.NewClient(&redis.Options{
-			Addr:     c.Redis.Addr,
-			Password: c.Redis.Password,
-			DB:       0,
-		}),
+		Config:      c,
+		Rdb:         rdb,
 		DB:          db,
 		LogicRouter: NewLogicRouter(c),
 		RestLimiter: authutil.NewTokenBucketLimiter(20, 40),
@@ -117,6 +120,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		AIProvider:  aiProvider,
 		AISummary:   ai.NewSummaryService(db, aiProvider, c.AI.MaxMessages),
 		AIAsk:       ai.NewAskService(db, aiProvider, knowledgeBase, c.AI.KnowledgeTopK),
+		ActivityOps: gameops.NewActivityService(db, rdb),
 	}
 }
 

@@ -232,6 +232,29 @@ type AIAskResp {
 	CreatedAt     int64               `json:"created_at"`
 }
 
+type ActivityConfig {
+	Title          string `json:"title"`
+	StartAt        int64  `json:"start_at"`
+	EndAt          int64  `json:"end_at"`
+	RewardItemID   string `json:"reward_item_id"`
+	RewardQuantity int64  `json:"reward_quantity"`
+}
+
+type ActivityDraftReq {
+	ActivityID     string         `json:"activity_id"`
+	Config         ActivityConfig `json:"config"`
+	RolloutPercent int            `json:"rollout_percent"`
+}
+
+type ActivityTransitionReq {
+	ActivityID string `json:"activity_id"`
+	Version    int    `json:"version"`
+}
+
+type ActivityRollbackReq {
+	ActivityID string `json:"activity_id"`
+}
+
 // --- endpoints ---
 
 @server (
@@ -241,6 +264,25 @@ type AIAskResp {
 service gateway-api {
 	@handler Login
 	post /login (LoginReq) returns (LoginResp)
+}
+
+// The generated Auth middleware is combined with platform RBAC in routes.go.
+@server (
+	prefix: /api/v1/admin
+	middleware: Auth,RateLimit
+)
+service gateway-api {
+	@handler ActivityDraft
+	post /activities/drafts (ActivityDraftReq)
+
+	@handler ActivitySubmit
+	post /activities/submit (ActivityTransitionReq)
+
+	@handler ActivityPublish
+	post /activities/publish (ActivityTransitionReq)
+
+	@handler ActivityRollback
+	post /activities/rollback (ActivityRollbackReq)
 }
 
 @server (
