@@ -22,6 +22,7 @@ LinkGo Chat 由原 `LinkGo-IM` 收敛升级而来，定位为秋招主项目：*
 - 新增游戏运营控制面安全底座：JWT 之后按 `operator / reviewer / admin` 做平台 RBAC，角色与群聊角色隔离；所有管理写操作统一写入包含 operator、resource、request/trace 和 result 的审计表。
 - 活动配置采用不可覆盖版本与 `draft → pending → published → rolled_back` 状态机，限制创建者自审；发布事务写入 Outbox，Redis 灰度配置同步失败可由后台循环重放。
 - 道具批量发放使用 `grant_request_id + user_id + item_id` 唯一键和事务保证幂等；重复请求返回原结果，失败批次整体回滚并记录失败原因与审计，支持按请求 ID 查询发放明细。
+- `public/admin.html` 提供轻量运营演示页，可切换 operator/reviewer/admin 账号完成草稿、提交、发布、回滚和道具发放，不引入重型前端工程。
 - 登录密码使用 bcrypt；旧版明文账号仅在首次成功校验时兼容并原子升级，未知用户、错密码和禁用账号统一返回 `invalid credentials`。
 - WebSocket 握手只接受 `Gateway.AllowedOrigins`/`WS_ALLOWED_ORIGINS` 中 scheme、host、port 精确匹配的来源；空 Origin 默认拒绝，受信任的非浏览器客户端必须显式设置 `WS_ALLOW_MISSING_ORIGIN=true` 且仍需 JWT；群历史查询在读库前校验当前群成员身份。
 - WebSocket 消息载荷改为 Protobuf 二进制帧，不再依赖业务 JSON 文本。

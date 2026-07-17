@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>LinkGo 游戏运营控制台</title>
+  <style>
+    body{margin:0;font:14px system-ui;background:#f4f6fb;color:#172033}header{padding:18px 24px;background:#18233b;color:#fff}header h1{margin:0 0 6px}header p{margin:0;color:#b9c5db}main{max-width:1150px;margin:20px auto;padding:0 16px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}section{background:#fff;border:1px solid #dfe5ef;border-radius:10px;padding:16px;margin-bottom:16px}h2{font-size:17px;margin:0 0 12px}label{display:block;color:#526078;margin:9px 0 4px}input,textarea{width:100%;box-sizing:border-box;border:1px solid #cbd4e3;border-radius:6px;padding:9px}textarea{min-height:90px}button{border:0;border-radius:6px;background:#315bd6;color:#fff;padding:9px 13px;margin:10px 6px 0 0;cursor:pointer}.danger{background:#b93845}.status{margin-left:8px;padding:4px 8px;border-radius:20px;background:#e9eef8;color:#42506a;font-size:12px}pre{background:#111827;color:#d8e1f0;padding:12px;border-radius:8px;min-height:130px;white-space:pre-wrap}.hint{font-size:12px;color:#66748c}
+  </style>
+</head>
+<body>
+<header><h1>LinkGo 游戏运营控制台</h1><p>活动配置、职责分离审批、灰度发布、道具幂等发放与审计演示</p></header>
+<main>
+  <section>
+    <h2>连接与身份 <span id="auth-status" class="status">未登录</span></h2>
+    <div class="grid"><div><label>Gateway</label><input id="gateway" value="http://127.0.0.1:8090/api/v1"></div><div><label>账号</label><input id="username" value="userA"></div><div><label>密码</label><input id="password" type="password" value="123456"></div></div>
+    <button id="login">登录</button><span class="hint">userA=operator，userB=reviewer，userC=admin；发布和回滚时请切换相应账号。</span>
+  </section>
+  <div class="grid">
+    <section>
+      <h2>活动配置</h2>
+      <label>Activity ID</label><input id="activity-id" value="summer-login">
+      <label>版本</label><input id="activity-version" type="number" value="1">
+      <label>标题</label><input id="activity-title" value="夏日登录奖励">
+      <div class="grid"><div><label>开始时间（毫秒）</label><input id="start-at" type="number"></div><div><label>结束时间（毫秒）</label><input id="end-at" type="number"></div></div>
+      <div class="grid"><div><label>奖励道具</label><input id="reward-item" value="gem"></div><div><label>奖励数量</label><input id="reward-quantity" type="number" value="100"></div><div><label>灰度比例</label><input id="rollout" type="number" min="0" max="100" value="20"></div></div>
+      <button id="create-draft">保存草稿</button><button id="submit-activity">提交审批</button><button id="publish-activity">审批发布</button><button id="rollback-activity" class="danger">回滚</button>
+    </section>
+    <section>
+      <h2>道具批量发放</h2>
+      <label>Grant Request ID</label><input id="grant-request-id" value="grant-summer-001">
+      <label>每行 user_id,item_id,quantity</label><textarea id="grant-items">player-1001,gem,100
+player-1002,gem,100</textarea>
+      <button id="grant-items-btn">事务发放</button><button id="query-grant">查询原结果</button>
+      <p class="hint">相同 Grant Request ID 重放不会重复增加库存；同批重复 user/item 会被拒绝。</p>
+    </section>
+  </div>
+  <section><h2>操作结果</h2><pre id="output">等待操作...</pre></section>
+</main>
+<script>
+(()=>{
+  const state={token:"",userId:""},$=id=>document.getElementById(id),base=()=>$("gateway").value.replace(/\/$/,""),rid=()=>`ops-${Date.now()}-${Math.random().toString(16).slice(2,8)}`,show=v=>{$("output").textContent=JSON.stringify(v,null,2)};
+  async function call(path,options={}){const headers={"Content-Type":"application/json","X-Request-ID":rid(),"X-Trace-ID":rid(),...(options.headers||{})};if(state.token)headers.Authorization=`Bearer ${state.token}`;const response=await fetch(`${base()}${path}`,{...options,headers});const payload=await response.json().catch(()=>({}));if(!response.ok)throw new Error(payload.error||`${response.status} ${response.statusText}`);return payload}
+  async function run(action){try{show(await action())}catch(error){show({error:error.message})}}
+  $("start-at").value=Date.now()+60000;$("end-at").value=Date.now()+86400000;
+  $("login").onclick=()=>run(async()=>{const result=await call("/login",{method:"POST",body:JSON.stringify({username:$("username").value,password:$("password").value})});state.token=result.token;state.userId=result.user_id;$("auth-status").textContent=`已登录 ${state.userId}`;return result});
+  const transition=()=>({activity_id:$("activity-id").value,version:Number($("activity-version").value)});
+  $("create-draft").onclick=()=>run(()=>call("/admin/activities/drafts",{method:"POST",body:JSON.stringify({activity_id:$("activity-id").value,rollout_percent:Number($("rollout").value),config:{title:$("activity-title").value,start_at:Number($("start-at").value),end_at:Number($("end-at").value),reward_item_id:$("reward-item").value,reward_quantity:Number($("reward-quantity").value)}})}));
+  $("submit-activity").onclick=()=>run(()=>call("/admin/activities/submit",{method:"POST",body:JSON.stringify(transition())}));
+  $("publish-activity").onclick=()=>run(()=>call("/admin/activities/publish",{method:"POST",body:JSON.stringify(transition())}));
+  $("rollback-activity").onclick=()=>run(()=>call("/admin/activities/rollback",{method:"POST",body:JSON.stringify({activity_id:$("activity-id").value})}));
+  function grants(){return{grant_request_id:$("grant-request-id").value,items:$("grant-items").value.split("\n").filter(Boolean).map(line=>{const[user_id,item_id,quantity]=line.split(",").map(v=>v.trim());return{user_id,item_id,quantity:Number(quantity)}})}}
+  $("grant-items-btn").onclick=()=>run(()=>call("/admin/items/grant",{method:"POST",body:JSON.stringify(grants())}));
+  $("query-grant").onclick=()=>run(()=>call(`/admin/items/grants?grant_request_id=${encodeURIComponent($("grant-request-id").value)}`));
+})();
+</script>
+</body>
+</html>
