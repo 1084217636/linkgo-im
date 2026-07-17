@@ -476,7 +476,7 @@ Submit(ctx, uid, logic, data) → FNV(uid) % 64 → 非阻塞写入对应 shard
 | 顺序保证 | 无 | 分区内有序 |
 | 适用场景 | 实时推送（Gateway→客户端） | 可靠异步任务（群聊扩散） |
 
-**群聊走 Kafka 的核心原因**：一条群聊消息要投递给 N 个人，如果 Transfer 消费时某个用户的 Redis 写入失败了，Kafka offset 不动就能自然重试。Redis Pub/Sub 做不到。
+**群聊走 Kafka 的核心原因**：一条群聊消息要投递给 N 个人，如果 Transfer 消费时某个用户的 Redis 写入失败了，Kafka offset 不动就能自然重试。实现上使用 `FetchMessage` 拉取并在业务成功后调用 `CommitMessages`；retry/DLQ 发布失败时不能提交，也不能继续处理并提交同分区更高 offset，否则会间接跨过失败消息。Redis Pub/Sub 做不到这种消费进度控制。
 
 ### 8.4 为什么用 Redis 做在线路由而不是 Etcd？
 

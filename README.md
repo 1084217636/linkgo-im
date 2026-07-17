@@ -43,6 +43,7 @@ LinkGo Chat 由原 `LinkGo-IM` 收敛升级而来，定位为秋招主项目：*
 - Gateway 管连接：负责登录入口、JWT 校验、WebSocket 长连接、心跳保活、ACK 接收和离线消息回放，不承载复杂消息编排。
 - Logic 管路由和会话：负责消息校验、`session_id / seq / message_id` 生成、在线状态查询、单聊分发和历史查询，不持有 WebSocket 连接。
 - Transfer 管群聊扩散：基于 Kafka 消费群聊任务，按群成员异步扩散，失败任务进入 retry / dead-letter 链路。
+- Transfer 使用 Kafka 手动提交：仅在业务处理或 retry/DLQ 发布成功后提交当前 offset；提交或下游发布失败时原地退避，避免静默跳过消息。
 - Redis 管在线态和补偿：保存 `route:<uid>`、`pending_ack`、`ack_idx`、`offline_msg`、`message_payload`、`session_timeline`、`user:conversations`、`conversation:last`、`conversation:members` 和群成员缓存，不作为最终历史消息存储。
 - MySQL 管最终历史：消息最终落 MySQL，历史消息按 `session_id + seq` 查询，会话列表按 `conversations / conversation_members` 回源。
 - 红包边界：当前实现普通等额红包，解决超卖和重复领取；暂不做钱包扣款、余额入账和资金流水，这部分应作为独立资金域继续升级。

@@ -28,6 +28,17 @@ type groupDispatchJob struct {
 	Attempt    int              `json:"attempt"`
 }
 
+type messageReader interface {
+	FetchMessage(ctx context.Context) (kafka.Message, error)
+	CommitMessages(ctx context.Context, msgs ...kafka.Message) error
+}
+
+type messageWriter interface {
+	WriteMessages(ctx context.Context, msgs ...kafka.Message) error
+}
+
+const kafkaOperationRetryDelay = 250 * time.Millisecond
+
 func main() {
 	redisAddr := getEnv("REDIS_ADDR", "redis:6379")
 	redisPassword := getEnv("REDIS_PASSWORD", "123456")
@@ -111,16 +122,16 @@ func main() {
 
 func consumeLoop(
 	ctx context.Context,
-	reader *kafka.Reader,
-	retryWriter *kafka.Writer,
-	dlqWriter *kafka.Writer,
+	reader messageReader,
+	retryWriter messageWriter,
+	dlqWriter messageWriter,
 	rdb *redis.Client,
 	redisDelivery *delivery.RedisDelivery,
 	isRetry bool,
 	maxAttempts int,
 ) {
 	for {
-		msg, err := reader.ReadMessage(ctx)
+		msg, err := reader.FetchMessage(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
@@ -130,83 +141,143 @@ func consumeLoop(
 			continue
 		}
 
-		var job groupDispatchJob
-		if err := json.Unmarshal(msg.Value, &job); err != nil {
-			metrics.KafkaOperations.WithLabelValues(stageLabel(isRetry), "decode_error").Inc()
-			writeDeadLetter(ctx, dlqWriter, msg.Key, msg.Value)
-			continue
-		}
-		if job.Frame == nil {
-			metrics.KafkaOperations.WithLabelValues(stageLabel(isRetry), "empty").Inc()
-			continue
-		}
-
-		payload, err := proto.Marshal(job.Frame)
-		if err != nil {
-			metrics.KafkaOperations.WithLabelValues(stageLabel(isRetry), "marshal_error").Inc()
-			writeDeadLetter(ctx, dlqWriter, msg.Key, msg.Value)
-			continue
-		}
-		server.RememberSessionMessage(ctx, rdb, job.Frame, payload)
-
-		deliveryErr := false
-		var failedRecipient string
-		for _, recipient := range job.Recipients {
-			if err := deliverGroupRecipient(ctx, rdb, redisDelivery, recipient, job.Frame, payload); err != nil {
-				deliveryErr = true
-				failedRecipient = recipient
-				logx.Errorw("deliver group message failed",
-					logx.Field("trace_id", job.Frame.TraceId),
-					logx.Field("message_id", job.Frame.MessageId),
-					logx.Field("seq", job.Frame.Seq),
-					logx.Field("target_id", recipient),
-					logx.Field("attempt", job.Attempt),
+		for {
+			if err := processFetchedMessage(ctx, msg, retryWriter, dlqWriter, rdb, redisDelivery, isRetry, maxAttempts); err == nil {
+				break
+			} else {
+				metrics.KafkaOperations.WithLabelValues(stageLabel(isRetry), "handle_error").Inc()
+				logx.Errorw("handle kafka message failed before commit",
+					logx.Field("topic", msg.Topic),
+					logx.Field("partition", msg.Partition),
+					logx.Field("offset", msg.Offset),
 					logx.Field("error", err.Error()),
 				)
-				break
+			}
+			if !waitForKafkaRetry(ctx) {
+				return
 			}
 		}
+		if !commitFetchedMessage(ctx, reader, msg, isRetry) {
+			return
+		}
+	}
+}
 
-		if !deliveryErr {
-			metrics.KafkaOperations.WithLabelValues(stageLabel(isRetry), "success").Inc()
-			logx.Infow("group dispatch consumed",
+func processFetchedMessage(
+	ctx context.Context,
+	msg kafka.Message,
+	retryWriter messageWriter,
+	dlqWriter messageWriter,
+	rdb *redis.Client,
+	redisDelivery *delivery.RedisDelivery,
+	isRetry bool,
+	maxAttempts int,
+) error {
+	var job groupDispatchJob
+	if err := json.Unmarshal(msg.Value, &job); err != nil {
+		metrics.KafkaOperations.WithLabelValues(stageLabel(isRetry), "decode_error").Inc()
+		return writeDeadLetter(ctx, dlqWriter, msg.Key, msg.Value)
+	}
+	if job.Frame == nil {
+		metrics.KafkaOperations.WithLabelValues(stageLabel(isRetry), "empty").Inc()
+		return writeDeadLetter(ctx, dlqWriter, msg.Key, msg.Value)
+	}
+
+	payload, err := proto.Marshal(job.Frame)
+	if err != nil {
+		metrics.KafkaOperations.WithLabelValues(stageLabel(isRetry), "marshal_error").Inc()
+		return writeDeadLetter(ctx, dlqWriter, msg.Key, msg.Value)
+	}
+	server.RememberSessionMessage(ctx, rdb, job.Frame, payload)
+
+	var failedRecipient string
+	for _, recipient := range job.Recipients {
+		if err := deliverGroupRecipient(ctx, rdb, redisDelivery, recipient, job.Frame, payload); err != nil {
+			failedRecipient = recipient
+			logx.Errorw("deliver group message failed",
 				logx.Field("trace_id", job.Frame.TraceId),
 				logx.Field("message_id", job.Frame.MessageId),
 				logx.Field("seq", job.Frame.Seq),
-				logx.Field("target_id", job.Frame.To),
-				logx.Field("recipient_count", len(job.Recipients)),
-				logx.Field("retry", isRetry),
-			)
-			continue
-		}
-
-		job.Attempt++
-		encoded, _ := json.Marshal(job)
-		if job.Attempt <= maxAttempts {
-			if err := retryWriter.WriteMessages(ctx, kafka.Message{Key: msg.Key, Value: encoded}); err != nil {
-				metrics.KafkaOperations.WithLabelValues("retry_write", "error").Inc()
-				writeDeadLetter(ctx, dlqWriter, msg.Key, encoded)
-				continue
-			}
-			metrics.KafkaOperations.WithLabelValues("retry_write", "success").Inc()
-			logx.Infow("group dispatch scheduled retry",
-				logx.Field("trace_id", job.Frame.TraceId),
-				logx.Field("message_id", job.Frame.MessageId),
-				logx.Field("seq", job.Frame.Seq),
-				logx.Field("target_id", failedRecipient),
+				logx.Field("target_id", recipient),
 				logx.Field("attempt", job.Attempt),
+				logx.Field("error", err.Error()),
 			)
-			continue
+			break
 		}
+	}
 
-		logx.Errorw("group dispatch moved to dlq",
+	if failedRecipient == "" {
+		metrics.KafkaOperations.WithLabelValues(stageLabel(isRetry), "success").Inc()
+		logx.Infow("group dispatch consumed",
+			logx.Field("trace_id", job.Frame.TraceId),
+			logx.Field("message_id", job.Frame.MessageId),
+			logx.Field("seq", job.Frame.Seq),
+			logx.Field("target_id", job.Frame.To),
+			logx.Field("recipient_count", len(job.Recipients)),
+			logx.Field("retry", isRetry),
+		)
+		return nil
+	}
+
+	job.Attempt++
+	encoded, err := json.Marshal(job)
+	if err != nil {
+		return err
+	}
+	if job.Attempt <= maxAttempts {
+		if err := retryWriter.WriteMessages(ctx, kafka.Message{Key: msg.Key, Value: encoded}); err != nil {
+			metrics.KafkaOperations.WithLabelValues("retry_write", "error").Inc()
+			return err
+		}
+		metrics.KafkaOperations.WithLabelValues("retry_write", "success").Inc()
+		logx.Infow("group dispatch scheduled retry",
 			logx.Field("trace_id", job.Frame.TraceId),
 			logx.Field("message_id", job.Frame.MessageId),
 			logx.Field("seq", job.Frame.Seq),
 			logx.Field("target_id", failedRecipient),
 			logx.Field("attempt", job.Attempt),
 		)
-		writeDeadLetter(ctx, dlqWriter, msg.Key, encoded)
+		return nil
+	}
+
+	logx.Errorw("group dispatch moved to dlq",
+		logx.Field("trace_id", job.Frame.TraceId),
+		logx.Field("message_id", job.Frame.MessageId),
+		logx.Field("seq", job.Frame.Seq),
+		logx.Field("target_id", failedRecipient),
+		logx.Field("attempt", job.Attempt),
+	)
+	return writeDeadLetter(ctx, dlqWriter, msg.Key, encoded)
+}
+
+func commitFetchedMessage(ctx context.Context, reader messageReader, msg kafka.Message, isRetry bool) bool {
+	for {
+		if err := reader.CommitMessages(ctx, msg); err == nil {
+			metrics.KafkaOperations.WithLabelValues(stageLabel(isRetry), "commit_success").Inc()
+			return true
+		} else if ctx.Err() == nil {
+			metrics.KafkaOperations.WithLabelValues(stageLabel(isRetry), "commit_error").Inc()
+			logx.Errorw("commit kafka message failed",
+				logx.Field("topic", msg.Topic),
+				logx.Field("partition", msg.Partition),
+				logx.Field("offset", msg.Offset),
+				logx.Field("error", err.Error()),
+			)
+		}
+		if !waitForKafkaRetry(ctx) {
+			return false
+		}
+	}
+}
+
+func waitForKafkaRetry(ctx context.Context) bool {
+	timer := time.NewTimer(kafkaOperationRetryDelay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 
@@ -227,13 +298,14 @@ func deliverGroupRecipient(ctx context.Context, rdb *redis.Client, redisDelivery
 	return rdb.Set(ctx, key, "done", 7*24*time.Hour).Err()
 }
 
-func writeDeadLetter(ctx context.Context, writer *kafka.Writer, key, value []byte) {
+func writeDeadLetter(ctx context.Context, writer messageWriter, key, value []byte) error {
 	if err := writer.WriteMessages(ctx, kafka.Message{Key: key, Value: value}); err != nil {
 		metrics.KafkaOperations.WithLabelValues("dlq_write", "error").Inc()
 		logx.Errorf("write dlq failed: %v", err)
-		return
+		return err
 	}
 	metrics.KafkaOperations.WithLabelValues("dlq_write", "success").Inc()
+	return nil
 }
 
 func stageLabel(isRetry bool) string {
