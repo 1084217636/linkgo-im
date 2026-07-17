@@ -245,7 +245,7 @@ Transfer (消费 Kafka)
 id        BIGINT UNSIGNED AUTO_INCREMENT  -- 主键
 user_id   VARCHAR(64) UNIQUE             -- 用户ID (业务主键)
 username  VARCHAR(32) UNIQUE             -- 用户名
-password  VARCHAR(128)                    -- 明文存储(仅Demo)
+password  VARCHAR(128)                    -- bcrypt 哈希；旧明文仅兼容迁移
 ```
 
 **messages 表**
@@ -424,15 +424,17 @@ Allow(key):
 **文件**: `internal/server/pool.go`
 
 ```
-64 个 goroutine worker
-4096 容量的缓冲 channel
+64 个 uid 固定 shard
+每个 shard：1 个 worker + 64 容量的缓冲 channel
 
-Submit(ctx, uid, logic, data) → 非阻塞写入 channel
-  ├─ 成功: worker 执行 logic.PushMessage(gRPC)
-  └─ 失败(channel满): 返回 false → 记录 metric + 丢弃
+Submit(ctx, uid, logic, data) → FNV(uid) % 64 → 非阻塞写入对应 shard
+  ├─ accepted: shard 单 worker 按 FIFO 执行 logic.PushMessage(gRPC)
+  ├─ queue_full: 记录拒绝指标
+  ├─ pool_closed: 关闭后拒绝新任务
+  └─ context_canceled: 已取消任务不再入队
 ```
 
-**为什么需要工作池？** 每个 WebSocket 消息都是 goroutine 处理，如果不限制并发 gRPC 调用数，突发流量会导致 Logic 服务被打爆。工作池限流 + 反压（队列满就拒绝），是「保护后端」的标准模式。
+**为什么需要分片工作池？** 有界队列限制并发 gRPC 调用和内存增长；固定 uid 分片让同一发送者始终由同一 shard 串行处理，同时不同 shard 保持并行。当前服务端已有明确拒绝结果、指标和受控关闭，但客户端错误帧仍待补齐。
 
 ---
 
@@ -570,7 +572,7 @@ readinessProbe:
 ### P0 — 生产必须
 
 1. **密码明文存储** → bcrypt 哈希
-   - 当前 `users.password` 存明文，`Login.Login()` 直接字符串比对
+   - 当前 `users.password` 存 bcrypt；`Login()` 使用 bcrypt 校验，并在旧明文账号首次成功登录后原子升级
 2. **数据库连接池参数化** → 当前 hardcode 100/10，应可配置
 3. **JWT secret 不能 hardcode 默认值** → 生产环境必须从 K8s Secret 注入
 4. **消息体未加密** → WebSocket 传输应有 TLS + 可选的端到端加密
@@ -635,8 +637,8 @@ readinessProbe:
 **Q: sync.Map 和普通 map+mutex 的区别？为什么 ClientManager 用 sync.Map？**
 > sync.Map 适合「读多写少」且「key 集合相对稳定」的场景。ClientManager 的 Add/Remove 操作相对 GetConn（推送时查连接）少得多。但如果需要遍历所有连接（广播场景），sync.Map 的 Range 性能不如 map+mutex。
 
-**Q: channel 缓冲区为什么是 4096？**
-> 这个值是经验值。核心考量：64 个 worker × 每个 worker 处理能力 × 容忍的突发排队量。4096 条消息的队列深度在高并发下提供足够的缓冲，同时避免 OOM。具体值应该根据压测结果调优。
+**Q: 为什么是 64 个 shard、每个 shard 队列容量 64？**
+> 这样总排队容量约为 4096，同时把同一 uid 固定到单 worker，避免多个 worker 并行提交同一发送者消息。两个数字仍是当前工程默认值，必须结合队列深度、拒绝率和处理时延压测调整，不能说成通用最优值。
 
 ### 协议类
 

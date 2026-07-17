@@ -2,6 +2,8 @@
 
 LinkGo Chat 由原 `LinkGo-IM` 收敛升级而来，定位为秋招主项目：**AI 好友与红包协同 IM 系统**。项目主线是 Go 后端实时通信工程能力，同时把红包并发一致性和 AI 聊天好友接入消息链路，形成 `IM + 红包 + AI` 的可演示业务闭环。
 
+如果需要把项目上下文交给其他 AI，或需要了解“当前真实完成度、最终版本定义、简历写法和学习路线”，统一以 [docs/AI_HANDOFF_PROJECT_FINAL.md](docs/AI_HANDOFF_PROJECT_FINAL.md) 为入口。该文档明确区分了当前代码事实与最终收口目标，早期规划稿不再作为完成度依据。
+
 秋招目标、CodeRepair 归并方式和下一步开发清单见 [docs/AUTUMN_RECRUIT_TARGET.md](docs/AUTUMN_RECRUIT_TARGET.md)。
 当前 V0 代码地图和面试材料见 [docs/CODE_MAP.md](docs/CODE_MAP.md)、[docs/CORE_LINKS.md](docs/CORE_LINKS.md)、[docs/MODULE_CARDS.md](docs/MODULE_CARDS.md)、[docs/TEST_EVIDENCE.md](docs/TEST_EVIDENCE.md)、[docs/INTERVIEW_QA.md](docs/INTERVIEW_QA.md)。
 
@@ -14,7 +16,10 @@ LinkGo Chat 由原 `LinkGo-IM` 收敛升级而来，定位为秋招主项目：*
 
 - Gateway 和 Logic 解耦，接入层专注长连接，逻辑层专注消息编排。
 - Gateway 使用 go-zero REST scaffold，Logic 使用 go-zero zRPC scaffold，简历里的 go-zero 表述可以落地。
-- Logic 实例注册到 Etcd，Gateway 基于服务发现和 Rendezvous Hash 选择目标节点。
+- Logic 实例注册到 Etcd，Gateway 通过 go-zero zRPC 服务发现并使用实际配置的 `p2c_ewma` 负载均衡选择健康节点；当前代码没有实现一致性哈希粘滞路由。
+- Gateway 上行调度使用 64 个 uid 固定 shard，每个 shard 由单 worker 串行消费 64 容量的有界队列；同一 uid 保持提交 FIFO，不同 shard 可并行，提交结果明确区分队列满、池关闭和上下文取消。
+- 登录密码使用 bcrypt；旧版明文账号仅在首次成功校验时兼容并原子升级，未知用户、错密码和禁用账号统一返回 `invalid credentials`。
+- WebSocket 握手只接受 `Gateway.AllowedOrigins`/`WS_ALLOWED_ORIGINS` 中 scheme、host、port 精确匹配的来源；空 Origin 默认拒绝，受信任的非浏览器客户端必须显式设置 `WS_ALLOW_MISSING_ORIGIN=true` 且仍需 JWT；群历史查询在读库前校验当前群成员身份。
 - WebSocket 消息载荷改为 Protobuf 二进制帧，不再依赖业务 JSON 文本。
 - Redis `route:<uid>` 维护在线状态，结合网关定向 `Pub/Sub` 完成跨节点实时推送。
 - Redis Lua 脚本为每个会话分配单调递增 `seq`，用于会话内排序、去重和补偿。
@@ -43,13 +48,13 @@ LinkGo Chat 由原 `LinkGo-IM` 收敛升级而来，定位为秋招主项目：*
 - AI 边界：当前已经支持 `mock / openai-compatible / fallback` provider、群聊总结和最小 FAQ/RAG 问答；更复杂的向量索引、token/cost 控制和完整 DLP 仍放在后续版本。
 - Pub/Sub 只做在线实时通知：不把 Redis Pub/Sub 当可靠队列，可靠性依赖 pending、ACK、离线回放和历史补齐。
 - ACK 边界：当前实现的是接收方收到消息后的投递 ACK，不是已读 ACK；服务端写 WebSocket 成功不会立即清理 pending，收到客户端 ACK 后才清理。
-- 顺序性边界：只保证单会话维度递增 `seq`，不做全局消息顺序。
+- 顺序性边界：Gateway 保证同一 uid 在本进程内按入队顺序串行提交，Logic 使用会话级递增 `seq` 作为最终展示顺序；不保证跨发送者的到达先后，也不做全局消息顺序。
 
 ## 架构分层
 
 - `gateway`
   - 处理登录接口、JWT 校验、WebSocket 握手、心跳、ACK、离线消息回放
-  - 从 Etcd 发现 Logic 节点，并按用户维度做一致性路由
+  - 从 Etcd 发现 Logic 节点，并由 go-zero zRPC `p2c_ewma` 做负载均衡
 - `logic`
   - 校验消息、补全 `session_id / seq / message_id / sent_at`
   - 单聊直接投递，群聊写入 Kafka 进行异步扩散
@@ -89,8 +94,8 @@ flowchart LR
 
 ## 核心链路
 
-1. 用户调用 `/api/v1/login`，Logic 校验账号密码后签发 JWT，并按 `user:conversations:<uid>` 拉取最近 50 个会话；Redis 未命中时回源 MySQL `conversation_members + conversations`，返回 `conversation_id / type / title / last_msg / last_seq / read_seq / unread_count / updated_at`。
-2. 客户端通过 `/ws?token=...` 建立 WebSocket。
+1. 用户调用 `/api/v1/login`，Logic 使用 bcrypt 校验账号密码（兼容迁移旧明文）后签发 JWT，并按 `user:conversations:<uid>` 拉取最近 50 个会话；Redis 未命中时回源 MySQL `conversation_members + conversations`，返回 `conversation_id / type / title / last_msg / last_seq / read_seq / unread_count / updated_at`。
+2. 客户端通过 `/ws?token=...` 建立 WebSocket，浏览器握手 Origin 必须命中精确白名单；空 Origin 默认拒绝，受信任的非浏览器客户端只能通过显式配置放行。
 3. Gateway 校验 JWT 后写入 `route:<uid> = gatewayId|connId`，同时维护 `gateway_users:<gatewayId>` 与 `gateway_conn:<gatewayId>:<connId>` 反向索引。
 4. Gateway 按 `pending_ack:<uid>` 回放未 ACK 消息；如果重连 URL 携带 `session_id` 和 `last_seq`，再从 `session_timeline:<session_id>` 补齐 `seq > last_seq` 的消息。
 5. 客户端发送 Protobuf `WireMessage` 二进制帧到 Gateway，普通消息必须携带 `client_msg_id`；Gateway 补齐 `trace_id` 后经 Etcd 发现 Logic 节点并 gRPC 转发。

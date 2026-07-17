@@ -50,7 +50,7 @@ Go、Go-Zero、gRPC、Etcd、Redis、MySQL、Kafka、Protobuf、Docker、Kuberne
 
 核心功能：
 - 设计 Gateway / Logic / Transfer 服务分层：Gateway 负责 WebSocket 长连接、心跳保活和 ACK 接收，Logic 负责消息校验、会话路由、在线状态查询与单聊分发，Transfer 基于 Kafka 消费群聊任务并异步扩散。
-- 结合一致性哈希、在线状态映射与 Redis Pub/Sub 实现单聊定向推送，支持用户连接分散在不同 Gateway 节点时的消息转发。
+- 结合 zRPC `p2c_ewma`、在线状态映射与 Redis Pub/Sub 实现单聊定向推送，支持用户连接分散在不同 Gateway 节点时的消息转发。
 - 基于会话级 `seq`、接收方 ACK 与 pending 结构实现消息排序和失败补偿；Pub/Sub 仅用于在线实时通知，不作为可靠队列，ACK 未返回时保留未确认消息用于重连回放。
 - 基于 Kafka + Transfer 服务实现群聊异步扩散，解耦网关连接层与群发链路，并在网关侧补充心跳保活、JWT 鉴权、限流与 worker pool。
 - 基于 Docker Compose 完成本地多服务联调，补充 Kubernetes 部署清单和 GitHub Actions CI，覆盖自动测试、服务构建、镜像构建和交付前清单检查。

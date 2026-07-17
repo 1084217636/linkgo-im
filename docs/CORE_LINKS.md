@@ -47,7 +47,7 @@ user:conversation:read:<uid>
 
 ```text
 用户不存在 -> user not found
-密码错误 -> invalid password
+未知用户、密码错误或账号禁用 -> invalid credentials
 会话列表失败 -> 记录日志，不影响登录主流程
 ```
 
@@ -101,7 +101,7 @@ Client WebSocket protobuf WireMessage
   ↓
 server.StartClientLoop
   ↓
-push worker pool
+uid 固定分片 PushWorkerPool（分片内 FIFO、跨分片并行）
   ↓
 Logic PushMessage
   ↓

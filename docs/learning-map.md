@@ -199,7 +199,7 @@
 
 - Logic 节点为什么要注册到 Etcd。
 - Gateway 为什么要通过 Etcd 发现 Logic。
-- 项目里用的是 Rendezvous Hash，也就是一致性哈希思路的一种实现。
+- 项目实际使用 go-zero zRPC 的 `p2c_ewma` 负载均衡；`zrpc.SetHashKey` 不会让 p2c 变成一致性哈希。学习时要能解释 p2c_ewma 的“两次随机选择 + 负载估计”思路，以及它与一致性哈希粘滞路由的区别。
 
 ### Redis
 
