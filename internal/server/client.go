@@ -103,6 +103,17 @@ func StartClientLoop(
 					logx.Field("result", string(result)),
 				)
 				metrics.OutboundMessages.WithLabelValues("logic", string(result)).Inc()
+				if err := writePushRejection(conn, &frame, result); err != nil {
+					metrics.OutboundMessages.WithLabelValues("gateway", "rejection_write_error").Inc()
+					logx.Errorw("write push rejection failed",
+						logx.Field("trace_id", frame.TraceId),
+						logx.Field("client_msg_id", frame.ClientMsgId),
+						logx.Field("gateway_id", gatewayID),
+						logx.Field("error", err.Error()),
+					)
+					return
+				}
+				metrics.OutboundMessages.WithLabelValues("gateway", "rejection_sent").Inc()
 			}
 		}
 	}

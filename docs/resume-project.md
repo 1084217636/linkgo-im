@@ -41,7 +41,7 @@ Go、go-zero、gRPC、WebSocket、Redis、MySQL、Kafka、Etcd、Protobuf、Dock
 基于 go-zero REST + zRPC 脚手架解耦长连接接入与消息逻辑，通过 Etcd 做服务注册发现并使用 `p2c_ewma` 做 RPC 负载均衡；跨 Gateway 精准投递由 Redis 在线路由映射与定向 Pub/Sub 完成；使用 Protobuf 二进制消息协议替代业务 JSON；利用 Redis 维护离线补偿与 ACK 未确认消息集合，使用 Lua 生成会话级递增 Sequence ID；引入 Kafka 异步处理群聊扩散并加入 retry / dead-letter 机制。
 
 项目亮点：
-设计 JWT 鉴权、令牌桶限流、双向心跳和 uid 固定分片有界 worker pool，提升高并发长连接稳定性；通过 Prometheus 指标暴露连接数、消息吞吐、分片队列、ACK、Kafka 重试等运行状态，增强可观测性与问题定位效率。
+设计 JWT 鉴权、令牌桶限流、双向心跳和 uid 固定分片有界 worker pool；队列过载时返回关联幂等键的结构化错误，客户端采用有上限的指数退避与随机抖动重试；通过 Prometheus 暴露连接数、消息吞吐、分片队列、ACK、Kafka 重试等状态。
 
 ## 版本三：更贴近你截图风格
 

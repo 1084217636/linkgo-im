@@ -17,4 +17,5 @@
 - 利用 `route:<uid> -> gatewayID` 做定向发布，和简历中的“在线状态中心精准路由”保持一致。
 - `SubmitResult` 明确区分 `accepted / queue_full / pool_closed / context_canceled`；关闭时停止接收并在调用方给定的超时内排空队列。
 - 接入层通过 Prometheus 观察每个 shard 的队列深度、提交结果和处理时延，以及连接数、ACK 和上行消息状态。
-- 当前队列拒绝仍只进入日志与指标，客户端结构化 `SERVER_BUSY` 错误帧属于下一阶段背压协议。
+- 队列拒绝会返回带原始 `client_msg_id`、`trace_id` 的结构化 `SYSTEM` 帧。`queue_full` 映射为可重试 `SERVER_BUSY`，池关闭映射为可重试 `SERVER_UNAVAILABLE`，请求取消不可重试；拒绝帧不是 ACK，也不会让客户端误判为服务端已接收。
+- `public/index.html` 对可重试错误执行带随机抖动的指数退避，复用原 `client_msg_id`，单条消息最多自动重试 5 次。

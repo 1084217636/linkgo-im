@@ -601,7 +601,8 @@
         requests: [],
         renderedMessageIds: new Set(),
         lastSeqBySession: new Map(),
-        lastWire: null
+        lastWire: null,
+        pendingMessages: new Map()
     };
 
     const $ = (id) => document.getElementById(id);
@@ -1152,9 +1153,12 @@
                 return;
             }
             if (msg.msg_type === 3) {
+                if (handleSystemMessage(msg)) return;
                 log("info", "收到系统消息", msg.body || msg.message_id || "");
                 return;
             }
+
+            clearPendingMessage(msg.client_msg_id);
 
             const peer = peerOfMessage(msg);
             addConversation(peer, msg.to_type || "user", {
@@ -1177,6 +1181,66 @@
         } catch (err) {
             log("error", "解析 WebSocket 消息失败", err.message);
         }
+    }
+
+    function handleSystemMessage(msg) {
+        let detail;
+        try {
+            detail = JSON.parse(msg.body || "{}");
+        } catch {
+            return false;
+        }
+        if (detail.type !== "error") return false;
+
+        const clientMsgID = msg.client_msg_id || "";
+        log(detail.retryable ? "warn" : "error", `消息被服务端拒绝: ${detail.code || "UNKNOWN"}`, {
+            client_msg_id: clientMsgID,
+            retryable: Boolean(detail.retryable),
+            message: detail.message || ""
+        });
+        if (detail.retryable && clientMsgID) {
+            scheduleMessageRetry(clientMsgID, Number(detail.retry_after_ms) || 0);
+        } else {
+            clearPendingMessage(clientMsgID);
+        }
+        return true;
+    }
+
+    function scheduleMessageRetry(clientMsgID, serverDelayMS) {
+        const pending = state.pendingMessages.get(clientMsgID);
+        if (!pending || pending.timer) return;
+        if (pending.attempts >= 5) {
+            state.pendingMessages.delete(clientMsgID);
+            log("error", "消息重试次数已达上限", { client_msg_id: clientMsgID });
+            return;
+        }
+
+        pending.attempts += 1;
+        const exponentialMS = Math.min(5000, 250 * (2 ** (pending.attempts - 1)));
+        const jitteredMS = Math.round(exponentialMS * (0.5 + Math.random() * 0.5));
+        const delayMS = Math.max(serverDelayMS, jitteredMS);
+        pending.timer = window.setTimeout(() => {
+            pending.timer = null;
+            const ws = state.ws;
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                state.pendingMessages.delete(clientMsgID);
+                log("error", "连接不可用，停止消息重试", { client_msg_id: clientMsgID });
+                return;
+            }
+            ws.send(encodeWireMessage(pending.wire));
+            log("warn", "服务繁忙，自动重试消息", {
+                client_msg_id: clientMsgID,
+                attempt: pending.attempts,
+                delay_ms: delayMS
+            });
+        }, delayMS);
+    }
+
+    function clearPendingMessage(clientMsgID) {
+        if (!clientMsgID) return;
+        const pending = state.pendingMessages.get(clientMsgID);
+        if (pending && pending.timer) window.clearTimeout(pending.timer);
+        state.pendingMessages.delete(clientMsgID);
     }
 
     function ackMessage(msg) {
@@ -1422,13 +1486,17 @@
         }
 
         ws.send(encodeWireMessage(wire));
+        const existing = state.pendingMessages.get(wire.client_msg_id);
+        if (!existing) {
+            state.pendingMessages.set(wire.client_msg_id, { wire, attempts: 0, timer: null });
+        }
         addConversation(state.currentTarget, state.currentType, {
             title: state.currentType === "group" ? state.currentTarget : displayName(state.currentTarget),
             last_msg: wire.body,
             updated_at: Date.now()
         });
         renderLists();
-        log("info", reuseLast ? "已用相同 clientMsgId 重发" : "消息已发送", {
+        log("info", reuseLast ? "已用相同 clientMsgId 重发" : "消息已提交至网关", {
             to: wire.to,
             to_type: wire.to_type,
             client_msg_id: wire.client_msg_id
