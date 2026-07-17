@@ -244,3 +244,18 @@ type ActivityTransitionReq struct {
 type ActivityRollbackReq struct {
 	ActivityID string `json:"activity_id"`
 }
+
+type GrantItem struct {
+	UserID   string `json:"user_id"`
+	ItemID   string `json:"item_id"`
+	Quantity int64  `json:"quantity"`
+}
+
+type ItemGrantReq struct {
+	GrantRequestID string      `json:"grant_request_id"`
+	Items          []GrantItem `json:"items"`
+}
+
+type ItemGrantQueryReq struct {
+	GrantRequestID string `form:"grant_request_id"`
+}

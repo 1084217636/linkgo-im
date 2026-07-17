@@ -56,6 +56,8 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 			},
 			rest.Route{Method: http.MethodPost, Path: "/activities/drafts", Handler: ActivityDraftHandler(serverCtx)},
 			rest.Route{Method: http.MethodPost, Path: "/activities/submit", Handler: ActivitySubmitHandler(serverCtx)},
+			rest.Route{Method: http.MethodPost, Path: "/items/grant", Handler: ItemGrantHandler(serverCtx)},
+			rest.Route{Method: http.MethodGet, Path: "/items/grants", Handler: ItemGrantResultHandler(serverCtx)},
 		),
 		rest.WithPrefix("/api/v1/admin"),
 	)

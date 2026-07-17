@@ -53,6 +53,34 @@ func ActivityRollbackHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
+func ItemGrantHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.ItemGrantReq
+		if err := httpx.Parse(r, &req); err != nil {
+			httpx.ErrorCtx(r.Context(), w, err)
+			return
+		}
+		items := make([]gameops.GrantItem, 0, len(req.Items))
+		for _, item := range req.Items {
+			items = append(items, gameops.GrantItem{UserID: item.UserID, ItemID: item.ItemID, Quantity: item.Quantity})
+		}
+		result, err := svcCtx.GrantOps.GrantItems(r.Context(), gameOpsActor(r), gameops.GrantRequest{GrantRequestID: req.GrantRequestID, Items: items}, r.Header.Get("X-Trace-ID"), requestClientIP(r))
+		writeGameOpsResponse(r, w, result, err)
+	}
+}
+
+func ItemGrantResultHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.ItemGrantQueryReq
+		if err := httpx.Parse(r, &req); err != nil {
+			httpx.ErrorCtx(r.Context(), w, err)
+			return
+		}
+		result, err := svcCtx.GrantOps.GetResult(r.Context(), req.GrantRequestID)
+		writeGameOpsResponse(r, w, result, err)
+	}
+}
+
 func activityTransitionHandler(svcCtx *svc.ServiceContext, run func(*http.Request, gameops.Actor, types.ActivityTransitionReq) (any, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.ActivityTransitionReq
@@ -91,7 +119,7 @@ func writeGameOpsResponse(r *http.Request, w http.ResponseWriter, resp any, err 
 	}
 	status := http.StatusInternalServerError
 	switch {
-	case errors.Is(err, gameops.ErrInvalidActivity):
+	case errors.Is(err, gameops.ErrInvalidActivity), errors.Is(err, gameops.ErrInvalidGrant):
 		status = http.StatusBadRequest
 	case errors.Is(err, gameops.ErrInvalidState), errors.Is(err, gameops.ErrSelfApproval):
 		status = http.StatusConflict

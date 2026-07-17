@@ -255,6 +255,21 @@ type ActivityRollbackReq {
 	ActivityID string `json:"activity_id"`
 }
 
+type GrantItem {
+	UserID   string `json:"user_id"`
+	ItemID   string `json:"item_id"`
+	Quantity int64  `json:"quantity"`
+}
+
+type ItemGrantReq {
+	GrantRequestID string      `json:"grant_request_id"`
+	Items          []GrantItem `json:"items"`
+}
+
+type ItemGrantQueryReq {
+	GrantRequestID string `form:"grant_request_id"`
+}
+
 // --- endpoints ---
 
 @server (
@@ -283,6 +298,12 @@ service gateway-api {
 
 	@handler ActivityRollback
 	post /activities/rollback (ActivityRollbackReq)
+
+	@handler ItemGrant
+	post /items/grant (ItemGrantReq)
+
+	@handler ItemGrantResult
+	get /items/grants (ItemGrantQueryReq)
 }
 
 @server (

@@ -29,6 +29,7 @@ type ServiceContext struct {
 	AISummary   *ai.SummaryService
 	AIAsk       *ai.AskService
 	ActivityOps *gameops.ActivityService
+	GrantOps    *gameops.GrantService
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
@@ -121,6 +122,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		AISummary:   ai.NewSummaryService(db, aiProvider, c.AI.MaxMessages),
 		AIAsk:       ai.NewAskService(db, aiProvider, knowledgeBase, c.AI.KnowledgeTopK),
 		ActivityOps: gameops.NewActivityService(db, rdb),
+		GrantOps:    gameops.NewGrantService(db),
 	}
 }
 
