@@ -20,6 +20,7 @@ services:
       - --web.console.templates=/usr/share/prometheus/consoles
     volumes:
       - ./deploy/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/observability/rules:/etc/prometheus/rules:ro
 
   grafana:
     image: ${GRAFANA_IMAGE:-grafana/grafana:11.3.0}

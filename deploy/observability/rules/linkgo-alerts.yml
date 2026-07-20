@@ -1,0 +1,58 @@
+groups:
+  - name: linkgo-availability
+    rules:
+      - alert: LinkGoTargetDown
+        expr: up{job=~"linkgo-gateway|linkgo-transfer"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "LinkGo target is unavailable"
+          description: "{{ $labels.job }}/{{ $labels.instance }} has been unreachable for one minute."
+
+      - alert: LinkGoPushQueueRejecting
+        expr: sum(rate(linkgo_push_queue_submissions_total{result="queue_full"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Gateway push queue is applying backpressure"
+          description: "Push submissions have been rejected continuously; inspect shard depth and downstream latency."
+
+  - name: linkgo-reliability
+    rules:
+      - alert: LinkGoKafkaOperationFailures
+        expr: sum by (stage) (rate(linkgo_kafka_operations_total{result=~"read_error|handle_error|decode_error|marshal_error|commit_error|error"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kafka {{ $labels.stage }} operations are failing"
+          description: "The transfer reliability chain is reporting failures for two minutes."
+
+      - alert: LinkGoGameOpsCacheSyncFailures
+        expr: sum(rate(linkgo_gameops_cache_sync_total{result="failed"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Activity cache synchronization is failing"
+          description: "Database state is durable, but Redis activation or outbox acknowledgement needs recovery."
+
+      - alert: LinkGoGameOpsOperationFailures
+        expr: sum by (operation) (rate(linkgo_gameops_operations_total{result=~"failed|cache_sync_pending"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GameOps {{ $labels.operation }} requests are failing"
+          description: "Review audit records and trace IDs before retrying the operation."
+
+      - alert: LinkGoGameOpsHighLatency
+        expr: histogram_quantile(0.95, sum by (le, operation) (rate(linkgo_gameops_operation_latency_seconds_bucket[5m]))) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GameOps {{ $labels.operation }} p95 latency is high"
+          description: "The five-minute p95 has exceeded one second for ten minutes."

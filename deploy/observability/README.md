@@ -44,9 +44,22 @@ make ops-smoke
 - `linkgo_kafka_operations_total`
 - `linkgo_rate_limit_hits_total`
 - `linkgo_red_packet_operations_total`
+- `linkgo_gameops_operations_total`
+- `linkgo_gameops_cache_sync_total`
+- `linkgo_gameops_granted_items_total`
+
+## 告警闭环
+
+`rules/linkgo-alerts.yml` 覆盖服务不可用、推送队列背压、Kafka 处理/提交失败、运营操作失败、活动缓存同步失败和运营接口高延迟。可用以下命令检查规则语法：
+
+```bash
+make prometheus-check
+```
+
+告警阈值是本地演示基线，上线前应根据压测报告调整。当前没有引入 Kafka exporter，因此不声称已经监控 consumer group lag；现阶段用 Fetch/Handle/Commit 失败率证明消费链路异常，Kafka lag 需要在部署 exporter 后另行补充。
 
 ## 说明
 
-当前面板聚焦 IM 核心链路：连接数、消息吞吐、ACK、Kafka 和限流。后续如果要继续工业化，可以再补日志采集、链路追踪、告警规则和容量基线。
+当前面板聚焦 IM 核心链路：连接数、消息吞吐、ACK、Kafka 和限流。后续可继续补日志采集、链路追踪和容量基线。
 
 部分 `CounterVec` 指标需要对应业务流量触发后才会出现在 Prometheus 中。例如 Kafka、ACK、限流指标通常要在发送群消息、收到 ACK 或触发限流后才有样本。

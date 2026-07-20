@@ -46,6 +46,9 @@ jobs:
           make observability-config
           make observability-cn-config
 
+      - name: Validate Prometheus config and alert rules
+        run: make prometheus-check
+
   docker-build:
     name: Docker image build
     runs-on: ubuntu-latest
