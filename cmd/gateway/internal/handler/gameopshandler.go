@@ -4,16 +4,19 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"time"
 
 	gwmiddleware "github.com/1084217636/linkgo-im/cmd/gateway/internal/middleware"
 	"github.com/1084217636/linkgo-im/cmd/gateway/internal/svc"
 	"github.com/1084217636/linkgo-im/cmd/gateway/internal/types"
 	"github.com/1084217636/linkgo-im/internal/gameops"
+	"github.com/1084217636/linkgo-im/internal/metrics"
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
 func ActivityDraftHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
 		var req types.ActivityDraftReq
 		if err := httpx.Parse(r, &req); err != nil {
 			httpx.ErrorCtx(r.Context(), w, err)
@@ -24,37 +27,39 @@ func ActivityDraftHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			Title: req.Config.Title, StartAt: req.Config.StartAt, EndAt: req.Config.EndAt,
 			RewardItemID: req.Config.RewardItemID, RewardQuantity: req.Config.RewardQuantity,
 		}, req.RolloutPercent, requestID(r), r.Header.Get("X-Trace-ID"), requestClientIP(r))
-		writeGameOpsResponse(r, w, version, err)
+		writeMeasuredGameOpsResponse(r, w, "activity.create_draft", started, version, err)
 	}
 }
 
 func ActivitySubmitHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
-	return activityTransitionHandler(svcCtx, func(r *http.Request, actor gameops.Actor, req types.ActivityTransitionReq) (any, error) {
+	return activityTransitionHandler(svcCtx, "activity.submit", func(r *http.Request, actor gameops.Actor, req types.ActivityTransitionReq) (any, error) {
 		err := svcCtx.ActivityOps.Submit(r.Context(), actor, req.ActivityID, req.Version, requestID(r), r.Header.Get("X-Trace-ID"), requestClientIP(r))
 		return map[string]any{"activity_id": req.ActivityID, "version": req.Version, "status": gameops.ActivityPending}, err
 	})
 }
 
 func ActivityPublishHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
-	return activityTransitionHandler(svcCtx, func(r *http.Request, actor gameops.Actor, req types.ActivityTransitionReq) (any, error) {
+	return activityTransitionHandler(svcCtx, "activity.publish", func(r *http.Request, actor gameops.Actor, req types.ActivityTransitionReq) (any, error) {
 		return svcCtx.ActivityOps.Publish(r.Context(), actor, req.ActivityID, req.Version, requestID(r), r.Header.Get("X-Trace-ID"), requestClientIP(r))
 	})
 }
 
 func ActivityRollbackHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
 		var req types.ActivityRollbackReq
 		if err := httpx.Parse(r, &req); err != nil {
 			httpx.ErrorCtx(r.Context(), w, err)
 			return
 		}
 		err := svcCtx.ActivityOps.Rollback(r.Context(), gameOpsActor(r), req.ActivityID, requestID(r), r.Header.Get("X-Trace-ID"), requestClientIP(r))
-		writeGameOpsResponse(r, w, map[string]any{"activity_id": req.ActivityID, "status": gameops.ActivityRolledBack}, err)
+		writeMeasuredGameOpsResponse(r, w, "activity.rollback", started, map[string]any{"activity_id": req.ActivityID, "status": gameops.ActivityRolledBack}, err)
 	}
 }
 
 func ItemGrantHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
 		var req types.ItemGrantReq
 		if err := httpx.Parse(r, &req); err != nil {
 			httpx.ErrorCtx(r.Context(), w, err)
@@ -65,31 +70,59 @@ func ItemGrantHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			items = append(items, gameops.GrantItem{UserID: item.UserID, ItemID: item.ItemID, Quantity: item.Quantity})
 		}
 		result, err := svcCtx.GrantOps.GrantItems(r.Context(), gameOpsActor(r), gameops.GrantRequest{GrantRequestID: req.GrantRequestID, Items: items}, r.Header.Get("X-Trace-ID"), requestClientIP(r))
-		writeGameOpsResponse(r, w, result, err)
+		writeMeasuredGameOpsResponse(r, w, "item.batch_grant", started, result, err)
 	}
 }
 
 func ItemGrantResultHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
 		var req types.ItemGrantQueryReq
 		if err := httpx.Parse(r, &req); err != nil {
 			httpx.ErrorCtx(r.Context(), w, err)
 			return
 		}
 		result, err := svcCtx.GrantOps.GetResult(r.Context(), req.GrantRequestID)
-		writeGameOpsResponse(r, w, result, err)
+		writeMeasuredGameOpsResponse(r, w, "item.grant_result", started, result, err)
 	}
 }
 
-func activityTransitionHandler(svcCtx *svc.ServiceContext, run func(*http.Request, gameops.Actor, types.ActivityTransitionReq) (any, error)) http.HandlerFunc {
+func AuditListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		var req types.AuditQueryReq
+		if err := httpx.Parse(r, &req); err != nil {
+			httpx.ErrorCtx(r.Context(), w, err)
+			return
+		}
+		entries, err := gameops.ListAudits(r.Context(), svcCtx.DB, gameops.AuditFilter{OperatorID: req.OperatorID, ResourceType: req.ResourceType, ResourceID: req.ResourceID, Result: req.Result, Limit: req.Limit})
+		writeMeasuredGameOpsResponse(r, w, "audit.list", started, entries, err)
+	}
+}
+
+func writeMeasuredGameOpsResponse(r *http.Request, w http.ResponseWriter, operation string, started time.Time, resp any, err error) {
+	result := "success"
+	if err != nil {
+		result = "failed"
+	}
+	if errors.Is(err, gameops.ErrCacheSyncPending) {
+		result = "cache_sync_pending"
+	}
+	metrics.GameOpsOperations.WithLabelValues(operation, result).Inc()
+	metrics.GameOpsOperationLatencySeconds.WithLabelValues(operation).Observe(time.Since(started).Seconds())
+	writeGameOpsResponse(r, w, resp, err)
+}
+
+func activityTransitionHandler(svcCtx *svc.ServiceContext, operation string, run func(*http.Request, gameops.Actor, types.ActivityTransitionReq) (any, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
 		var req types.ActivityTransitionReq
 		if err := httpx.Parse(r, &req); err != nil {
 			httpx.ErrorCtx(r.Context(), w, err)
 			return
 		}
 		resp, err := run(r, gameOpsActor(r), req)
-		writeGameOpsResponse(r, w, resp, err)
+		writeMeasuredGameOpsResponse(r, w, operation, started, resp, err)
 	}
 }
 

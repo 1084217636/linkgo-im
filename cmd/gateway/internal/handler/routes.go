@@ -69,6 +69,7 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				gwmiddleware.NewRateLimitMiddleware(serverCtx.RestLimiter).Handle,
 			},
 			rest.Route{Method: http.MethodPost, Path: "/activities/publish", Handler: ActivityPublishHandler(serverCtx)},
+			rest.Route{Method: http.MethodGet, Path: "/audits", Handler: AuditListHandler(serverCtx)},
 		),
 		rest.WithPrefix("/api/v1/admin"),
 	)

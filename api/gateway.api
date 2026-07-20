@@ -270,6 +270,14 @@ type ItemGrantQueryReq {
 	GrantRequestID string `form:"grant_request_id"`
 }
 
+type AuditQueryReq {
+	OperatorID   string `form:"operator_id,optional"`
+	ResourceType string `form:"resource_type,optional"`
+	ResourceID   string `form:"resource_id,optional"`
+	Result       string `form:"result,optional"`
+	Limit        int    `form:"limit,optional"`
+}
+
 // --- endpoints ---
 
 @server (
@@ -304,6 +312,9 @@ service gateway-api {
 
 	@handler ItemGrantResult
 	get /items/grants (ItemGrantQueryReq)
+
+	@handler AuditList
+	get /audits (AuditQueryReq)
 }
 
 @server (

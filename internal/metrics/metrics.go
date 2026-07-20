@@ -81,6 +81,27 @@ var (
 		Help:    "AI provider call latency in seconds by provider and result.",
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30},
 	}, []string{"provider", "result"})
+
+	GameOpsOperations = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "linkgo_gameops_operations_total",
+		Help: "Game operations control-plane requests by operation and result.",
+	}, []string{"operation", "result"})
+
+	GameOpsOperationLatencySeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "linkgo_gameops_operation_latency_seconds",
+		Help:    "Game operations control-plane request latency by operation.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"operation"})
+
+	GameOpsGrantedItems = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "linkgo_gameops_granted_items_total",
+		Help: "Item grant entries handled by result; retries do not increment success.",
+	}, []string{"result"})
+
+	GameOpsCacheSync = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "linkgo_gameops_cache_sync_total",
+		Help: "Activity cache synchronization attempts by result.",
+	}, []string{"result"})
 )
 
 func Handler() http.Handler {

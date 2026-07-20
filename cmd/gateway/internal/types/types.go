@@ -259,3 +259,11 @@ type ItemGrantReq struct {
 type ItemGrantQueryReq struct {
 	GrantRequestID string `form:"grant_request_id"`
 }
+
+type AuditQueryReq struct {
+	OperatorID   string `form:"operator_id,optional"`
+	ResourceType string `form:"resource_type,optional"`
+	ResourceID   string `form:"resource_id,optional"`
+	Result       string `form:"result,optional"`
+	Limit        int    `form:"limit,optional"`
+}

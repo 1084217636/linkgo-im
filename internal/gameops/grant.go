@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/1084217636/linkgo-im/internal/metrics"
 )
 
 var (
@@ -129,6 +131,7 @@ ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity), updated_at = VAL
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	metrics.GameOpsGrantedItems.WithLabelValues("success").Add(float64(len(request.Items)))
 	return &GrantResult{GrantRequestID: request.GrantRequestID, Status: "success", Items: request.Items}, nil
 }
 
@@ -169,6 +172,7 @@ func loadGrantItems(ctx context.Context, queryer grantQueryer, requestID string)
 }
 
 func (s *GrantService) recordFailure(ctx context.Context, actor Actor, request GrantRequest, traceID, clientIP string, cause error) {
+	metrics.GameOpsGrantedItems.WithLabelValues("failed").Add(float64(len(request.Items)))
 	message := cause.Error()
 	if len(message) > 512 {
 		message = message[:512]

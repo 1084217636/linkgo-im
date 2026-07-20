@@ -2,6 +2,8 @@
 
 `internal/gameops` 承载面向游戏运营场景的确定性控制面能力。所有写操作必须先经过 Gateway JWT 与平台角色校验，再在业务事务中写入 `operation_audit_logs`。
 
+审核员和管理员可通过 `GET /api/v1/admin/audits` 按操作者、资源、结果筛选最近审计记录；单次最多返回 200 条，避免管理查询拖垮主库。指标只使用 operation/result 等有限标签，不把用户、活动或请求 ID 放入 Prometheus 标签。
+
 当前角色边界：
 
 - `operator`：创建和提交活动草稿、发起道具发放。

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/1084217636/linkgo-im/internal/metrics"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -290,6 +291,7 @@ func insertActivityDeleteOutbox(ctx context.Context, tx *sql.Tx, activityID stri
 
 func (s *ActivityService) applyOutbox(ctx context.Context, event activityOutbox) error {
 	if s.rdb == nil {
+		metrics.GameOpsCacheSync.WithLabelValues("failed").Inc()
 		return errors.New("activity cache is unavailable")
 	}
 	key := ActivityCacheKey(event.ActivityID)
@@ -300,10 +302,16 @@ func (s *ActivityService) applyOutbox(ctx context.Context, event activityOutbox)
 		err = s.rdb.Set(ctx, key, string(event.Payload), 0).Err()
 	}
 	if err != nil {
+		metrics.GameOpsCacheSync.WithLabelValues("failed").Inc()
 		return err
 	}
 	_, err = s.db.ExecContext(ctx, `UPDATE gameops_outbox SET status = 'processed', processed_at = ?, updated_at = ? WHERE event_id = ? AND status = 'pending'`, time.Now().UnixMilli(), time.Now().UnixMilli(), event.EventID)
-	return err
+	if err != nil {
+		metrics.GameOpsCacheSync.WithLabelValues("failed").Inc()
+		return err
+	}
+	metrics.GameOpsCacheSync.WithLabelValues("success").Inc()
+	return nil
 }
 
 func (s *ActivityService) SyncPendingOutbox(ctx context.Context, limit int) (int, error) {
