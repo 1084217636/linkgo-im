@@ -59,8 +59,8 @@ func ActivityRollbackHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			httpx.ErrorCtx(r.Context(), w, err)
 			return
 		}
-		err := svcCtx.ActivityOps.Rollback(r.Context(), gameOpsActor(r), req.ActivityID, requestID(r), r.Header.Get("X-Trace-ID"), requestClientIP(r))
-		writeMeasuredGameOpsResponse(r, w, "activity.rollback", started, map[string]any{"activity_id": req.ActivityID, "status": gameops.ActivityRolledBack}, err)
+		version, err := svcCtx.ActivityOps.Rollback(r.Context(), gameOpsActor(r), req.ActivityID, req.TargetVersion, requestID(r), r.Header.Get("X-Trace-ID"), requestClientIP(r))
+		writeMeasuredGameOpsResponse(r, w, "activity.rollback", started, version, err)
 	}
 }
 

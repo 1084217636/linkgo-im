@@ -137,3 +137,39 @@ func TestApproveActivityRecordsReviewer(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRollbackRestoresSupersededVersionAndCache(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	redisServer := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	defer rdb.Close()
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT published_version FROM game_activities").WithArgs("summer").WillReturnRows(sqlmock.NewRows([]string{"published_version"}).AddRow(2))
+	mock.ExpectQuery("SELECT status, config_json, rollout_percent, created_by, approved_by FROM game_activity_versions").WithArgs("summer", 1).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "config_json", "rollout_percent", "created_by", "approved_by"}).AddRow("superseded", `{"title":"Summer Login","start_at":1720000000000,"end_at":1720086400000,"reward_item_id":"gem","reward_quantity":100}`, 20, "1001", "1002"))
+	mock.ExpectExec("UPDATE game_activity_versions SET status = 'rolled_back'").WithArgs(sqlmock.AnyArg(), "summer", 2).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE game_activity_versions SET status = 'published'").WithArgs(sqlmock.AnyArg(), "summer", 1).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE game_activities SET status = 'published'").WithArgs(1, 20, sqlmock.AnyArg(), "summer").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO operation_audit_logs").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO gameops_outbox").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+	mock.ExpectExec("UPDATE gameops_outbox").WillReturnResult(sqlmock.NewResult(0, 1))
+	service := NewActivityService(db, rdb)
+	version, err := service.Rollback(context.Background(), Actor{UserID: "1003", Role: "admin"}, "summer", 1, "req-rb", "trace-rb", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("Rollback() error = %v", err)
+	}
+	if version.Version != 1 || version.Status != ActivityPublished || version.ApprovedBy != "1002" {
+		t.Fatalf("restored version = %#v", version)
+	}
+	if !redisServer.Exists(ActivityCacheKey("summer")) {
+		t.Fatal("restored activity cache missing")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

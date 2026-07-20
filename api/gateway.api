@@ -252,7 +252,8 @@ type ActivityTransitionReq {
 }
 
 type ActivityRollbackReq {
-	ActivityID string `json:"activity_id"`
+	ActivityID    string `json:"activity_id"`
+	TargetVersion int    `json:"target_version"`
 }
 
 type GrantItem {

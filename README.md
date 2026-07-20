@@ -21,6 +21,7 @@ LinkGo Chat 由原 `LinkGo-IM` 收敛升级而来，定位为秋招主项目：*
 - 队列拒绝通过带 `client_msg_id` 的结构化 `SYSTEM` 错误帧返回；网页客户端识别 `SERVER_BUSY` 后复用原消息幂等键，采用指数退避与随机抖动自动重试，最多 5 次。
 - 新增游戏运营控制面安全底座：JWT 之后按 `operator / reviewer / admin` 做平台 RBAC，角色与群聊角色隔离；所有管理写操作统一写入包含 operator、resource、request/trace 和 result 的审计表。
 - 活动配置采用不可覆盖版本与 `draft → pending → approved → published → rolled_back` 状态机，operator 提交、reviewer 审核、admin 发布/回滚并限制创建者自审；发布事务写入 Outbox，Redis 灰度配置同步失败可由后台循环重放。
+- 活动回滚不是简单关闭开关：管理员指定已下线历史版本，事务恢复完整配置并记录前后版本号，再通过 Outbox 刷新 Redis。
 - 道具批量发放使用 `grant_request_id + user_id + item_id` 唯一键和事务保证幂等；重复请求返回原结果，失败批次整体回滚并记录失败原因与审计，支持按请求 ID 查询发放明细。
 - `public/admin.html` 提供轻量运营演示页，可切换 operator/reviewer/admin 账号完成草稿、提交、发布、回滚和道具发放，不引入重型前端工程。
 - 登录密码使用 bcrypt；旧版明文账号仅在首次成功校验时兼容并原子升级，未知用户、错密码和禁用账号统一返回 `invalid credentials`。

@@ -23,7 +23,8 @@
       <label>标题</label><input id="activity-title" value="夏日登录奖励">
       <div class="grid"><div><label>开始时间（毫秒）</label><input id="start-at" type="number"></div><div><label>结束时间（毫秒）</label><input id="end-at" type="number"></div></div>
       <div class="grid"><div><label>奖励道具</label><input id="reward-item" value="gem"></div><div><label>奖励数量</label><input id="reward-quantity" type="number" value="100"></div><div><label>灰度比例</label><input id="rollout" type="number" min="0" max="100" value="20"></div></div>
-      <button id="create-draft">保存草稿</button><button id="submit-activity">提交审批</button><button id="approve-activity">审核通过</button><button id="publish-activity">正式发布</button><button id="rollback-activity" class="danger">回滚</button>
+      <label>回滚目标版本</label><input id="rollback-version" type="number" min="1" value="1">
+      <button id="create-draft">保存草稿</button><button id="submit-activity">提交审批</button><button id="approve-activity">审核通过</button><button id="publish-activity">正式发布</button><button id="rollback-activity" class="danger">恢复历史版本</button>
     </section>
     <section>
       <h2>道具批量发放</h2>
@@ -48,7 +49,7 @@ player-1002,gem,100</textarea>
   $("submit-activity").onclick=()=>run(()=>call("/admin/activities/submit",{method:"POST",body:JSON.stringify(transition())}));
   $("approve-activity").onclick=()=>run(()=>call("/admin/activities/approve",{method:"POST",body:JSON.stringify(transition())}));
   $("publish-activity").onclick=()=>run(()=>call("/admin/activities/publish",{method:"POST",body:JSON.stringify(transition())}));
-  $("rollback-activity").onclick=()=>run(()=>call("/admin/activities/rollback",{method:"POST",body:JSON.stringify({activity_id:$("activity-id").value})}));
+  $("rollback-activity").onclick=()=>run(()=>call("/admin/activities/rollback",{method:"POST",body:JSON.stringify({activity_id:$("activity-id").value,target_version:Number($("rollback-version").value)})}));
   function grants(){return{grant_request_id:$("grant-request-id").value,items:$("grant-items").value.split("\n").filter(Boolean).map(line=>{const[user_id,item_id,quantity]=line.split(",").map(v=>v.trim());return{user_id,item_id,quantity:Number(quantity)}})}}
   $("grant-items-btn").onclick=()=>run(()=>call("/admin/items/grant",{method:"POST",body:JSON.stringify(grants())}));
   $("query-grant").onclick=()=>run(()=>call(`/admin/items/grants?grant_request_id=${encodeURIComponent($("grant-request-id").value)}`));

@@ -242,7 +242,8 @@ type ActivityTransitionReq struct {
 }
 
 type ActivityRollbackReq struct {
-	ActivityID string `json:"activity_id"`
+	ActivityID    string `json:"activity_id"`
+	TargetVersion int    `json:"target_version"`
 }
 
 type GrantItem struct {

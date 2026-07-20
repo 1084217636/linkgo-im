@@ -269,43 +269,73 @@ func (s *ActivityService) Approve(ctx context.Context, actor Actor, activityID s
 	return tx.Commit()
 }
 
-func (s *ActivityService) Rollback(ctx context.Context, actor Actor, activityID, requestID, traceID, clientIP string) error {
+func (s *ActivityService) Rollback(ctx context.Context, actor Actor, activityID string, targetVersion int, requestID, traceID, clientIP string) (*ActivityVersion, error) {
 	if actor.Role != "admin" {
-		return ErrForbidden
+		return nil, ErrForbidden
 	}
-	if s == nil || s.db == nil {
-		return errors.New("activity store is unavailable")
+	if s == nil || s.db == nil || targetVersion <= 0 {
+		return nil, ErrInvalidActivity
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer tx.Rollback()
 	var current int
 	if err := tx.QueryRowContext(ctx, `SELECT published_version FROM game_activities WHERE activity_id = ? AND status = 'published' FOR UPDATE`, activityID).Scan(&current); err != nil {
-		return err
+		return nil, err
+	}
+	if current == targetVersion {
+		return nil, ErrInvalidState
+	}
+	var status, configJSON, createdBy, approvedBy string
+	var rolloutPercent int
+	if err := tx.QueryRowContext(ctx, `SELECT status, config_json, rollout_percent, created_by, approved_by FROM game_activity_versions WHERE activity_id = ? AND version = ? FOR UPDATE`, activityID, targetVersion).Scan(&status, &configJSON, &rolloutPercent, &createdBy, &approvedBy); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrInvalidState
+		}
+		return nil, err
+	}
+	if ActivityStatus(status) != ActivitySuperseded {
+		return nil, ErrInvalidState
+	}
+	var config ActivityConfig
+	if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
+		return nil, fmt.Errorf("decode rollback activity config: %w", err)
 	}
 	now := time.Now().UnixMilli()
-	if _, err := tx.ExecContext(ctx, `UPDATE game_activity_versions SET status = 'rolled_back', updated_at = ? WHERE activity_id = ? AND version = ? AND status = 'published'`, now, activityID, current); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE game_activities SET status = 'rolled_back', published_version = 0, rollout_percent = 0, updated_at = ? WHERE activity_id = ?`, now, activityID); err != nil {
-		return err
-	}
-	if err := InsertAudit(ctx, tx, buildActivityAudit(actor, "activity.rollback", activityID, requestID, traceID, clientIP, map[string]any{"version": current})); err != nil {
-		return err
-	}
-	event, err := insertActivityDeleteOutbox(ctx, tx, activityID)
+	currentResult, err := tx.ExecContext(ctx, `UPDATE game_activity_versions SET status = 'rolled_back', updated_at = ? WHERE activity_id = ? AND version = ? AND status = 'published'`, now, activityID, current)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	if rows, _ := currentResult.RowsAffected(); rows != 1 {
+		return nil, ErrInvalidState
+	}
+	targetResult, err := tx.ExecContext(ctx, `UPDATE game_activity_versions SET status = 'published', updated_at = ? WHERE activity_id = ? AND version = ? AND status = 'superseded'`, now, activityID, targetVersion)
+	if err != nil {
+		return nil, err
+	}
+	if rows, _ := targetResult.RowsAffected(); rows != 1 {
+		return nil, ErrInvalidState
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE game_activities SET status = 'published', published_version = ?, rollout_percent = ?, updated_at = ? WHERE activity_id = ?`, targetVersion, rolloutPercent, now, activityID); err != nil {
+		return nil, err
+	}
+	restored := &ActivityVersion{ActivityID: activityID, Version: targetVersion, Status: ActivityPublished, Config: config, RolloutPercent: rolloutPercent, CreatedBy: createdBy, ApprovedBy: approvedBy}
+	if err := InsertAudit(ctx, tx, buildActivityAudit(actor, "activity.rollback", activityID, requestID, traceID, clientIP, map[string]any{"from_version": current, "to_version": targetVersion})); err != nil {
+		return nil, err
+	}
+	event, err := insertActivityOutbox(ctx, tx, "set", restored)
+	if err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
-		return err
+		return nil, err
 	}
 	if err := s.applyOutbox(ctx, event); err != nil {
-		return fmt.Errorf("%w: %v", ErrCacheSyncPending, err)
+		return restored, fmt.Errorf("%w: %v", ErrCacheSyncPending, err)
 	}
-	return nil
+	return restored, nil
 }
 
 func ActivityCacheKey(activityID string) string {
