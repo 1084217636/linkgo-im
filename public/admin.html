@@ -13,7 +13,7 @@
   <section>
     <h2>连接与身份 <span id="auth-status" class="status">未登录</span></h2>
     <div class="grid"><div><label>Gateway</label><input id="gateway" value="http://127.0.0.1:8090/api/v1"></div><div><label>账号</label><input id="username" value="userA"></div><div><label>密码</label><input id="password" type="password" value="123456"></div></div>
-    <button id="login">登录</button><span class="hint">userA=operator，userB=reviewer，userC=admin；发布和回滚时请切换相应账号。</span>
+    <button id="login">登录</button><span class="hint">userA=operator，userB=reviewer，userC=admin；审批、发布和回滚时请切换对应账号。</span>
   </section>
   <div class="grid">
     <section>
@@ -23,7 +23,7 @@
       <label>标题</label><input id="activity-title" value="夏日登录奖励">
       <div class="grid"><div><label>开始时间（毫秒）</label><input id="start-at" type="number"></div><div><label>结束时间（毫秒）</label><input id="end-at" type="number"></div></div>
       <div class="grid"><div><label>奖励道具</label><input id="reward-item" value="gem"></div><div><label>奖励数量</label><input id="reward-quantity" type="number" value="100"></div><div><label>灰度比例</label><input id="rollout" type="number" min="0" max="100" value="20"></div></div>
-      <button id="create-draft">保存草稿</button><button id="submit-activity">提交审批</button><button id="publish-activity">审批发布</button><button id="rollback-activity" class="danger">回滚</button>
+      <button id="create-draft">保存草稿</button><button id="submit-activity">提交审批</button><button id="approve-activity">审核通过</button><button id="publish-activity">正式发布</button><button id="rollback-activity" class="danger">回滚</button>
     </section>
     <section>
       <h2>道具批量发放</h2>
@@ -46,6 +46,7 @@ player-1002,gem,100</textarea>
   const transition=()=>({activity_id:$("activity-id").value,version:Number($("activity-version").value)});
   $("create-draft").onclick=()=>run(()=>call("/admin/activities/drafts",{method:"POST",body:JSON.stringify({activity_id:$("activity-id").value,rollout_percent:Number($("rollout").value),config:{title:$("activity-title").value,start_at:Number($("start-at").value),end_at:Number($("end-at").value),reward_item_id:$("reward-item").value,reward_quantity:Number($("reward-quantity").value)}})}));
   $("submit-activity").onclick=()=>run(()=>call("/admin/activities/submit",{method:"POST",body:JSON.stringify(transition())}));
+  $("approve-activity").onclick=()=>run(()=>call("/admin/activities/approve",{method:"POST",body:JSON.stringify(transition())}));
   $("publish-activity").onclick=()=>run(()=>call("/admin/activities/publish",{method:"POST",body:JSON.stringify(transition())}));
   $("rollback-activity").onclick=()=>run(()=>call("/admin/activities/rollback",{method:"POST",body:JSON.stringify({activity_id:$("activity-id").value})}));
   function grants(){return{grant_request_id:$("grant-request-id").value,items:$("grant-items").value.split("\n").filter(Boolean).map(line=>{const[user_id,item_id,quantity]=line.split(",").map(v=>v.trim());return{user_id,item_id,quantity:Number(quantity)}})}}

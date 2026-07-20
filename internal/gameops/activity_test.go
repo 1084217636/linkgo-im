@@ -70,11 +70,11 @@ func TestPublishActivityWritesStateAuditOutboxAndCache(t *testing.T) {
 	defer rdb.Close()
 
 	mock.ExpectBegin()
-	mock.ExpectQuery("SELECT status, created_by, config_json, rollout_percent").
+	mock.ExpectQuery("SELECT status, created_by, approved_by, config_json, rollout_percent").
 		WithArgs("summer", 1).
-		WillReturnRows(sqlmock.NewRows([]string{"status", "created_by", "config_json", "rollout_percent"}).AddRow("pending", "1001", `{"title":"Summer Login","start_at":1720000000000,"end_at":1720086400000,"reward_item_id":"gem","reward_quantity":100}`, 20))
+		WillReturnRows(sqlmock.NewRows([]string{"status", "created_by", "approved_by", "config_json", "rollout_percent"}).AddRow("approved", "1001", "1002", `{"title":"Summer Login","start_at":1720000000000,"end_at":1720086400000,"reward_item_id":"gem","reward_quantity":100}`, 20))
 	mock.ExpectExec("UPDATE game_activity_versions").WithArgs(sqlmock.AnyArg(), "summer", 1).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec("UPDATE game_activity_versions").WithArgs("1002", sqlmock.AnyArg(), "summer", 1).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE game_activity_versions").WithArgs(sqlmock.AnyArg(), "summer", 1).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("UPDATE game_activities").WithArgs(1, 20, sqlmock.AnyArg(), "summer").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO operation_audit_logs").WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("INSERT INTO gameops_outbox").WillReturnResult(sqlmock.NewResult(1, 1))
@@ -82,7 +82,7 @@ func TestPublishActivityWritesStateAuditOutboxAndCache(t *testing.T) {
 	mock.ExpectExec("UPDATE gameops_outbox").WillReturnResult(sqlmock.NewResult(0, 1))
 
 	service := NewActivityService(db, rdb)
-	version, err := service.Publish(context.Background(), Actor{UserID: "1002", Role: "reviewer"}, "summer", 1, "req-1", "trace-1", "127.0.0.1")
+	version, err := service.Publish(context.Background(), Actor{UserID: "1003", Role: "admin"}, "summer", 1, "req-1", "trace-1", "127.0.0.1")
 	if err != nil {
 		t.Fatalf("Publish() error = %v", err)
 	}
@@ -97,21 +97,43 @@ func TestPublishActivityWritesStateAuditOutboxAndCache(t *testing.T) {
 	}
 }
 
-func TestPublishActivityRejectsSelfApproval(t *testing.T) {
+func TestApproveActivityRejectsSelfApproval(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 	mock.ExpectBegin()
-	mock.ExpectQuery("SELECT status, created_by, config_json, rollout_percent").
+	mock.ExpectQuery("SELECT created_by FROM game_activity_versions").
 		WithArgs("summer", 1).
-		WillReturnRows(sqlmock.NewRows([]string{"status", "created_by", "config_json", "rollout_percent"}).AddRow("pending", "1001", `{}`, 100))
+		WillReturnRows(sqlmock.NewRows([]string{"created_by"}).AddRow("1001"))
 	mock.ExpectRollback()
 
 	service := NewActivityService(db, nil)
-	_, err = service.Publish(context.Background(), Actor{UserID: "1001", Role: "reviewer"}, "summer", 1, "req-1", "trace-1", "127.0.0.1")
+	err = service.Approve(context.Background(), Actor{UserID: "1001", Role: "reviewer"}, "summer", 1, "req-1", "trace-1", "127.0.0.1")
 	if !errors.Is(err, ErrSelfApproval) {
-		t.Fatalf("Publish() error = %v, want ErrSelfApproval", err)
+		t.Fatalf("Approve() error = %v, want ErrSelfApproval", err)
+	}
+}
+
+func TestApproveActivityRecordsReviewer(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT created_by FROM game_activity_versions").WithArgs("summer", 1).
+		WillReturnRows(sqlmock.NewRows([]string{"created_by"}).AddRow("1001"))
+	mock.ExpectExec("UPDATE game_activity_versions").WithArgs("1002", sqlmock.AnyArg(), "summer", 1).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE game_activities").WithArgs(sqlmock.AnyArg(), "summer", 1).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO operation_audit_logs").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+	service := NewActivityService(db, nil)
+	if err := service.Approve(context.Background(), Actor{UserID: "1002", Role: "reviewer"}, "summer", 1, "req-1", "trace-1", "127.0.0.1"); err != nil {
+		t.Fatalf("Approve() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }

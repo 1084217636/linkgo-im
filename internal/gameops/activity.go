@@ -19,6 +19,7 @@ type ActivityStatus string
 const (
 	ActivityDraft      ActivityStatus = "draft"
 	ActivityPending    ActivityStatus = "pending"
+	ActivityApproved   ActivityStatus = "approved"
 	ActivityPublished  ActivityStatus = "published"
 	ActivitySuperseded ActivityStatus = "superseded"
 	ActivityRolledBack ActivityStatus = "rolled_back"
@@ -172,7 +173,7 @@ func (s *ActivityService) Submit(ctx context.Context, actor Actor, activityID st
 }
 
 func (s *ActivityService) Publish(ctx context.Context, actor Actor, activityID string, version int, requestID, traceID, clientIP string) (*ActivityVersion, error) {
-	if !roleAllowed(actor.Role, "reviewer") {
+	if actor.Role != "admin" {
 		return nil, ErrForbidden
 	}
 	if s == nil || s.db == nil {
@@ -184,21 +185,18 @@ func (s *ActivityService) Publish(ctx context.Context, actor Actor, activityID s
 	}
 	defer tx.Rollback()
 
-	var status, createdBy, configJSON string
+	var status, createdBy, approvedBy, configJSON string
 	var rolloutPercent int
 	if err := tx.QueryRowContext(ctx, `
-SELECT status, created_by, config_json, rollout_percent
+SELECT status, created_by, approved_by, config_json, rollout_percent
 FROM game_activity_versions
 WHERE activity_id = ? AND version = ?
 FOR UPDATE
-`, activityID, version).Scan(&status, &createdBy, &configJSON, &rolloutPercent); err != nil {
+`, activityID, version).Scan(&status, &createdBy, &approvedBy, &configJSON, &rolloutPercent); err != nil {
 		return nil, err
 	}
-	if ActivityStatus(status) != ActivityPending {
+	if ActivityStatus(status) != ActivityApproved {
 		return nil, ErrInvalidState
-	}
-	if createdBy == actor.UserID && actor.Role != "admin" {
-		return nil, ErrSelfApproval
 	}
 	var config ActivityConfig
 	if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
@@ -208,13 +206,13 @@ FOR UPDATE
 	if _, err := tx.ExecContext(ctx, `UPDATE game_activity_versions SET status = 'superseded', updated_at = ? WHERE activity_id = ? AND status = 'published' AND version <> ?`, now, activityID, version); err != nil {
 		return nil, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE game_activity_versions SET status = 'published', approved_by = ?, updated_at = ? WHERE activity_id = ? AND version = ?`, actor.UserID, now, activityID, version); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE game_activity_versions SET status = 'published', updated_at = ? WHERE activity_id = ? AND version = ? AND status = 'approved'`, now, activityID, version); err != nil {
 		return nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE game_activities SET status = 'published', published_version = ?, rollout_percent = ?, updated_at = ? WHERE activity_id = ?`, version, rolloutPercent, now, activityID); err != nil {
 		return nil, err
 	}
-	published := &ActivityVersion{ActivityID: activityID, Version: version, Status: ActivityPublished, Config: config, RolloutPercent: rolloutPercent, CreatedBy: createdBy, ApprovedBy: actor.UserID}
+	published := &ActivityVersion{ActivityID: activityID, Version: version, Status: ActivityPublished, Config: config, RolloutPercent: rolloutPercent, CreatedBy: createdBy, ApprovedBy: approvedBy}
 	if err := InsertAudit(ctx, tx, buildActivityAudit(actor, "activity.publish", activityID, requestID, traceID, clientIP, map[string]any{"version": version, "rollout_percent": rolloutPercent})); err != nil {
 		return nil, err
 	}
@@ -229,6 +227,46 @@ FOR UPDATE
 		return published, fmt.Errorf("%w: %v", ErrCacheSyncPending, err)
 	}
 	return published, nil
+}
+
+func (s *ActivityService) Approve(ctx context.Context, actor Actor, activityID string, version int, requestID, traceID, clientIP string) error {
+	if !roleAllowed(actor.Role, "reviewer") {
+		return ErrForbidden
+	}
+	if s == nil || s.db == nil {
+		return errors.New("activity store is unavailable")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var createdBy string
+	if err := tx.QueryRowContext(ctx, `SELECT created_by FROM game_activity_versions WHERE activity_id = ? AND version = ? AND status = 'pending' FOR UPDATE`, activityID, version).Scan(&createdBy); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrInvalidState
+		}
+		return err
+	}
+	if createdBy == actor.UserID && actor.Role != "admin" {
+		return ErrSelfApproval
+	}
+	now := time.Now().UnixMilli()
+	result, err := tx.ExecContext(ctx, `UPDATE game_activity_versions SET status = 'approved', approved_by = ?, updated_at = ? WHERE activity_id = ? AND version = ? AND status = 'pending'`, actor.UserID, now, activityID, version)
+	if err != nil {
+		return err
+	}
+	rows, _ := result.RowsAffected()
+	if rows != 1 {
+		return ErrInvalidState
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE game_activities SET status = 'approved', updated_at = ? WHERE activity_id = ? AND current_version = ?`, now, activityID, version); err != nil {
+		return err
+	}
+	if err := InsertAudit(ctx, tx, buildActivityAudit(actor, "activity.approve", activityID, requestID, traceID, clientIP, map[string]any{"version": version})); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *ActivityService) Rollback(ctx context.Context, actor Actor, activityID, requestID, traceID, clientIP string) error {

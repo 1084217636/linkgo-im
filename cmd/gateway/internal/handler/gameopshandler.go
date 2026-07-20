@@ -44,6 +44,13 @@ func ActivityPublishHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	})
 }
 
+func ActivityApproveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return activityTransitionHandler(svcCtx, "activity.approve", func(r *http.Request, actor gameops.Actor, req types.ActivityTransitionReq) (any, error) {
+		err := svcCtx.ActivityOps.Approve(r.Context(), actor, req.ActivityID, req.Version, requestID(r), r.Header.Get("X-Trace-ID"), requestClientIP(r))
+		return map[string]any{"activity_id": req.ActivityID, "version": req.Version, "status": gameops.ActivityApproved}, err
+	})
+}
+
 func ActivityRollbackHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()

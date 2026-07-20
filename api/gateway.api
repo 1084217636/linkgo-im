@@ -304,6 +304,9 @@ service gateway-api {
 	@handler ActivityPublish
 	post /activities/publish (ActivityTransitionReq)
 
+	@handler ActivityApprove
+	post /activities/approve (ActivityTransitionReq)
+
 	@handler ActivityRollback
 	post /activities/rollback (ActivityRollbackReq)
 

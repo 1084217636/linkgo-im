@@ -12,7 +12,7 @@
 
 `platform_user_roles` 与 IM 群角色相互独立，避免把群管理员误当成平台管理员。审计日志记录 operator、role、operation、resource、request/trace、result 和脱敏后的 detail，不记录密码、Token 或 Secret。
 
-活动配置使用 `draft → pending → published → rolled_back` 状态机，每次修改创建不可覆盖的版本。reviewer 不能发布自己创建的版本；发布事务同时写审计和 `gameops_outbox`，事务提交后同步刷新 Redis，失败的 Outbox 由 Gateway 周期重放。灰度比例限制为 0–100，配置必须具有有效起止时间和正数奖励。
+活动配置使用 `draft → pending → approved → published → rolled_back` 状态机，每次修改创建不可覆盖的版本。operator 提交、reviewer 独立审核、admin 发布/回滚；reviewer 不能审批自己创建的版本。发布事务同时写审计和 `gameops_outbox`，事务提交后同步刷新 Redis，失败的 Outbox 由 Gateway 周期重放。灰度比例限制为 0–100，配置必须具有有效起止时间和正数奖励。
 
 新版本通过锁定 `game_activities` 主行分配 `current_version + 1`，避免并发草稿拿到相同版本。数据库状态已提交但 Redis 暂时不可用时，API 返回 `202 Accepted` 和 `cache synchronization is pending`，不会用普通 500 诱导调用方重复执行发布。
 
