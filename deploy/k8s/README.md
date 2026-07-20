@@ -38,6 +38,14 @@ kubectl -n linkgo-im get svc
 kubectl -n linkgo-im get hpa
 ```
 
+带不可变版本号发布并等待三类工作负载滚动完成：
+
+```bash
+make k8s-release IMAGE=ghcr.io/your-org/linkgo-im:<git-sha>
+```
+
+发布脚本拒绝 `:latest`，依次更新 Gateway、Logic、Transfer，等待 rollout，再通过 Gateway `/readyz` 做发布后 smoke test。任一步失败会对已经更新的 Deployment 执行 `rollout undo` 并等待回滚结束。Deployment annotation 会保存本次镜像和发布时间，便于审计。
+
 本地访问 Gateway：
 
 ```bash
@@ -56,6 +64,6 @@ make k8s-delete
 
 这组清单偏本地演示和面试展示，内置了单副本依赖组件，方便在 kind/minikube 中一键跑起来。生产环境建议把 Redis、MySQL、Kafka、Etcd 替换成云厂商托管服务或独立高可用集群，再通过 `configmap.yaml` 和 `secret.yaml` 指向外部地址。
 
-`secret.yaml` 里的密码是演示值，生产环境必须通过 CI/CD Secret、SealedSecret、External Secrets Operator 或云 KMS 注入，不能提交真实密码。
+`secret.yaml` 里的密码和完整数据库 DSN 是演示值，生产环境必须通过 CI/CD Secret、SealedSecret、External Secrets Operator 或云 KMS 注入，不能提交真实密码。非敏感 ConfigMap 不再保存数据库口令。
 
 `kustomization.yaml` 会把 `sql/init.sql` 生成成 `linkgo-im-mysql-init` ConfigMap，用于演示环境初始化数据库。由于该文件在 `deploy/k8s` 目录外，Makefile 使用 `kubectl kustomize --load-restrictor LoadRestrictionsNone` 渲染。

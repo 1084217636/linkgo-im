@@ -7,7 +7,6 @@ data:
   REDIS_ADDR: redis.linkgo-im.svc.cluster.local:6379
   ETCD_ENDPOINTS: etcd.linkgo-im.svc.cluster.local:2379
   LOGIC_ADDR: logic.linkgo-im.svc.cluster.local:9001
-  DB_DSN: root:root@tcp(mysql.linkgo-im.svc.cluster.local:3306)/linkgo_im?charset=utf8mb4&parseTime=True&loc=Local
   KAFKA_BROKERS: kafka.linkgo-im.svc.cluster.local:9092
   KAFKA_GROUP_TOPIC: group_message_dispatch
   KAFKA_RETRY_TOPIC: group_message_retry

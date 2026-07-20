@@ -85,6 +85,7 @@ jobs:
 
       - name: Render manifests
         run: |
+          bash -n scripts/k8s_release.sh
           kubectl kustomize deploy/k8s --load-restrictor LoadRestrictionsNone > /tmp/linkgo-im-k8s.yaml
           grep -q "kind: Deployment" /tmp/linkgo-im-k8s.yaml
           grep -q "kind: HorizontalPodAutoscaler" /tmp/linkgo-im-k8s.yaml
