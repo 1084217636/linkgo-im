@@ -1,0 +1,34 @@
+# 14 简历表达与项目讲述
+
+## 简历三条
+
+- 基于 Go/go-zero 设计 Gateway、Logic、Transfer 分层 IM，使用 Redis 在线路由、会话 seq、pending ACK/offline/timeline 和 MySQL 幂等约束实现跨 Gateway 至少一次可靠投递与断线补偿。
+- 使用 Kafka 解耦群聊 fanout，采用手动位点提交、retry/DLQ 和 message+recipient lease 幂等处理重复消费与消费者宕机恢复。
+- 建设游戏运营控制面，完成活动版本、职责分离审批、灰度发布、Outbox 缓存同步、幂等道具发放、审计和历史版本回滚，并通过 Prometheus、GitHub Actions、Docker/K8s 验证发布闭环。
+
+## 三分钟讲述顺序
+
+1. 20 秒定位。
+2. 40 秒三服务和数据组件。
+3. 60 秒单聊可靠性。
+4. 40 秒 Kafka 群聊。
+5. 30 秒游戏运营差异化。
+6. 20 秒工程化与边界。
+
+## 个人贡献
+
+不要说“我用了很多组件”。说“我解决了什么”：
+
+- 修复密码、Origin、历史越权。
+- UID 分片有界队列和客户端背压。
+- Kafka Fetch/Commit、retry/DLQ、lease 幂等。
+- 完成运营版本/审批/发布/发放/审计/回滚。
+- 补指标告警、K8s 发布回滚、故障注入和 CI。
+
+## STAR 模板
+
+场景：群聊同步扩散阻塞 Logic。任务：把扩散做成可恢复异步链路。行动：Kafka+Transfer、手动提交、成员 lease、retry/DLQ、指标。结果：主链路与 fanout 解耦，并能解释重复消费和宕机恢复；结果以测试/CI 为证，不虚构生产规模。
+
+## 避免用词
+
+避免“完全不丢、绝对有序、百万并发、生产级、真正支付、完整 RAG”。改为“至少一次、会话 seq、设计并验证、演示环境、事务红包、轻量 FAQ/RAG”。
