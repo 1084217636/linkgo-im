@@ -1,5 +1,7 @@
 # 学习地图
 
+> 零基础学习者请先完成 [STAGE1_ZERO_BASED_MEMORIZATION.md](STAGE1_ZERO_BASED_MEMORIZATION.md)，能够闭卷讲整体结构后再阅读本文。
+
 这份学习地图的目标不是“把所有文件看完”，而是让你按正确顺序掌握这个项目，最后能达到：
 
 - 能独立讲清楚项目整体架构。
