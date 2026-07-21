@@ -1,5 +1,7 @@
 # Autumn Recruit Study Guide
 
+> 学习时默认按多服务器公司场景回答：多 Gateway、多 Logic、多 Transfer，加共享 Redis/MySQL/Kafka/Etcd；本地 Compose 只用于运行验证。第一天先读 `autumn_interview/17_MULTI_SERVER_DEPLOYMENT.md`，再学习各业务模块。
+
 这个项目按 Go 后端主项目准备，学习目标不是背功能，而是能解释每条链路的工程取舍。
 
 ## 第一阶段：先吃透 IM 主链路

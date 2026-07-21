@@ -4,6 +4,10 @@
 
 > MySQL 保存最终业务事实，Redis 保存高频在线状态、过程状态和热点索引。Redis 可以丢失后重建的热数据不应成为唯一历史来源。
 
+部署口径：多台 Gateway、Logic、Transfer 连接同一套共享中间件。`REDIS_ADDR` 指向托管 Redis 或 Sentinel/代理提供的 HA 稳定入口；`DB_DSN` 指向 MySQL primary/proxy 稳定入口。不能解释成每台应用服务器各装一份互不相通的 Redis/MySQL。
+
+当前版本没有原生 Redis Cluster 分片和应用层 MySQL 读写分离。MySQL 主从复制、故障切换可位于稳定入口之后；所有事务写和强一致读仍走主入口。这是已实现能力边界，不要为了“公司级”而夸大。
+
 ## 2. MySQL 核心表
 
 ### IM

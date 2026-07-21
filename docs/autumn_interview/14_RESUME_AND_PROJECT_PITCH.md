@@ -2,7 +2,7 @@
 
 ## 简历三条
 
-- 基于 Go/go-zero 设计 Gateway、Logic、Transfer 分层 IM，使用 Redis 在线路由、会话 seq、pending ACK/offline/timeline 和 MySQL 幂等约束实现跨 Gateway 至少一次可靠投递与断线补偿。
+- 基于 Go/go-zero 设计多 Gateway、Logic、Transfer 集群化 IM，使用 Etcd 服务发现与 p2c_ewma 调度 Logic，通过共享 Redis 在线路由及 MySQL 最终历史实现跨 Gateway 至少一次投递和断线补偿。
 - 使用 Kafka 解耦群聊 fanout，采用手动位点提交、retry/DLQ 和 message+recipient lease 幂等处理重复消费与消费者宕机恢复。
 - 建设游戏运营控制面，完成活动版本、职责分离审批、灰度发布、Outbox 缓存同步、幂等道具发放、审计和历史版本回滚，并通过 Prometheus、GitHub Actions、Docker/K8s 验证发布闭环。
 
@@ -14,6 +14,8 @@
 4. 40 秒 Kafka 群聊。
 5. 30 秒游戏运营差异化。
 6. 20 秒工程化与边界。
+
+第二步必须主动设定场景：A 在 Gateway-1，B 在 Gateway-3，Gateway-1 经 Etcd 选择 Logic-2，Logic 再通过共享 Redis 定向通知 Gateway-3。不要等面试官提醒你“它们不在同一台服务器”。
 
 ## 个人贡献
 

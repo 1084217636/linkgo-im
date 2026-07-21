@@ -3,17 +3,18 @@
 ## 1. 单聊主链路
 
 ```text
-A 发送 WireMessage(client_msg_id)
--> Gateway 读取 WS 帧
+A（连接 Gateway-1）发送 WireMessage(client_msg_id)
+-> Gateway-1 读取 WS 帧
 -> 按 uid 分片有界队列
--> gRPC 调 Logic.PushMessage
+-> 经 Etcd/p2c 选择 Logic-2，gRPC 调 Logic.PushMessage
 -> 校验发送者和目标
 -> client_msg_id 幂等
 -> 生成 message_id / conversation_id / seq
 -> MySQL 写 messages 并更新 conversation
 -> RedisDelivery 记录 payload、timeline、pending
--> 根据 route 定向通知目标 Gateway
--> Gateway 推送给 B
+-> 从共享 Redis 查询 route:B=Gateway-3
+-> Redis 定向 Pub/Sub 通知 Gateway-3
+-> Gateway-3 用本机连接推送给 B
 -> B 返回 ACK
 -> 清理 pending/offline/ack index
 ```
@@ -45,6 +46,8 @@ A 发送 WireMessage(client_msg_id)
 标准回答：
 
 > Redis 提供快速幂等，MySQL 唯一索引提供最终约束。只用 Redis 会受缓存丢失影响，只用数据库会增加热点写压力。
+
+这里的 Redis 和 MySQL 都是集群稳定入口，不是 Gateway-1 或 Logic-2 机器上的本地实例。任何 Logic 重试同一请求都能看到相同幂等状态和最终约束。
 
 ## 4. 消息顺序
 

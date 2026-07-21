@@ -1,5 +1,7 @@
 # 项目一最终学习包：LinkGo Chat
 
+> 统一口径：以下所有架构和消息链路默认是公司单集群、多服务器部署。客户端经 LB 连接不同 Gateway，Gateway 经 Etcd 调度 Logic 集群，所有应用实例共享外部 Redis/MySQL/Kafka。Docker Compose 只负责本地演示。详细跨服务器链路先读 `autumn_interview/17_MULTI_SERVER_DEPLOYMENT.md`。
+
 ## 1. 项目定位
 
 项目名：

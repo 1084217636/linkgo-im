@@ -2,15 +2,22 @@
 
 这套材料不是源码说明书，而是“从零基础到能经受项目追问”的学习主线。先背结论，再理解链路，最后定位到代码和故障证据。
 
+## 统一面试口径（所有章节默认遵守）
+
+除非题目明确问本地开发，所有链路都按公司单集群、多服务器部署回答：客户端经过 LB/Ingress 分别连接多台 Gateway；Gateway 通过共享 Etcd 发现 Logic 集群；Transfer 是独立消费者集群；Redis、MySQL、Kafka、Etcd 是应用服务器之外的共享高可用服务。Docker Compose 和单节点依赖只用于个人电脑演示，不是面试默认架构。
+
+其他章节中未标实例编号的 `Gateway -> Logic -> Redis/MySQL`，都理解为 `Gateway-N -> Etcd 选择的 Logic-M -> 共享中间件集群`。本机只保存当前 Gateway 的 WebSocket；跨 Gateway 路由必须经过共享 Redis。完整多机链路以第 17 章为准。
+
 ## 学习顺序
 
 ### 第一轮：只背整体
 
 1. `01_PROJECT_AND_ARCHITECTURE.md`
-2. `02_LOGIN_JWT_WEBSOCKET.md`
-3. `03_SINGLE_CHAT_RELIABILITY.md`
-4. `04_GROUP_CHAT_KAFKA.md`
-5. `05_MYSQL_REDIS_DATA_MODEL.md`
+2. `17_MULTI_SERVER_DEPLOYMENT.md`
+3. `02_LOGIN_JWT_WEBSOCKET.md`
+4. `03_SINGLE_CHAT_RELIABILITY.md`
+5. `04_GROUP_CHAT_KAFKA.md`
+6. `05_MYSQL_REDIS_DATA_MODEL.md`
 
 ### 第二轮：背差异化业务
 

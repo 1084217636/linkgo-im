@@ -1,5 +1,7 @@
 # 项目一简历与面试包
 
+> 本文所有回答默认 A、B 可连接不同 Gateway，Gateway 通过 Etcd 发现 Logic 集群，Redis/MySQL/Kafka 是跨服务器共享服务；只有被问到本地复现时才切换到 Docker Compose 口径。
+
 ## 1. 简历项目名
 
 ```text
