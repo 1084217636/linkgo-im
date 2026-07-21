@@ -109,6 +109,24 @@ message_id 到消息 payload/索引信息的映射，便于重试定位。
 
 为什么 pending 和 timeline 都要有：pending 面向未确认消息，timeline 面向会话序号缺口，两者解决的问题不同。
 
+### 用户很多时，能否把所有离线消息正文都放 Redis
+
+不能。当前优化后的思路是“正文共享、用户保存引用、MySQL 最终回源”：
+
+```text
+MySQL messages                    最终完整历史
+Redis message_payload:<message>  热点正文，只保存一份
+Redis pending/offline:<uid>      用户侧只保存 message_id 引用
+Redis session_timeline:<session> 会话 seq 到 message_id
+MySQL conversations/members      用户有哪些会话和会话进度
+```
+
+用户上线时先回放 Redis 中的短期待确认引用；如果客户端提供 `last_seq`，按 timeline 补缺口；Redis 热数据不存在或需要更完整历史时，根据用户有权访问的会话从 MySQL 历史接口回源。不能在每个离线用户下复制一份完整群消息正文，否则大群会造成成员数倍的存储放大。
+
+面试标准回答：
+
+> 我早期把离线消息理解成 Redis 里给每个用户存完整消息，扩展性较差。现在 MySQL 保存最终历史，Redis 的 message_payload 和 session_timeline 按消息/会话共享，用户 pending/offline 只保存 message_id 引用。重连先做短期 pending 和 last_seq 补偿，完整历史再按用户会话权限从 MySQL 分页读取，避免长期把所有正文堆在 Redis。
+
 ## 9. “不丢消息”应该怎么说
 
 错误：系统保证绝不丢消息。

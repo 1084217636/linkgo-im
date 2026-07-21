@@ -60,6 +60,24 @@ Gateway/Logic 使用 `maxUnavailable: 0, maxSurge: 1`：先多创建一个新 Po
 
 项目脚本依次更新 Gateway、Logic、Transfer，等待 rollout，端口转发访问 `/readyz`。任一步失败，对已更新 Deployment 执行 `rollout undo`。
 
+## 真实面试题：10 台 Gateway 都满了怎么扩容
+
+WebSocket 是长连接，不能把一条已经建立的 TCP/WebSocket 无损“搬运”到新服务器。
+
+正确扩容过程：
+
+1. K8s/HPA 增加 Gateway Pod，或人工提高 replicas。
+2. Service/负载均衡器把**新的建连请求**分配给新 Pod。
+3. 旧连接继续留在原 Pod，不强制迁移。
+4. Redis `route:<uid>` 记录每个用户实际在哪个 Gateway。
+5. 若要给旧节点减负，先把它标记为 draining/readiness false，不接新连接。
+6. 等旧连接自然断开，或服务端发重连提示让客户端重新握手；新连接可能落到新 Pod。
+7. 客户端通过 pending/last_seq 恢复消息，不依赖原 Gateway 内存。
+
+K8s 当前 HPA 主要按 CPU，真实长连接系统还应接自定义指标，例如连接数、推送队列深度、事件循环/CPU 和内存。单纯 CPU 低不代表连接容量充足。
+
+跨服务器不是“每台机器一套 Redis/MySQL”。应用 Pod 连接同一组共享 Redis/MySQL/Kafka 服务，通过 K8s Service/DNS 或云服务地址访问。应用横向扩容不等于数据库自动扩容：生产中 Redis 需要主从/Cluster 和持久化，MySQL 需要主从、备份、连接池及必要的读写扩展，Kafka 需要多 broker/副本。当前本地 K8s 依赖是单副本演示，不能声称已经解决数据库跨机高可用。
+
 ## 配置边界
 
 ConfigMap 放地址、Topic、超时；Secret 放 Redis 密码、JWT Secret、数据库 DSN。仓库演示 Secret 不是生产秘密；生产应由 CI Secret、External Secrets、SealedSecret 或 KMS 注入。
