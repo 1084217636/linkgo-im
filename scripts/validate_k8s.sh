@@ -28,6 +28,21 @@ if grep -q 'DB_DSN:' deploy/k8s/configmap.yaml; then
   exit 1
 fi
 grep -q 'DB_DSN:' deploy/k8s/secret.yaml
+if grep -qE '^  LOGIC_ADDR:' deploy/k8s/configmap.yaml; then
+  echo "Kubernetes validation failed: LOGIC_ADDR bypasses Etcd Logic discovery" >&2
+  exit 1
+fi
+grep -q 'fieldPath: status.podIP' deploy/k8s/logic.yaml
+
+production_rendered="$(mktemp)"
+trap 'rm -f "$rendered" "$production_rendered"' EXIT
+kubectl kustomize deploy/k8s/production --load-restrictor LoadRestrictionsNone >"$production_rendered"
+grep -q 'redis-ha.example.internal:6379' "$production_rendered"
+grep -q 'mysql-primary.example.internal:3306' deploy/k8s/production/secret.example.yaml
+if grep -qE '^  name: (redis|mysql|kafka|etcd)$' "$production_rendered"; then
+  echo "Kubernetes validation failed: production overlay rendered demo middleware" >&2
+  exit 1
+fi
 bash -n scripts/k8s_release.sh
 if bash scripts/k8s_release.sh example/linkgo-im:latest >/dev/null 2>&1; then
   echo "Kubernetes validation failed: release script accepted :latest" >&2
@@ -36,4 +51,4 @@ else
   test "$?" -eq 2
 fi
 
-echo "PASS Kubernetes render, probes, secret boundary, and immutable release guard"
+echo "PASS Kubernetes demo/production renders, discovery, secret boundary, and immutable release guard"

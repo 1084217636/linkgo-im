@@ -31,6 +31,7 @@
 14. `14_RESUME_AND_PROJECT_PITCH.md`
 15. `15_INTERVIEW_QUESTION_BANK.md`
 16. `16_MOCK_INTERVIEW_PROTOCOL.md`
+17. `17_MULTI_SERVER_DEPLOYMENT.md`
 
 ## 每个专题的四层标准
 
@@ -61,6 +62,7 @@
 | 故障与性能 | 12 | Redis/Logic/Transfer/Kafka/ACK 故障、压测指标 |
 | 代码所有权 | 13 | 结构体、字段、方法、入口、调用链 |
 | 面试实战 | 15、16 | 分层追问、纠错、缺口补档 |
+| 多机部署 | 17 | 跨 Gateway 单聊、Logic 发现、Redis/MySQL HA、扩容边界 |
 
 ## 真实性红线
 

@@ -56,6 +56,10 @@ spec:
           env:
             - name: RPC_PORT
               value: "9001"
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
           envFrom:
             - configMapRef:
                 name: linkgo-im-config
