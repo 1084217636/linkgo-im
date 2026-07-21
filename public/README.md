@@ -2,7 +2,7 @@
 
 `public/` 用于存放前端静态资源或本地联调页面。
 
-当前目录只有一个单文件调试台 `index.html`，主要用于接口和 WebSocket 联调，不承载正式前端工程。
+当前目录有两个零构建单文件页面：`index.html` 用于 IM、红包、AI 和 WebSocket 联调，`admin.html` 用于游戏运营控制面演示。它们是可运行的项目验收前端，不定位为商业级视觉产品。
 
 `admin.html` 是米哈游定向的轻量游戏运营控制台，通过同一静态服务器访问 `http://127.0.0.1:8088/admin.html`。它只覆盖登录、活动草稿/审批/发布/回滚、道具批量发放和结果查询；Token 仅保存在页面内存，刷新后需要重新登录。
 
@@ -16,6 +16,12 @@
 
 ```bash
 START_STACK=1 COMPOSE_FILE_PATH=docker-compose.light.yml FRONTEND_PORT=8088 make frontend-smoke
+```
+
+不启动后端时可先检查两个页面的关键控件与 API 契约：
+
+```bash
+make frontend-static-check
 ```
 
 验收通过后访问 `http://127.0.0.1:8088/`，可以开两个浏览器标签页分别登录 `userA` 和 `userB` 做对聊；单个标签页登录 `userA` 后点击 `AI 助手`，即可测试用户与 AI 好友私聊。

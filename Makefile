@@ -1,6 +1,6 @@
 APP_NAME := linkgo-im
 
-.PHONY: test fmt-check build docker-build compose-config compose-cn-config compose-light-config compose-light-cn-config observability-config observability-cn-config prometheus-check observability-up observability-cn-up observability-down observability-cn-down docker-up docker-cn-up docker-cn-reset docker-light-up docker-light-cn-up docker-down docker-cn-down docker-light-down docker-light-cn-down k8s-render k8s-dry-run k8s-apply k8s-release k8s-delete ci-local bench ops-smoke fault-injection core-im-demo frontend-smoke group-transfer-demo ai-config-check ai-test-suggest ai-quality-summary ai-demo ai-ask-demo im-ai-final-demo
+.PHONY: test fmt-check build docker-build compose-config compose-cn-config compose-light-config compose-light-cn-config observability-config observability-cn-config prometheus-check observability-up observability-cn-up observability-down observability-cn-down docker-up docker-cn-up docker-cn-reset docker-light-up docker-light-cn-up docker-down docker-cn-down docker-light-down docker-light-cn-down k8s-render k8s-check k8s-dry-run k8s-apply k8s-release k8s-delete ci-local bench ops-smoke fault-injection frontend-static-check core-im-demo frontend-smoke group-transfer-demo ai-config-check ai-test-suggest ai-quality-summary ai-demo ai-ask-demo im-ai-final-demo
 
 test:
 	go test ./...
@@ -80,6 +80,9 @@ docker-light-cn-down:
 k8s-render:
 	kubectl kustomize deploy/k8s --load-restrictor LoadRestrictionsNone
 
+k8s-check:
+	bash scripts/validate_k8s.sh
+
 k8s-dry-run:
 	kubectl kustomize deploy/k8s --load-restrictor LoadRestrictionsNone | kubectl apply --dry-run=client -f -
 
@@ -109,6 +112,9 @@ core-im-demo:
 
 frontend-smoke:
 	bash scripts/frontend_smoke.sh
+
+frontend-static-check:
+	python3 scripts/validate_frontend.py
 
 group-transfer-demo:
 	bash scripts/demo_group_transfer.sh

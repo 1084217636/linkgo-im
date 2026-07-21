@@ -26,6 +26,7 @@ docker build -t linkgo-im:local .
 
 ```bash
 make k8s-render
+make k8s-check
 make k8s-dry-run
 ```
 

@@ -37,6 +37,9 @@ jobs:
       - name: Build services
         run: make build
 
+      - name: Validate frontend contracts
+        run: make frontend-static-check
+
       - name: Validate Docker Compose config
         run: |
           make compose-config
@@ -86,6 +89,7 @@ jobs:
       - name: Render manifests
         run: |
           bash -n scripts/k8s_release.sh
+          bash scripts/validate_k8s.sh
           kubectl kustomize deploy/k8s --load-restrictor LoadRestrictionsNone > /tmp/linkgo-im-k8s.yaml
           grep -q "kind: Deployment" /tmp/linkgo-im-k8s.yaml
           grep -q "kind: HorizontalPodAutoscaler" /tmp/linkgo-im-k8s.yaml
