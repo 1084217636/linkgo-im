@@ -3,12 +3,14 @@ package svc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/1084217636/linkgo-im/api"
 	"github.com/1084217636/linkgo-im/cmd/gateway/internal/config"
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/zrpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
@@ -44,6 +46,36 @@ func (p *LogicRouterPool) GetClient(ctx context.Context, key string) (api.LogicC
 		return nil, errors.New("logic client unavailable")
 	}
 	return p.client, nil
+}
+
+func (p *LogicRouterPool) Ready(ctx context.Context) error {
+	if p == nil || p.zrpcClient == nil || p.zrpcClient.Conn() == nil {
+		return errors.New("logic connection unavailable")
+	}
+	conn := p.zrpcClient.Conn()
+	return waitForLogicReady(ctx, conn)
+}
+
+type logicConnectionState interface {
+	Connect()
+	GetState() connectivity.State
+	WaitForStateChange(context.Context, connectivity.State) bool
+}
+
+func waitForLogicReady(ctx context.Context, conn logicConnectionState) error {
+	conn.Connect()
+	for {
+		state := conn.GetState()
+		if state == connectivity.Ready {
+			return nil
+		}
+		if state == connectivity.Shutdown {
+			return errors.New("logic connection is shut down")
+		}
+		if !conn.WaitForStateChange(ctx, state) {
+			return fmt.Errorf("logic connection not ready: %s: %w", state, ctx.Err())
+		}
+	}
 }
 
 func (p *LogicRouterPool) Close() {

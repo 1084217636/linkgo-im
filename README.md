@@ -40,7 +40,7 @@ LinkGo Chat 由原 `LinkGo-IM` 收敛升级而来，定位为秋招主项目：*
 - `transfer` 按 `message_id + recipient` 做消费幂等，对 Kafka 消费失败链路做重试和死信处理，避免异步链路静默丢消息。
 - 网关集成 JWT 鉴权与分片令牌桶限流，避免恶意握手和暴力登录，并降低高并发下单把锁竞争。
 - 系统暴露 Prometheus `/metrics` 指标，可观测连接数、消息吞吐、ACK、Kafka 重试、红包操作等状态。
-- Gateway 和 Transfer 增加 `/healthz`、`/readyz` 健康检查接口，便于本地调试、Docker Compose 健康检测和后续接入监控。
+- Gateway 和 Transfer 增加 `/healthz`、`/readyz` 健康检查接口；Gateway readiness 同时检查 Logic、Redis、MySQL，`make fault-injection` 可复现 Redis/Logic/Kafka/Transfer 故障与恢复并生成证据报告。
 - 内部异常日志统一收敛到 go-zero `logx`，方便按错误链路排查 Redis、WebSocket、ACK、Kafka 消费等问题。
 
 ## 设计边界

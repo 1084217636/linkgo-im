@@ -1,6 +1,6 @@
 APP_NAME := linkgo-im
 
-.PHONY: test fmt-check build docker-build compose-config compose-cn-config compose-light-config compose-light-cn-config observability-config observability-cn-config prometheus-check observability-up observability-cn-up observability-down observability-cn-down docker-up docker-cn-up docker-cn-reset docker-light-up docker-light-cn-up docker-down docker-cn-down docker-light-down docker-light-cn-down k8s-render k8s-dry-run k8s-apply k8s-release k8s-delete ci-local bench ops-smoke core-im-demo frontend-smoke group-transfer-demo ai-config-check ai-test-suggest ai-quality-summary ai-demo ai-ask-demo im-ai-final-demo
+.PHONY: test fmt-check build docker-build compose-config compose-cn-config compose-light-config compose-light-cn-config observability-config observability-cn-config prometheus-check observability-up observability-cn-up observability-down observability-cn-down docker-up docker-cn-up docker-cn-reset docker-light-up docker-light-cn-up docker-down docker-cn-down docker-light-down docker-light-cn-down k8s-render k8s-dry-run k8s-apply k8s-release k8s-delete ci-local bench ops-smoke fault-injection core-im-demo frontend-smoke group-transfer-demo ai-config-check ai-test-suggest ai-quality-summary ai-demo ai-ask-demo im-ai-final-demo
 
 test:
 	go test ./...
@@ -100,6 +100,9 @@ bench:
 
 ops-smoke:
 	bash scripts/ops_smoke.sh
+
+fault-injection:
+	FAULT_INJECTION_CONFIRM=1 bash scripts/fault_injection.sh
 
 core-im-demo:
 	bash scripts/demo_core_im.sh

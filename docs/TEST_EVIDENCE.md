@@ -234,6 +234,14 @@ curl http://127.0.0.1:8090/metrics
 curl http://127.0.0.1:9102/metrics
 ```
 
+故障注入必须在完整 Compose 环境已启动后单独执行：
+
+```bash
+make fault-injection
+```
+
+脚本依次停止并恢复 Redis、Logic、Kafka、Transfer，验证 Gateway/Transfer readiness 能拒绝依赖异常实例并在恢复后重新就绪，报告写入 `artifacts/fault_injection_report.md`。脚本使用 EXIT trap 恢复被停止的服务；不要在共享或生产环境运行。
+
 ## 8. V2 AI 群聊总结
 
 日期：2026-07-05

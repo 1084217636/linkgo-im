@@ -27,6 +27,7 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Method: http.MethodGet,
 				Path:   "/readyz",
 				Handler: health.ReadyHandler(map[string]health.Check{
+					"logic": serverCtx.LogicRouter.Ready,
 					"redis": func(ctx context.Context) error {
 						return serverCtx.Rdb.Ping(ctx).Err()
 					},
