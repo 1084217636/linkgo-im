@@ -35,7 +35,7 @@ observability-cn-config:
 	docker compose --env-file .env.docker-cn -f docker-compose.yml -f docker-compose.observability.yml config
 
 prometheus-check:
-	docker run --rm -v "$(CURDIR)/deploy/observability:/etc/prometheus:ro" $${PROMETHEUS_IMAGE:-prom/prometheus:v2.55.1} promtool check config /etc/prometheus/prometheus.yml
+	docker run --rm --entrypoint /bin/promtool -v "$(CURDIR)/deploy/observability:/etc/prometheus:ro" $${PROMETHEUS_IMAGE:-prom/prometheus:v2.55.1} check config /etc/prometheus/prometheus.yml
 
 observability-up:
 	docker compose -f docker-compose.yml -f docker-compose.observability.yml up --build
