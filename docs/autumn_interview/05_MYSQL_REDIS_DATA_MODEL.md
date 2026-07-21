@@ -24,17 +24,6 @@
 - `red_packets`：总金额、数量、剩余量、状态。
 - `red_packet_claims`：领取明细，唯一约束防止同用户重复领取。
 
-### 游戏运营
-
-- `platform_user_roles`：运营角色。
-- `game_activities`：活动主记录和当前/已发布版本指针。
-- `game_activity_versions`：不可覆盖的版本配置。
-- `gameops_outbox`：活动缓存同步事件。
-- `game_item_grant_requests`：批次请求。
-- `game_item_grants`：用户道具发放明细。
-- `player_items`：玩家库存。
-- `operation_audit_logs`：管理操作审计。
-
 ### AI
 
 - 总结、问答、调用日志和 provider attempt 表用于结果留痕与故障复盘。
@@ -70,10 +59,6 @@
 
 - `group_delivery:<message_id>:<recipient>`：processing lease/done。
 
-### 运营缓存
-
-- `gameops:activity:<activity_id>:active`：当前生效配置。
-
 ## 4. Redis 数据结构为什么这样选
 
 - String：单值、状态、序号。
@@ -91,24 +76,14 @@
 
 red_packet_id + user_id 唯一，防重复领取。
 
-### 道具发放唯一索引
-
-grant_request_id + user_id + item_id 唯一，防同一批次重复加库存。
-
-### 活动版本唯一索引
-
-activity_id + version 唯一，保证版本号不重复。
-
 ## 6. 事务什么时候用
 
 需要多个数据库变化要么一起成功、要么一起失败时使用事务：
 
 - 消息及会话元信息更新。
 - 红包扣减和领取明细。
-- 活动状态、审计和 Outbox。
-- 道具请求、明细、玩家库存和审计。
 
-Redis 和 MySQL 不能被普通本地事务一起提交，因此活动发布使用 Outbox：数据库先在同一事务记录业务状态和待同步事件，后台再重放到 Redis。
+Redis 和 MySQL 不能被普通本地事务一起提交；当前 IM 主链路以 MySQL 历史作为最终事实，Redis 只承载可补偿的在线态和热点索引。
 
 ## 7. SQL 与 EXPLAIN 初级背诵
 

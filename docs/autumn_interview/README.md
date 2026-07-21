@@ -21,8 +21,7 @@
 
 ### 第二轮：背差异化业务
 
-6. `06_RED_PACKET_AND_CONSISTENCY.md`
-7. `07_GAMEOPS_CONTROL_PLANE.md`
+7. `06_RED_PACKET_AND_CONSISTENCY.md`
 8. `08_AI_INTEGRATION.md`
 9. `09_SECURITY_AND_AUTHORIZATION.md`
 
@@ -58,10 +57,9 @@
 | 登录鉴权 | 02、09 | bcrypt、JWT、WS 握手、Origin |
 | 单聊 | 03 | client_msg_id、message_id、seq、ACK、重连 |
 | 群聊 | 04 | Kafka、Fetch/Commit、retry/DLQ、lease 幂等 |
-| MySQL | 05、06、07 | 表职责、事务、唯一索引、锁、EXPLAIN |
+| MySQL | 05、06 | 表职责、事务、唯一索引、锁、EXPLAIN |
 | Redis | 03、05 | route、pending、offline、timeline、缓存 |
 | 红包 | 06 | 超卖、重复领取、事务边界 |
-| 游戏运营 | 07 | RBAC、版本、审批、灰度、Outbox、回滚、审计 |
 | AI | 08 | provider、timeout、fallback、审计、边界 |
 | 安全 | 09 | 密码、JWT、RBAC、Origin、权限、Secret、限流 |
 | Docker/CI/CD/K8s | 10 | 镜像、流水线、Deployment、Service、Probe、回滚 |

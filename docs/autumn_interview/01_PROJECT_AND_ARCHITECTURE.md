@@ -4,11 +4,11 @@
 
 ### 20 秒
 
-> LinkGo 是使用 Go 和 go-zero 开发的实时通信与游戏运营平台。公司场景下默认部署为多 Gateway、多 Logic、多 Transfer：客户端经 LB/Ingress 接入，Gateway 经 Etcd 发现 Logic，所有实例共享外部 Redis、MySQL、Kafka 集群，并补充红包、AI、运营配置、监控和 K8s 发布能力。
+> LinkGo 是使用 Go 和 go-zero 开发的分布式即时通信系统。公司场景下默认部署为多 Gateway、多 Logic、多 Transfer：客户端经 LB/Ingress 接入，Gateway 经 Etcd 发现 Logic，所有实例共享外部 Redis、MySQL、Kafka 集群，并接入红包并发业务和 AI 虚拟好友。
 
 ### 1 分钟
 
-> LinkGo 的主线是分布式 IM。A、B 可以连接不同 Gateway；Gateway 只维护本机 Socket，通过共享 Redis 保存 uid 到 Gateway 的路由。Gateway 经 Etcd 和 p2c_ewma 调用 Logic 集群；Logic 负责幂等、会话顺序号、MySQL 落库和路由决策；Transfer 集群消费 Kafka，异步完成群聊扩散。MySQL 是最终事实来源，Redis 负责在线路由和短期可靠性状态。业务上还有事务红包、AI 总结/问答和游戏运营控制面；工程上使用 GitHub Actions、Docker、K8s、Prometheus/Grafana 建立验证闭环。
+> LinkGo 的主线是分布式 IM。A、B 可以连接不同 Gateway；Gateway 只维护本机 Socket，通过共享 Redis 保存 uid 到 Gateway 的路由。Gateway 经 Etcd 和 p2c_ewma 调用 Logic 集群；Logic 负责幂等、会话顺序号、MySQL 落库和路由决策；Transfer 集群消费 Kafka，异步完成群聊扩散。MySQL 是最终事实来源，Redis 负责在线路由和短期可靠性状态。差异化业务是事务红包和 AI 总结/问答/虚拟好友；工程上使用 GitHub Actions、Docker、K8s、Prometheus/Grafana 建立验证闭环。
 
 ## 2. 为什么拆成三个服务
 
@@ -63,9 +63,9 @@ Logic-M -> Kafka cluster -> Transfer-N -> shared Redis -> Gateway-X -> Client
 
 ## 4. 同步链路和异步链路
 
-同步：登录、单聊核心处理、消息落库、红包领取、运营写操作。
+同步：登录、单聊核心处理、消息落库、红包领取。
 
-异步：群聊 fanout、Kafka retry/DLQ、活动 Outbox 缓存同步、部分 AI provider 调用的业务增强。
+异步：群聊 fanout、Kafka retry/DLQ、部分 AI provider 调用的业务增强。
 
 判断原则：用户必须立刻知道成功失败的核心一致性操作走同步；耗时、可重试、可削峰的扩散工作走异步。
 

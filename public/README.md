@@ -2,9 +2,7 @@
 
 `public/` 用于存放前端静态资源或本地联调页面。
 
-当前目录有两个零构建单文件页面：`index.html` 用于 IM、红包、AI 和 WebSocket 联调，`admin.html` 用于游戏运营控制面演示。它们是可运行的项目验收前端，不定位为商业级视觉产品。
-
-`admin.html` 是米哈游定向的轻量游戏运营控制台，通过同一静态服务器访问 `http://127.0.0.1:8088/admin.html`。它只覆盖登录、活动草稿/审批/发布/回滚、道具批量发放和结果查询；Token 仅保存在页面内存，刷新后需要重新登录。
+`index.html` 是用于 IM、红包、AI 和 WebSocket 联调的零构建单文件页面。它是可运行的项目验收前端，不定位为商业级视觉产品。
 
 调试台会使用真实登录 token、REST 鉴权头，以及 `api.WireMessage` protobuf 二进制 WebSocket 协议，适合验证登录、好友、群组、历史消息、ACK、clientMsgId 幂等等链路。
 

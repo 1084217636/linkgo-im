@@ -44,9 +44,6 @@ make ops-smoke
 - `linkgo_kafka_operations_total`
 - `linkgo_rate_limit_hits_total`
 - `linkgo_red_packet_operations_total`
-- `linkgo_gameops_operations_total`
-- `linkgo_gameops_cache_sync_total`
-- `linkgo_gameops_granted_items_total`
 
 ## 告警闭环
 

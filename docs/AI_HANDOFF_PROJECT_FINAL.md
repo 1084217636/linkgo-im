@@ -9,14 +9,6 @@
 
 LinkGo Chat 是一个基于 Go 和 go-zero 的分布式即时通信系统。系统以 Gateway、Logic、Transfer 三层承载 WebSocket 接入、消息编排和 Kafka 群聊扩散，以 Redis、MySQL、Etcd 保证跨节点路由、会话内有序、幂等、ACK 补偿和历史持久化，并将红包和 AI 助手作为两条差异化业务接入消息场景。
 
-米哈游定向版本在 IM 可靠性底座之上增加游戏运营控制面。平台角色使用独立的 `platform_user_roles`，不复用群聊 owner/admin；管理操作必须通过 JWT、RBAC、限流，并将操作者、资源、请求/Trace、结果和脱敏详情写入 `operation_audit_logs`。
-
-活动控制面已经实现配置校验、不可覆盖版本、operator 提交、reviewer 审核、admin 发布/回滚、创建者禁止自审、0–100 灰度比例，以及 MySQL 事务内审计/Outbox。状态机为 `draft → pending → approved → published → rolled_back`。Redis 更新失败不会丢失发布事件，Gateway 会周期扫描 pending Outbox 并幂等重放。
-
-回滚接口要求显式传入 `target_version`，且目标必须是 `superseded` 历史版本。事务将当前版本改为 `rolled_back`、目标版本恢复成 `published`，审计保存 from/to 版本，Outbox 把恢复后的完整配置重新同步到 Redis。
-
-道具控制面已经实现批量事务发放：请求以 `grant_request_id` 幂等，明细以 `(grant_request_id, user_id, item_id)` 唯一；重复请求不会重复增加玩家道具，任一 SQL 失败会回滚整个批次并写失败记录/失败审计。运营人员可以按请求 ID 查询原始结果，单批上限 1000 条。
-
 这个项目的主次关系必须始终保持为：
 
 ```text

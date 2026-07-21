@@ -17,7 +17,6 @@
 - push queue depth、queue_full、处理延迟。
 - ACK success/retry/exhausted。
 - Kafka fetch/handle/retry/DLQ/commit 结果。
-- GameOps operation、延迟、缓存同步、道具条目。
 - AI 请求、provider 延迟、fallback/attempt。
 
 标签必须低基数：operation/result 可以；user_id、message_id 不应作为 label，否则时间序列爆炸。
