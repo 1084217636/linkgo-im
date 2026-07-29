@@ -1,0 +1,241 @@
+# 07 从 HTTP 升级为 WebSocket
+
+## 本章前置
+
+你已经知道 HTTP 请求与响应、JWT 认证、Gateway 和 Logic 是不同进程。
+
+本章只解决“一个用户怎样与某台 Gateway 保持实时连接”。跨 Gateway 找人留到第 10 章。
+
+## 本章目标
+
+读完后，你应该能够：
+
+1. 解释为什么登录成功不等于已经建立聊天连接。
+2. 说清 WebSocket 握手、双向通信、帧和心跳。
+3. 沿代码找到连接创建、登记、读循环和清理位置。
+4. 说明当前一个 Gateway 怎样保存本机连接。
+5. 说出浏览器客户端的真实重连与多端边界。
+
+## 1. HTTP 为什么不够方便
+
+普通 HTTP 主要由客户端发起：
+
+```text
+客户端请求
+→ 服务端响应
+→ 本次请求结束
+```
+
+聊天中，B 没有必要每秒发 HTTP 问“有新消息吗”。更自然的方式是建立一条持续连接，让服务端有消息时主动推送。
+
+WebSocket 是建立在一次 HTTP 握手之上的双向长连接协议。双向表示客户端和服务端都可以主动发送数据。
+
+## 2. 什么叫 HTTP Upgrade
+
+客户端最初仍发送 HTTP 请求，但请求中表达“希望升级为 WebSocket”。服务端接受后返回升级成功，之后双方不再按一次 HTTP 请求、一次 HTTP 响应的方式交互，而是在同一条连接上传输 WebSocket 帧。
+
+LinkGo 路径是：
+
+```text
+GET /ws?token=<JWT>
+```
+
+握手成功后的 `websocket.Conn` 是 Gateway 进程内的 Go 对象。它不能被另一台 Gateway 直接读取。
+
+## 3. 帧是什么
+
+WebSocket 在连接上传输一帧一帧的数据。LinkGo 的业务消息使用二进制帧，内容按照 `api.WireMessage` 的 Protobuf 规则编码。
+
+浏览器页面没有引入完整的 Protobuf JavaScript 库，而是在 `public/index.html` 中手写了项目当前字段所需的最小编码和解码函数：
+
+```text
+encodeWireMessage
+decodeWireMessage
+encodeVarint
+```
+
+优点是单文件、零构建依赖；代价是 `.proto` 增删字段时需要人工同步网页代码。正式客户端通常会从 `.proto` 生成客户端代码。
+
+## 4. 握手前经过哪些检查
+
+`/ws` 路由依次经过：
+
+```text
+AuthMiddleware
+→ WebSocket 专用限流中间件
+→ WebSocketHandler
+→ Origin 检查
+→ 获取 Logic 客户端
+→ Upgrade
+```
+
+### JWT 检查
+
+`AuthMiddleware` 从查询参数读取当前网页传来的 Token，验证后把 user_id 放入 Context。Handler 不接受一个匿名连接再让它事后声明身份。
+
+### Origin 检查
+
+Origin 表示浏览器页面来自哪个 scheme、host 和 port，例如：
+
+```text
+http://127.0.0.1:8088
+```
+
+如果任意网页都能利用用户 Token 发起跨站 WebSocket，可能产生安全问题。项目把 Origin 标准化后与白名单精确匹配，不使用模糊字符串包含。
+
+默认情况下，缺少 Origin 也会被拒绝。受信任的非浏览器客户端只有在显式配置 `WS_ALLOW_MISSING_ORIGIN=true` 后才能省略 Origin，并且仍然需要 JWT。
+
+### Logic 客户端句柄
+
+当前 Handler 在 Upgrade 之前取得 Logic gRPC 客户端句柄。只有句柄本身不存在时才返回 HTTP 503；`GetClient` 不会在这里执行一次远程业务探测。因此“拿到客户端句柄”不能证明某个 Logic 实例此刻一定可用，真实远程故障仍可能在建连后的消息调用中暴露。Gateway 另有 readiness 检查，但那属于后续工程化章节。
+
+## 5. 连接怎样保存在本机
+
+成功 Upgrade 后，项目创建：
+
+```go
+type ClientConn struct {
+    Conn      *websocket.Conn
+    SessionID string
+    writeMu   sync.Mutex
+}
+```
+
+这里的 `SessionID` 实际是一次 WebSocket 连接的随机身份，名称容易与聊天 `session_id` 混淆。它用于区分旧连接和新连接，不是会话 ID。
+
+`ClientManager` 使用 `sync.Map` 保存：
+
+```text
+user_id → *ClientConn
+```
+
+这张表只在当前 Gateway 内存里。
+
+如果同一用户在同一 Gateway 又建立新连接，`Add` 使用 `Swap` 替换旧连接并关闭旧连接。`Remove` 使用 `CompareAndDelete`，只有待删除对象仍是当前连接时才删除，避免旧连接结束时误删刚建立的新连接。
+
+## 6. 为什么写连接需要互斥锁
+
+心跳回复、实时消息和错误帧都可能尝试向同一 WebSocket 写数据。`ClientConn.WriteBinary` 使用 `writeMu` 把写操作串行化。
+
+互斥锁（mutex）保证同一时刻只有一个 goroutine 进入受保护代码。这里不是为了让业务消息全局有序，而是避免多个 goroutine 并发写同一连接。
+
+当前读操作集中在一个 `StartClientLoop` 中，写操作统一经过 `WriteBinary`。
+
+## 7. 读循环做什么
+
+`StartClientLoop` 持续调用 `ReadMessage`。每收到一帧：
+
+1. 按 Protobuf 解码为 `WireMessage`。
+2. 根据 `msg_type` 判断它是普通消息、心跳还是确认帧。
+3. 心跳在本循环处理。
+4. 普通消息交给后续消息工作队列。
+5. 读取失败时退出循环，Handler 的 defer 开始清理连接。
+
+服务端把单帧读取上限设置为 `64 << 10`，即 64 KiB，避免客户端无限发送超大帧占用内存。
+
+## 8. 心跳为什么存在
+
+连接在网络断开后不一定马上让双方感知。心跳用于确认连接仍有数据往来，并延长服务端读取期限。
+
+当前网页行为：
+
+```text
+每 20 秒发送 HEARTBEAT
+→ 服务端刷新连接相关状态和读超时
+→ 返回 HEARTBEAT/PONG
+→ 网页记录最近 PONG 时间
+```
+
+如果网页超过 45 秒没有收到 PONG，会主动关闭 WebSocket。服务端默认路由 TTL 和读取期限是 75 秒，只有收到心跳帧时才延长读取 deadline。
+
+TCP 层也有保活机制，但应用心跳还能携带业务进度，并让项目按自己的时间要求判断失活。
+
+## 9. 连接结束时怎样清理
+
+Handler 使用 defer 注册清理动作：
+
+```text
+关闭 websocket.Conn
+从本机 ClientManager 移除当前连接
+减少连接数指标
+清理属于当前连接的共享在线记录
+```
+
+最后一项为什么必须验证“仍属于当前连接”，会在 Redis 和多 Gateway 章节完整解释。现在只记住：旧连接退出不能伤害新连接。
+
+## 10. 当前客户端会不会自动重连
+
+不会完整自动重连。
+
+当前网页：
+
+- 提供“重连 WS”按钮。
+- 心跳超时会关闭连接。
+- `onclose` 只更新页面状态，不运行指数退避自动重连循环。
+- 刷新页面后 Token 也会丢失，需要重新登录，因为 Token 只保存在 JavaScript 内存中。
+
+因此面试时可以说客户端支持手动重连和携带进度恢复，不能说已经完成移动端级别的网络恢复、指数退避自动重连和 Token 刷新。
+
+当前网页把登录会话列表中的 `conversation.last_seq` 放入内存 `lastSeqBySession`，收到消息后再更新。初始 `last_seq` 是服务端会话最新序号，不等于这台浏览器已经收到或 ACK 的可靠设备游标；刷新页面后这份内存状态也会丢失。因此它只能支持演示性的单会话近期补偿，不能当作商业级 per-device 同步进度。
+
+## 11. 当前是否支持同一账号多设备同时在线
+
+不支持完整多端同时在线。
+
+本机 `ClientManager` 对一个 user_id 只保存一个 `ClientConn`。后续共享在线路由也只保存一个位置。新连接会覆盖旧连接所代表的位置。
+
+若要支持手机和电脑同时在线，通常要把路由模型改为：
+
+```text
+user_id → 多个 device_id/connection_id → 各自 Gateway
+```
+
+并分别维护推送、ACK 和清理。这个模型当前没有实现。
+
+## 代码锚点
+
+按顺序阅读：
+
+1. `cmd/gateway/internal/handler/routes.go`：`/ws` 的中间件和 Handler。
+2. `cmd/gateway/internal/middleware/authmiddleware.go`：握手认证。
+3. `cmd/gateway/internal/handler/websockethandler.go`：Origin、Upgrade、登记与清理。
+4. `internal/server/manager.go`：`ClientConn`、`ClientManager.Add/Remove/GetConn`。
+5. `internal/server/client.go`：`StartClientLoop`。
+6. `public/index.html`：`connectWebSocket`、`startHeartbeat`、`encodeWireMessage`。
+
+## 动手练习
+
+### 练习一：按顺序写握手检查
+
+不看文档写出：JWT、限流、Origin、Logic 客户端、Upgrade。再说明其中哪些发生在 WebSocket 建立之前。
+
+### 练习二：验证旧连接不能删新连接
+
+```bash
+go test ./internal/server -run TestClientManagerRemoveOnlyMatchingSession -v
+```
+
+阅读测试中的两个连接对象，解释为什么普通 `Delete(uid)` 会出错。
+
+### 练习三：验证 Origin
+
+```bash
+go test ./cmd/gateway/internal/handler -run 'TestWebSocketOriginAllowed|TestRejectInvalidWebSocketOrigin' -v
+```
+
+列出允许、拒绝和缺失 Origin 三类输入。
+
+## 闭卷检查
+
+1. 登录成功为什么不等于已有实时连接？
+2. HTTP Upgrade 前做了哪些检查？
+3. Origin 白名单解决什么问题？
+4. `ClientConn.SessionID` 是聊天会话 ID 吗？
+5. ClientManager 保存在哪里，其他 Gateway 能直接读取吗？
+6. 为什么 `WriteBinary` 需要 mutex？
+7. 当前心跳间隔和网页 PONG 超时各是多少？
+8. 为什么旧连接清理不能直接删除 user_id？
+9. 当前网页是否实现自动退避重连？
+10. 当前是否支持同账号多设备并存？
+
+下一步：[08 先看单台 Gateway 的单聊](08_SINGLE_GATEWAY_CHAT.md)

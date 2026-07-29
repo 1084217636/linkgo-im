@@ -97,7 +97,7 @@ func TestOpenAICompatibleProviderAnswer(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"{\"answer\":\"群聊扩散是高扇出操作，所以要用 Kafka 异步化。\",\"sources\":[{\"path\":\"docs/AI_FAQ.md\",\"title\":\"群聊为什么用 Kafka\"}]}"}}]}`))
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"{\"answer\":\"群聊扩散是高扇出操作，所以要用 Kafka 异步化。\",\"sources\":[{\"path\":\"docs/knowledge/IM_FAQ.md\",\"title\":\"群聊为什么用 Kafka\"}]}"}}]}`))
 	}))
 	defer server.Close()
 
@@ -111,7 +111,7 @@ func TestOpenAICompatibleProviderAnswer(t *testing.T) {
 	result, err := provider.Answer(context.Background(), AskRequest{
 		Question: "群聊为什么用 Kafka？",
 		Sources: []KnowledgeSource{{
-			Path:    "docs/AI_FAQ.md",
+			Path:    "docs/knowledge/IM_FAQ.md",
 			Title:   "群聊为什么用 Kafka",
 			Snippet: "群聊扩散是高扇出操作，同步发送会拖慢链路。",
 		}},
@@ -122,7 +122,7 @@ func TestOpenAICompatibleProviderAnswer(t *testing.T) {
 	if !strings.Contains(result.Answer, "Kafka") {
 		t.Fatalf("answer = %q", result.Answer)
 	}
-	if len(result.Sources) != 1 || result.Sources[0].Path != "docs/AI_FAQ.md" {
+	if len(result.Sources) != 1 || result.Sources[0].Path != "docs/knowledge/IM_FAQ.md" {
 		t.Fatalf("sources = %+v", result.Sources)
 	}
 }

@@ -40,6 +40,9 @@ jobs:
       - name: Validate frontend contracts
         run: make frontend-static-check
 
+      - name: Validate documentation structure
+        run: make docs-check
+
       - name: Validate Docker Compose config
         run: |
           make compose-config

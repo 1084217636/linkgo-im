@@ -56,11 +56,9 @@ func NewKnowledgeBase(paths []string) (*KnowledgeBase, error) {
 
 func defaultKnowledgePaths() []string {
 	return []string{
-		"docs/AI_FAQ.md",
-		"README.md",
-		"docs/CODE_MAP.md",
-		"docs/CORE_LINKS.md",
-		"docs/INTERVIEW_QA.md",
+		"docs/knowledge/IM_FAQ.md",
+		"docs/knowledge/ARCHITECTURE.md",
+		"docs/knowledge/MESSAGE_RELIABILITY.md",
 	}
 }
 

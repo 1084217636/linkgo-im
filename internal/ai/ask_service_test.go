@@ -24,7 +24,7 @@ func TestAskServiceAsk(t *testing.T) {
 
 	service := NewAskService(db, NewMockProvider(), &KnowledgeBase{
 		documents: []knowledgeDocument{{
-			Path:    "docs/AI_FAQ.md",
+			Path:    "docs/knowledge/IM_FAQ.md",
 			Title:   "群聊为什么用 Kafka",
 			Content: "群聊扩散是高扇出操作，同步 for 循环会拖慢发送链路。",
 		}},

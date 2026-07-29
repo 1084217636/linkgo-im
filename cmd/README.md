@@ -6,7 +6,7 @@
 
 - `gateway/`：接入层，承接 HTTP 和 WebSocket。
 - `logic/`：逻辑层，承接 gRPC、路由、持久化和会话序列分配。
-- `transfer/`：预留给后续消息投递或 MQ 异步链路扩展。
+- `transfer/`：已经投入使用的 Kafka 群聊逐成员投递服务，处理重试、死信和消费位点。
 
 ## 设计原则
 

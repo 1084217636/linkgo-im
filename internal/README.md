@@ -6,7 +6,7 @@
 
 - `logic/`：消息归一化、序列号分配、消息投递、历史查询。
 - `delivery/`：Redis 在线投递、离线补偿、ACK 跟踪。
-- `discovery/`：Etcd 注册发现与一致性哈希选址。
+- `discovery/`：当前复用地址解析工具；目录内手写 Registry/Resolver 是未接入主链路的早期实现，活跃注册发现和 `p2c_ewma` 由 go-zero zRPC 完成。
 - `middleware/`：JWT 鉴权与请求上下文注入。
 - `server/`：连接管理、Redis 订阅和离线消息同步。
 

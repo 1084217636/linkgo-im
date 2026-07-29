@@ -47,7 +47,7 @@ make ops-smoke
 
 ## 告警闭环
 
-`rules/linkgo-alerts.yml` 覆盖服务不可用、推送队列背压、Kafka 处理/提交失败、运营操作失败、活动缓存同步失败和运营接口高延迟。可用以下命令检查规则语法：
+`rules/linkgo-alerts.yml` 覆盖服务不可用、推送队列背压和 Kafka 处理/提交失败。可用以下命令检查规则语法：
 
 ```bash
 make prometheus-check

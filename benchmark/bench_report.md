@@ -1,5 +1,7 @@
 # LinkGo-IM 性能测试报告
 
+> 历史证据：本报告记录 2026-05-14 的本机测试，不属于从零学习主线，也不是当前 commit 的容量结论。原始记录没有保存准确 commit SHA，因此具体数字只能说明当时环境；用于简历前必须在当前版本重新运行并补齐 SHA、工具版本和配置。
+
 ## 0. 当前协议实测补充（2026-05-14）
 
 本轮测试使用 `benchmark/local_core_bench.go`，在本机启动 10 个轻量 Gateway HTTP/WebSocket 入口，Redis 使用本地 `redis-server 7.0.15`，Logic 使用内存中的 `LogicHandler`，覆盖 JWT 握手、WebSocket 长连接、Protobuf 心跳、Redis route、Redis Pub/Sub、单聊投递、pending ACK 和 ACK 清理。
@@ -74,13 +76,13 @@
 - P95：`657.45ms`
 - P99：`684.56ms`
 
-结论：当前核心链路在 1w WebSocket 心跳与 100 对连接 / 2000 条单聊消息下表现稳定；5000 条突发时开始出现积压和超时，说明后续需要继续优化推送 worker、ACK 索引读取、批量写 Redis 和背压策略。
+结论：这次最小链路测试中，1w WebSocket 心跳和 100 对连接 / 2000 条消息没有记录超时；5000 条突发出现 15.5% 超时。测试没有包含真实 MySQL/Kafka/Transfer，不能外推为完整系统容量或“稳定承载 1 万活跃聊天用户”。
 
 ## 1. 测试环境
 - OS: Linux (WSL2 容器)
 - CPU/内存: 16 核 / 16GB
 - Docker Compose 服务: gateway-a (8090), gateway-b (8091), logic (9001), redis, mysql
-- 代码版本: 当前 workspace 主分支
+- 代码版本: 原始记录未保存 commit SHA，无法精确复现
 
 ## 2. 测试目标
 - 验证本机 Docker Compose 多 Gateway 场景下的连接承载能力。
@@ -133,7 +135,7 @@
 
 ## 4. 结论
 - 单网关测试：LinkGo-IM 单个 gateway 在本机环境中 300 并发稳定，500 并发开始出现 500 错误。
-- 三网关测试：gateway-a/b/c（8090/8091/8092）组合，等价压力：2400 并发（3×800）所有三节点均可 20s 内无 500 失败，且响应稳定在 90-110ms 左右。说明多网关扩展可线性提高吞吐。
+- 三网关测试：gateway-a/b/c（8090/8091/8092）组合，等价压力：2400 并发（3×800）在该次 20s 记录中无 500 失败，响应约 90-110ms。这只能说明本机条件下多 Gateway 相比单进程改善了承载，不能证明跨机器后仍线性扩展。
 - 十网关测试：gateway-a~j（8090-8099）组合，等价压力：10000 并发（10×1000）结果为 98.6% 成功率，说明本机多进程模拟下 Gateway 横向扩展链路可用；该结果需要结合机器配置、连接行为和失败原因一起解释。
 - WebSocket 长连接测试（10k）：10k WebSocket 客户端连接（每个网关 1000，跨 10 个端口）执行 30s 心跳发/收，结果 `created=10000 success=10000 failed=0`，说明连接保持和心跳链路在当前测试条件下可达。
 - 关键结论：多 Gateway 模式可以缓解单进程连接压力，跨网关 Redis Pub/Sub 路由链路验证可达；后续需要继续补充断连重连、ACK 丢失、消息补偿、Kafka 积压和 P95/P99 延迟指标。
@@ -143,12 +145,20 @@
 - 部分验证：多网关压力下的成功率和接口延迟，失败原因尚未完全分类。
 - 未充分验证：弱网断连重连、ACK 丢失补偿、Gateway 节点下线恢复、Kafka 消费积压、Redis 热 key、MySQL 写入瓶颈、端到端消息 P95/P99。
 
-## 5. 优化建议
-1. 将 `clients` map 从 `sync.RWMutex` 升级为 `sync.Map`/sharded map，减少锁竞争
-2. WebSocket 推送逻辑异步队列，避免单线程处理阻塞
-3. gRPC 长连接池 + 批量 push 减少压力
-4. 增加 `Prometheus` / `Grafana` 监控 p99 / goroutines / lock contention
-5. Redis 增加 cluster + Redis 哨兵/主从以提高 pub/sub 并发吞吐
+## 5. 报告生成后的项目变化
+
+已经在后续版本完成：
+
+- 本机连接管理使用 `sync.Map`。
+- WebSocket 上行使用按 UID 分片的有界队列并显式返回背压。
+- Gateway 复用 go-zero zRPC client/connection。
+- 已加入 Prometheus/Grafana 配置和关键链路指标。
+
+当前仍需单独验证或实现：
+
+- 在当前 commit 重跑包含真实 MySQL、Kafka 和 Transfer 的压力测试。
+- 采集 goroutine、锁竞争、中间件延迟以及明确的失败分类。
+- 当前应用没有原生 Redis Cluster/Sentinel 客户端；不能只在报告里写一句“增加集群”就算完成高可用。
 
 ## 6. 操作方式
 - 运行测试：`bash benchmark/run_bench.sh`
