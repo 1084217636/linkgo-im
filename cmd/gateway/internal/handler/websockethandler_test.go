@@ -1,8 +1,19 @@
 package handler
 
 import (
+	"context"
+	"database/sql"
+	"errors"
+	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
+
+	"github.com/1084217636/linkgo-im/cmd/gateway/internal/config"
+	gwmiddleware "github.com/1084217636/linkgo-im/cmd/gateway/internal/middleware"
+	"github.com/1084217636/linkgo-im/cmd/gateway/internal/svc"
+	authutil "github.com/1084217636/linkgo-im/internal/middleware"
+	"github.com/DATA-DOG/go-sqlmock"
 )
 
 func TestWebSocketOriginAllowed(t *testing.T) {
@@ -51,5 +62,143 @@ func TestRejectInvalidWebSocketOriginReturnsForbidden(t *testing.T) {
 	}
 	if resp.Code != 403 {
 		t.Fatalf("status = %d, want 403", resp.Code)
+	}
+}
+
+func TestAuthorizeReplaySessionC2C(t *testing.T) {
+	tests := []struct {
+		name      string
+		userID    string
+		sessionID string
+		wantErr   bool
+	}{
+		{name: "first participant", userID: "1001", sessionID: "c2c:1001:1002"},
+		{name: "second participant", userID: "1002", sessionID: "c2c:1001:1002"},
+		{name: "unrelated user", userID: "1003", sessionID: "c2c:1001:1002", wantErr: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := authorizeReplaySession(context.Background(), nil, tc.userID, tc.sessionID)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("authorizeReplaySession() error = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestAuthorizeReplaySessionGroup(t *testing.T) {
+	tests := []struct {
+		name    string
+		status  string
+		noRows  bool
+		wantErr bool
+	}{
+		{name: "active member", status: "active"},
+		{name: "not a member", noRows: true, wantErr: true},
+		{name: "left member", status: "left", wantErr: true},
+		{name: "removed member", status: "removed", wantErr: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatalf("sqlmock.New(): %v", err)
+			}
+			defer db.Close()
+
+			expectation := mock.ExpectQuery("SELECT status").WithArgs("G100", "1001")
+			if tc.noRows {
+				expectation.WillReturnError(sql.ErrNoRows)
+			} else {
+				expectation.WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow(tc.status))
+			}
+
+			err = authorizeReplaySession(context.Background(), db, "1001", "group:G100")
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("authorizeReplaySession() error = %v, wantErr %v", err, tc.wantErr)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("unmet SQL expectations: %v", err)
+			}
+		})
+	}
+}
+
+func TestAuthorizeReplaySessionRejectsMalformedSessions(t *testing.T) {
+	for _, sessionID := range []string{
+		"c2c:1001",
+		"c2c::1002",
+		"c2c:1001:1002:1003",
+		"group:",
+		"unknown:1001",
+		" c2c:1001:1002",
+	} {
+		t.Run(sessionID, func(t *testing.T) {
+			if err := authorizeReplaySession(context.Background(), nil, "1001", sessionID); err == nil {
+				t.Fatal("authorizeReplaySession() error = nil, want malformed session rejection")
+			}
+		})
+	}
+}
+
+func TestAuthorizeReplaySessionFailsClosedOnGroupStoreErrors(t *testing.T) {
+	t.Run("database unavailable", func(t *testing.T) {
+		if err := authorizeReplaySession(context.Background(), nil, "1001", "group:G100"); err == nil {
+			t.Fatal("authorizeReplaySession() error = nil, want unavailable database rejection")
+		}
+	})
+
+	t.Run("query error", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		if err != nil {
+			t.Fatalf("sqlmock.New(): %v", err)
+		}
+		defer db.Close()
+
+		queryErr := errors.New("database unavailable")
+		mock.ExpectQuery("SELECT status").WithArgs("G100", "1001").WillReturnError(queryErr)
+		if err := authorizeReplaySession(context.Background(), db, "1001", "group:G100"); !errors.Is(err, queryErr) {
+			t.Fatalf("authorizeReplaySession() error = %v, want wrapped %v", err, queryErr)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet SQL expectations: %v", err)
+		}
+	})
+}
+
+func TestAuthorizeReplaySessionAllowsConnectionWithoutSession(t *testing.T) {
+	if err := authorizeReplaySession(context.Background(), nil, "1001", ""); err != nil {
+		t.Fatalf("authorizeReplaySession() error = %v, want nil for ordinary connection", err)
+	}
+}
+
+func TestWebSocketHandlerRejectsUnauthorizedReplayBeforeUpgrade(t *testing.T) {
+	token, err := authutil.GenerateToken("1003")
+	if err != nil {
+		t.Fatalf("GenerateToken(): %v", err)
+	}
+
+	svcCtx := &svc.ServiceContext{
+		Config: config.Config{
+			Gateway: config.GatewayConf{
+				AllowedOrigins: []string{"https://app.example.com"},
+			},
+		},
+	}
+	handler := gwmiddleware.NewAuthMiddleware().Handle(WebSocketHandler(svcCtx))
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"http://api.example.com/ws?token="+url.QueryEscape(token)+"&session_id="+url.QueryEscape("c2c:1001:1002")+"&last_seq=0",
+		nil,
+	)
+	req.Header.Set("Origin", "https://app.example.com")
+	resp := httptest.NewRecorder()
+
+	handler(resp, req)
+
+	if resp.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", resp.Code, http.StatusForbidden)
 	}
 }

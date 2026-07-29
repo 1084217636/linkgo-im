@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -80,5 +81,44 @@ func TestWritePushRejectionPropagatesWriteError(t *testing.T) {
 	writer := &recordingBinaryWriter{err: want}
 	if err := writePushRejection(writer, &api.WireMessage{}, SubmitQueueFull); !errors.Is(err, want) {
 		t.Fatalf("writePushRejection() error = %v, want %v", err, want)
+	}
+}
+
+func TestAuthorizeSessionReplayAllowsEmptySessionWithoutAuthorizer(t *testing.T) {
+	if err := authorizeSessionReplay(context.Background(), nil, "1001", ""); err != nil {
+		t.Fatalf("authorizeSessionReplay() error = %v, want nil", err)
+	}
+}
+
+func TestAuthorizeSessionReplayFailsClosedWithoutAuthorizer(t *testing.T) {
+	if err := authorizeSessionReplay(context.Background(), nil, "1001", "c2c:1001:1002"); err == nil {
+		t.Fatal("authorizeSessionReplay() error = nil, want missing-authorizer rejection")
+	}
+}
+
+func TestAuthorizeSessionReplayCallsAuthorizer(t *testing.T) {
+	var gotUID, gotSessionID string
+	authorizer := func(_ context.Context, uid, sessionID string) error {
+		gotUID = uid
+		gotSessionID = sessionID
+		return nil
+	}
+
+	if err := authorizeSessionReplay(context.Background(), authorizer, "1001", "group:G100"); err != nil {
+		t.Fatalf("authorizeSessionReplay() error = %v, want nil", err)
+	}
+	if gotUID != "1001" || gotSessionID != "group:G100" {
+		t.Fatalf("authorizer arguments = (%q, %q), want (%q, %q)", gotUID, gotSessionID, "1001", "group:G100")
+	}
+}
+
+func TestAuthorizeSessionReplayPropagatesDenial(t *testing.T) {
+	want := errors.New("not a member")
+	authorizer := func(context.Context, string, string) error {
+		return want
+	}
+
+	if err := authorizeSessionReplay(context.Background(), authorizer, "1001", "group:G100"); !errors.Is(err, want) {
+		t.Fatalf("authorizeSessionReplay() error = %v, want %v", err, want)
 	}
 }

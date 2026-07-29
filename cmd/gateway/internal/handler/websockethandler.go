@@ -3,7 +3,10 @@ package handler
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -45,6 +48,13 @@ func WebSocketHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
+		sessionID := r.URL.Query().Get("session_id")
+		if err := authorizeReplaySession(r.Context(), svcCtx.DB, userID, sessionID); err != nil {
+			logx.Errorf("websocket replay session forbidden user=%s session=%s: %v", userID, sessionID, err)
+			http.Error(w, "session access is forbidden", http.StatusForbidden)
+			return
+		}
+
 		client, err := svcCtx.LogicRouter.GetClient(r.Context(), userID)
 		if err != nil {
 			httpx.WriteJsonCtx(r.Context(), w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
@@ -74,12 +84,77 @@ func WebSocketHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			}
 		}()
 
-		sessionID := r.URL.Query().Get("session_id")
 		lastSeq := parseLastSeq(r.URL.Query().Get("last_seq"))
 		server.SyncOfflineMessages(ctx, svcCtx.Rdb, userID, clientConn, sessionID, lastSeq)
 		ctx = zrpc.SetHashKey(ctx, userID)
-		server.StartClientLoop(ctx, userID, clientConn, client, svcCtx.Rdb, routeValue, svcCtx.RouteTTL)
+		server.StartClientLoop(
+			ctx,
+			userID,
+			clientConn,
+			client,
+			svcCtx.Rdb,
+			routeValue,
+			svcCtx.RouteTTL,
+			func(authCtx context.Context, uid, requestedSessionID string) error {
+				return authorizeReplaySession(authCtx, svcCtx.DB, uid, requestedSessionID)
+			},
+		)
 	}
+}
+
+// authorizeReplaySession validates the optional client-supplied session before
+// the WebSocket is upgraded and before any session timeline payload is read.
+// An empty session keeps the ordinary connection path unchanged; a supplied
+// session fails closed on malformed input, missing membership data, or DB
+// errors.
+func authorizeReplaySession(ctx context.Context, db *sql.DB, userID, sessionID string) error {
+	if sessionID == "" {
+		return nil
+	}
+	if strings.TrimSpace(sessionID) != sessionID || strings.TrimSpace(userID) == "" {
+		return errors.New("invalid replay session")
+	}
+
+	if strings.HasPrefix(sessionID, "c2c:") {
+		parts := strings.Split(sessionID, ":")
+		if len(parts) != 3 || parts[1] == "" || parts[2] == "" {
+			return errors.New("invalid c2c replay session")
+		}
+		if userID != parts[1] && userID != parts[2] {
+			return errors.New("user is not a c2c session participant")
+		}
+		return nil
+	}
+
+	if strings.HasPrefix(sessionID, "group:") {
+		groupID := strings.TrimPrefix(sessionID, "group:")
+		if strings.TrimSpace(groupID) == "" {
+			return errors.New("invalid group replay session")
+		}
+		if db == nil {
+			return errors.New("group membership store is unavailable")
+		}
+
+		var status string
+		err := db.QueryRowContext(ctx, `
+SELECT status
+FROM group_members
+WHERE group_id = ? AND user_id = ?
+LIMIT 1
+`, groupID, userID).Scan(&status)
+		if errors.Is(err, sql.ErrNoRows) {
+			return errors.New("user is not a group session participant")
+		}
+		if err != nil {
+			return fmt.Errorf("query group membership: %w", err)
+		}
+		if status != "active" {
+			return errors.New("group membership is not active")
+		}
+		return nil
+	}
+
+	return errors.New("unsupported replay session format")
 }
 
 func rejectInvalidWebSocketOrigin(

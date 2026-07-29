@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/1084217636/linkgo-im/api"
@@ -13,6 +14,11 @@ import (
 )
 
 var pushPool = NewPushWorkerPool(64, 64)
+
+// ReplaySessionAuthorizer decides whether uid may read the supplied session
+// timeline. Callers must provide an authorizer before accepting a non-empty
+// session ID from a client.
+type ReplaySessionAuthorizer func(ctx context.Context, uid, sessionID string) error
 
 func ShutdownPushWorkerPool(ctx context.Context) error {
 	return pushPool.Close(ctx)
@@ -26,6 +32,7 @@ func StartClientLoop(
 	rdb *redis.Client,
 	routeValue string,
 	routeTTL time.Duration,
+	authorizeReplay ReplaySessionAuthorizer,
 ) {
 	conn.Conn.SetReadLimit(64 << 10)
 	_ = conn.Conn.SetReadDeadline(time.Now().Add(routeTTL))
@@ -60,6 +67,16 @@ func StartClientLoop(
 				)
 			}
 			if frame.SessionId != "" {
+				if err := authorizeSessionReplay(ctx, authorizeReplay, uid, frame.SessionId); err != nil {
+					logx.Errorw("heartbeat session replay forbidden",
+						logx.Field("trace_id", frame.TraceId),
+						logx.Field("gateway_id", gatewayID),
+						logx.Field("target_id", uid),
+						logx.Field("session_id", frame.SessionId),
+						logx.Field("error", err.Error()),
+					)
+					return
+				}
 				SyncSessionMessagesAfterSeq(ctx, rdb, uid, conn, frame.SessionId, frame.LastSeq, nil)
 			}
 			_ = conn.Conn.SetReadDeadline(time.Now().Add(routeTTL))
@@ -117,4 +134,19 @@ func StartClientLoop(
 			}
 		}
 	}
+}
+
+func authorizeSessionReplay(
+	ctx context.Context,
+	authorize ReplaySessionAuthorizer,
+	uid string,
+	sessionID string,
+) error {
+	if sessionID == "" {
+		return nil
+	}
+	if authorize == nil {
+		return errors.New("session replay authorizer is required")
+	}
+	return authorize(ctx, uid, sessionID)
 }

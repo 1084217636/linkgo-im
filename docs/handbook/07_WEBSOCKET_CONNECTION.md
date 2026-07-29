@@ -30,6 +30,10 @@
 
 WebSocket 是建立在一次 HTTP 握手之上的双向长连接协议。双向表示客户端和服务端都可以主动发送数据。
 
+替代方案包括定时轮询，以及主要由服务端单向推送的 SSE（Server-Sent Events）。轮询容易产生空请求和额外延迟；SSE 可以推送，但客户端发送聊天内容仍要配合另一条 HTTP 请求。LinkGo 需要双方在同一连接上持续发送心跳、普通消息和确认帧，因此选择 WebSocket。
+
+代价是 Gateway 要长期占用连接、内存和文件描述符，不能再把每次交互当作“响应结束就清理”。项目还必须处理身份校验、心跳、并发写、断线清理和重连；WebSocket 本身不会自动保证消息落库、必达或多设备同步。
+
 ## 2. 什么叫 HTTP Upgrade
 
 客户端最初仍发送 HTTP 请求，但请求中表达“希望升级为 WebSocket”。服务端接受后返回升级成功，之后双方不再按一次 HTTP 请求、一次 HTTP 响应的方式交互，而是在同一条连接上传输 WebSocket 帧。
@@ -65,6 +69,7 @@ AuthMiddleware
 → WebSocket 专用限流中间件
 → WebSocketHandler
 → Origin 检查
+→ 可选的会话回放权限检查
 → 获取 Logic 客户端
 → Upgrade
 ```
@@ -84,6 +89,12 @@ http://127.0.0.1:8088
 如果任意网页都能利用用户 Token 发起跨站 WebSocket，可能产生安全问题。项目把 Origin 标准化后与白名单精确匹配，不使用模糊字符串包含。
 
 默认情况下，缺少 Origin 也会被拒绝。受信任的非浏览器客户端只有在显式配置 `WS_ALLOW_MISSING_ORIGIN=true` 后才能省略 Origin，并且仍然需要 JWT。
+
+### 会话回放权限检查
+
+建连可以不带会话。若携带 `/ws?...&session_id=...&last_seq=...`，`session_id` 是客户端可修改的资源标识，JWT 只能证明“你是谁”，不能自动证明“你能读这个会话”。如果不检查，已登录用户可能替换会话 ID，读到共享 Redis timeline 中不属于自己的近期消息。
+
+因此当前 Handler 在 Upgrade 前先校验：单聊 `c2c` 会话必须包含当前 JWT user_id；群聊必须能在 MySQL 查到当前用户的 `active` 成员记录；格式错误、非成员和数据库查询错误都拒绝回放。心跳帧后续要求补拉另一会话时也会重新校验，避免建连后换 ID 绕过。代价是群聊回放会多一次 MySQL 成员查询；规模上升后可评估短 TTL 权限缓存，但成员退群后的失效语义也必须一起设计。
 
 ### Logic 客户端句柄
 
@@ -207,7 +218,7 @@ user_id → 多个 device_id/connection_id → 各自 Gateway
 
 ### 练习一：按顺序写握手检查
 
-不看文档写出：JWT、限流、Origin、Logic 客户端、Upgrade。再说明其中哪些发生在 WebSocket 建立之前。
+不看文档写出：JWT、限流、Origin、可选会话回放授权、Logic 客户端、Upgrade。再说明其中哪些发生在 WebSocket 建立之前。
 
 ### 练习二：验证旧连接不能删新连接
 
@@ -227,8 +238,8 @@ go test ./cmd/gateway/internal/handler -run 'TestWebSocketOriginAllowed|TestReje
 
 ## 闭卷检查
 
-1. 登录成功为什么不等于已有实时连接？
-2. HTTP Upgrade 前做了哪些检查？
+1. 登录成功为什么不等于已有实时连接？轮询、SSE 和 WebSocket 的取舍是什么？
+2. HTTP Upgrade 前做了哪些检查？JWT 与会话回放授权分别证明什么？
 3. Origin 白名单解决什么问题？
 4. `ClientConn.SessionID` 是聊天会话 ID 吗？
 5. ClientManager 保存在哪里，其他 Gateway 能直接读取吗？

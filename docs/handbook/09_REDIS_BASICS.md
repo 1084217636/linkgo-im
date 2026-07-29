@@ -106,6 +106,8 @@ PUBLISH im_message_push:gateway-3 <投递事件>
 
 每台 Gateway 订阅自己的 channel。它不是上面四种持久 Key 类型，而是一种实时通信机制。
 
+为什么不是“所有 Gateway 共用一个广播频道”？广播会让每台 Gateway 都接收并解析与自己无关的消息，节点越多越浪费网络和 CPU。为什么也不是“每个用户一个频道”？在线用户很多时，订阅数量和连接管理会迅速膨胀。当前折中方案是每个 Gateway 一个频道：先用 `route:<uid>` 找到 Gateway，再由该 Gateway 的本机 map 找用户连接。代价是频道有订阅者只能证明 Gateway 的 Redis 订阅还在，不能证明目标用户连接仍在。
+
 ## 4. Pub/Sub 为什么适合在线通知
 
 假设 B 在 Gateway-3：
@@ -152,9 +154,9 @@ Redis 的单条命令通常是原子执行的。例如 `INCR` 可以安全地把
 
 ### 会话序号为什么用 Lua
 
-`sessionSeqScript` 执行 `INCR` 并刷新过期时间。多个 Logic 实例同时处理消息时，都访问同一个 Key，避免每台 Logic 用自己的内存计数器产生重复序号。
+多个 Logic 实例同时处理消息时，都访问同一个 Redis Key，避免每台 Logic 用自己的内存计数器或 `GET + SET` 产生重复、覆盖。序号原子递增本身来自 Redis 的单条 `INCR`；`sessionSeqScript` 使用 Lua，是为了把 `INCR` 和刷新过期时间 `PEXPIRE` 合成一个不可分割步骤，避免只递增成功却没有按预期续期。
 
-会话序号的数据库兜底初始化和完整顺序边界在第 11 章继续解释。
+代价是 Redis 变成发送强依赖；Key 过期后还要用 MySQL `MAX(seq)` 兜底初始化。会话序号的完整顺序边界在第 11 章继续解释。
 
 ## 6. Pipeline 与事务不要混淆
 

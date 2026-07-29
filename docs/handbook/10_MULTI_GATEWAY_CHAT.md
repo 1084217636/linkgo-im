@@ -40,6 +40,10 @@ Logic-1、Logic-2、Logic-3       → Logic 集群
 
 它主要决定新连接落到哪里。已经建立的 TCP/WebSocket 连接不会因为后来增加 Gateway-4 就自动搬过去。
 
+为什么客户端不直接硬编码 Gateway-1/2/3 并自己选？节点增减、故障和地址变更会迫使所有客户端同步一份实例列表。DNS 轮询也能分散地址，但客户端和 DNS 缓存会延迟故障摘除。统一 LB 给客户端一个稳定入口，由入口维护健康 Gateway 集合并分配新连接。代价是 LB 自身也要多实例或由云平台高可用托管，而且它不会搬迁已建 WebSocket。
+
+这是公司目标拓扑：当前仓库的 production overlay 没有真实云 LB、Ingress 或 TLS 资源，不能把这张图说成已上线证据。
+
 ### 服务注册与发现
 
 Gateway 需要知道当前有哪些 Logic 实例可用：
@@ -60,7 +64,9 @@ Etcd 在这里是服务通讯录，不保存好友关系或聊天正文。
 
 Gateway 获得多个 Logic 地址后，要为一次 gRPC 调用选择一个实例。项目配置 `p2c_ewma`：大意是比较少量候选实例，并结合近期延迟选择更合适者。
 
-它不是一致性哈希。当前 `LogicRouterPool.GetClient` 的 key 参数也没有实现“同一用户永远固定某个 Logic”的业务路由。
+最简单的轮询实现容易，但不看某个实例最近是否变慢；全部实例每次排名又会增加选择成本。P2C（Power of Two Choices）只抽少量候选，EWMA（Exponentially Weighted Moving Average）用加权移动平均表示近期延迟，在这两者之间取折中。代价是一次 RPC 的局部选择不保证全局最优，也不保证下次仍选同一实例或 RPC 绝不失败。
+
+它不是一致性哈希。当前 `LogicRouterPool.GetClient` 的 key 参数也没有实现“同一用户永远固定某个 Logic”的业务路由；项目不需要用 Logic 本机内存作为某用户的唯一业务状态。
 
 ## 2. Logic 实例怎样注册
 
@@ -119,6 +125,8 @@ route:B = gateway-3|connection-b91...
 
 所有 Gateway 和 Logic 连接同一逻辑 Redis，所以 Logic-2 能读到 Gateway-3 写的 B 路由。
 
+这些反向索引不是为了重复保存同一事实：`route:uid` 适合按用户找 Gateway；`gateway_users` 适合某台 Gateway 做心跳、ACK 重试和退出清理时找自己负责的用户；`gateway_conn` 适合拿连接 ID 反查用户。如果只有 `route:*`，按某个 Gateway 清理就可能需要全库 `SCAN`。代价是一次建连要维护多份 Redis 状态，所有写入、续期和比较删除必须保持语义一致；当前单值 route 仍不支持多端。
+
 ## 5. 谁负责续期
 
 需要区分两种心跳：
@@ -145,22 +153,28 @@ Logic 集群有 Logic-1/2/3
 2. Gateway-1 的 StartClientLoop 解码
 3. Gateway-1 把任务放入按 A 分片的有界队列
 4. gRPC 客户端通过 Etcd 地址列表和 p2c_ewma 选择一个 Logic，例如 Logic-2
-5. Logic-2 用已认证 UserId 校验发送者，并检查 A/B 好友关系
-6. Logic-2 处理 client_msg_id、会话 ID、seq 和 message_id
-7. Logic-2 将消息 INSERT 到共享 MySQL
-8. RedisDelivery 先登记 B 的待确认状态
-9. Logic-2 查询共享 Redis：route:B
-10. 得到 gateway-3|connection-b91...
-11. Logic-2 发布投递事件到 im_message_push:gateway-3
-12. Gateway-3 的 Redis 订阅循环收到事件
-13. Gateway-3 从本机 ClientManager 找 B
-14. Gateway-3 向 B 的 WebSocket 写二进制消息
-15. B 网页解码、展示，并发送确认帧
+5. Logic-2 用已认证 UserId 覆盖/校验 from，规范化字段
+6. Logic-2 先预占 client_msg_id，并尝试按它读取已落库的重试消息；若找到，对数据库中的真实旧消息重新校验当前权限后才恢复投递
+7. 对首次发送构造会话 ID，再检查 A/B 好友关系
+8. Redis Lua 分配 seq，生成 message_id
+9. Logic-2 将消息 INSERT 到共享 MySQL
+10. 解析收件人 B 并编码最终 WireMessage
+11. RedisDelivery 先登记 B 的待确认状态
+12. Logic-2 查询共享 Redis：route:B，得到 gateway-3|connection-b91...
+13. Logic-2 发布投递事件到 im_message_push:gateway-3
+14A. PUBLISH 返回后，Logic-2 记录 Redis timeline/payload，再同步更新 Redis 会话热状态并异步尽力更新 MySQL 会话摘要
+14B. 同时，Gateway-3 的 Redis 订阅循环可能已收到事件，从本机 ClientManager 找 B
+15B. Gateway-3 向 B 的 WebSocket 写二进制消息
+16B. B 网页解码、展示，并发送确认帧
 ```
+
+`14A` 是 Logic 调用协程的后续顺序，`14B` 是另一 Gateway 的并发路径，两者没有全局先后保证。所以 B 可能在 Logic 写 timeline 之前就收到在线通知；真正必须在通知前完成的是 MySQL 消息正文和 B 的 pending 记录。
+
+第 6 步不会信任重试请求新带的 `to/body`，而是使用 `(from_uid, client_msg_id)` 查到的 MySQL 标准记录。为什么还要重新验权？否则 Redis 幂等 Key 过期后，已被拉黑的用户或已退群/被禁言的成员可以反复触发旧消息投递。代价是“已落库但首次投递未完成”的消息，若恢复前权限已被撤销，当前会 fail-closed 拒绝补投；要精确区分“合法未完成投递”与“恶意重放”，需要持久 Outbox/投递状态。
 
 这里的好友关系就是 MySQL 中双方处于可单聊状态的业务授权，不是 Redis 在线状态；第 13 章再学习申请、接受和双向关系表。本章只需记住：JWT 证明“你是 A”，好友校验决定“A 能否给 B 发”。
 
-第 15 步的确认、重试和重连补偿在下一章详细展开。本章先把跨服务器路由讲完整。
+第 `16B` 步的确认、重试和重连补偿在下一章详细展开。本章先把跨服务器路由讲完整。
 
 ## 7. Redis 投递事件里有什么
 

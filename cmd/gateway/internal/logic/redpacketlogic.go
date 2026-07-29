@@ -149,7 +149,7 @@ func (l *RedPacketLogic) Detail(req *types.RedPacketDetailReq) (*types.RedPacket
 
 func (l *RedPacketLogic) validateConversationAccess(uid, targetID, toType, conversationID string) error {
 	if toType == "group" {
-		return l.validateActiveGroupMember(uid, targetID)
+		return l.validateGroupSendPermission(uid, targetID)
 	}
 	if uid == targetID {
 		return errors.New("cannot send red packet to yourself")
@@ -197,6 +197,37 @@ LIMIT 1
 }
 
 func (l *RedPacketLogic) validateActiveGroupMember(uid, groupID string) error {
+	status, _, err := l.loadGroupMembership(uid, groupID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("user is not an active group member")
+	}
+	if err != nil {
+		return err
+	}
+	if status != "active" {
+		return errors.New("user is not an active group member")
+	}
+	return nil
+}
+
+func (l *RedPacketLogic) validateGroupSendPermission(uid, groupID string) error {
+	status, muteUntil, err := l.loadGroupMembership(uid, groupID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("user is not an active group member")
+	}
+	if err != nil {
+		return err
+	}
+	if status != "active" {
+		return errors.New("user is not an active group member")
+	}
+	if muteUntil > time.Now().UnixMilli() {
+		return errors.New("user is muted and cannot create a group red packet")
+	}
+	return nil
+}
+
+func (l *RedPacketLogic) loadGroupMembership(uid, groupID string) (string, int64, error) {
 	var status string
 	var muteUntil int64
 	err := l.svcCtx.DB.QueryRowContext(l.ctx, `
@@ -205,13 +236,7 @@ FROM group_members
 WHERE group_id = ? AND user_id = ?
 LIMIT 1
 `, groupID, uid).Scan(&status, &muteUntil)
-	if err == nil && status == "active" && (muteUntil <= 0 || muteUntil <= time.Now().UnixMilli()) {
-		return nil
-	}
-	if errors.Is(err, sql.ErrNoRows) || status != "active" {
-		return errors.New("user is not an active group member")
-	}
-	return err
+	return status, muteUntil, err
 }
 
 func toRedPacketInfo(packet corelogic.RedPacketInfo) types.RedPacketInfo {

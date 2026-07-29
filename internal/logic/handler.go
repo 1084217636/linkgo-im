@@ -88,6 +88,10 @@ func (h *LogicHandler) PushMessage(ctx context.Context, req *api.PushMsgReq) (*a
 		if existing.TraceId == "" {
 			existing.TraceId = frame.TraceId
 		}
+		if err := h.validateSendPermission(ctx, existing); err != nil {
+			h.releaseClientMessage(ctx, existing)
+			return nil, err
+		}
 		if err := h.deliverPersistedMessage(ctx, existing); err != nil {
 			h.releaseClientMessage(ctx, existing)
 			return nil, err
@@ -115,6 +119,15 @@ func (h *LogicHandler) PushMessage(ctx context.Context, req *api.PushMsgReq) (*a
 	if err != nil {
 		h.releaseClientMessage(ctx, &frame)
 		return nil, err
+	}
+	if !persisted {
+		// saveMessage replaces frame with the canonical DB row when a concurrent
+		// insert wins the client_msg_id unique-key race. Re-authorize that row,
+		// rather than relying on the check performed for the submitted frame.
+		if err := h.validateSendPermission(ctx, &frame); err != nil {
+			h.releaseClientMessage(ctx, &frame)
+			return nil, err
+		}
 	}
 	if err := h.deliverPersistedMessage(ctx, &frame); err != nil {
 		h.releaseClientMessage(ctx, &frame)

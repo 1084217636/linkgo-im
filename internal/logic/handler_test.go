@@ -8,10 +8,12 @@ import (
 	"time"
 
 	"github.com/1084217636/linkgo-im/api"
+	"github.com/1084217636/linkgo-im/internal/delivery"
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/go-sql-driver/mysql"
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestLoginUsesGenericCredentialError(t *testing.T) {
@@ -360,6 +362,209 @@ func TestValidateSendPermissionRequiresNormalFriend(t *testing.T) {
 	}
 }
 
+func TestPushMessageRedisCompletedDuplicateStillShortCircuits(t *testing.T) {
+	ctx := context.Background()
+	rdb, cleanup := newTestRedis(t)
+	defer cleanup.Close()
+
+	frame := &api.WireMessage{
+		From:        "1001",
+		To:          "1002",
+		ToType:      "user",
+		Body:        "hello",
+		ClientMsgId: "client-complete",
+	}
+	if err := rdb.Set(ctx, clientMessageKey(frame.From, frame.ClientMsgId), `{"message_id":"existing"}`, clientMessageIDTTL).Err(); err != nil {
+		t.Fatalf("seed completed idempotency key: %v", err)
+	}
+
+	h := &LogicHandler{Rdb: rdb}
+	if _, err := h.PushMessage(ctx, pushMessageRequest(t, frame)); err != nil {
+		t.Fatalf("PushMessage completed duplicate error = %v, want short-circuit success", err)
+	}
+}
+
+func TestPushMessageDBRecoveryRejectsBlockedFriend(t *testing.T) {
+	ctx := context.Background()
+	rdb, cleanup := newTestRedis(t)
+	defer cleanup.Close()
+
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New error = %v", err)
+	}
+	defer db.Close()
+
+	frame := &api.WireMessage{
+		From:        "1001",
+		To:          "1002",
+		ToType:      "user",
+		Body:        "retry body",
+		ClientMsgId: "client-blocked",
+	}
+	existing := &api.WireMessage{
+		MessageId:   "c2c:1001:1002-7",
+		ClientMsgId: frame.ClientMsgId,
+		SessionId:   "c2c:1001:1002",
+		Seq:         7,
+		From:        frame.From,
+		To:          frame.To,
+		ToType:      frame.ToType,
+		Body:        "persisted body",
+		SentAt:      1710100000000,
+	}
+	expectLoadMessageByClientMsgID(mock, existing)
+	mock.ExpectQuery("SELECT status").
+		WithArgs(existing.From, existing.To).
+		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("blocked"))
+
+	h := &LogicHandler{Rdb: rdb, DB: db, Delivery: &delivery.RedisDelivery{Rdb: rdb}}
+	_, err = h.PushMessage(ctx, pushMessageRequest(t, frame))
+	if err == nil || !strings.Contains(err.Error(), "normal friend") {
+		t.Fatalf("PushMessage error = %v, want blocked-friend rejection", err)
+	}
+	assertClientMessageReservationReleased(t, ctx, rdb, frame.From, frame.ClientMsgId)
+	assertNoPendingDelivery(t, ctx, rdb, existing.To)
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestPushMessageDBRecoveryRejectsInactiveGroupSender(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    string
+		muteUntil int64
+	}{
+		{name: "removed member", status: "removed"},
+		{name: "muted member", status: "active", muteUntil: time.Now().Add(time.Hour).UnixMilli()},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			rdb, cleanup := newTestRedis(t)
+			defer cleanup.Close()
+
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatalf("sqlmock.New error = %v", err)
+			}
+			defer db.Close()
+
+			frame := &api.WireMessage{
+				From:        "1001",
+				To:          "G1",
+				ToType:      "group",
+				Body:        "retry group body",
+				ClientMsgId: "client-group-recovery",
+			}
+			existing := &api.WireMessage{
+				MessageId:   "group:G1-9",
+				ClientMsgId: frame.ClientMsgId,
+				SessionId:   "group:G1",
+				Seq:         9,
+				From:        frame.From,
+				To:          frame.To,
+				ToType:      frame.ToType,
+				Body:        "persisted group body",
+				SentAt:      1710100000000,
+			}
+			expectLoadMessageByClientMsgID(mock, existing)
+			mock.ExpectQuery("SELECT status, mute_until").
+				WithArgs(existing.To, existing.From).
+				WillReturnRows(sqlmock.NewRows([]string{"status", "mute_until"}).AddRow(tc.status, tc.muteUntil))
+
+			dispatcher := &recordingGroupDispatcher{}
+			h := &LogicHandler{Rdb: rdb, DB: db, GroupDispatcher: dispatcher}
+			_, err = h.PushMessage(ctx, pushMessageRequest(t, frame))
+			if err == nil || !strings.Contains(err.Error(), "active group member") {
+				t.Fatalf("PushMessage error = %v, want inactive-group-sender rejection", err)
+			}
+			if dispatcher.calls != 0 {
+				t.Fatalf("group dispatcher calls = %d, want 0", dispatcher.calls)
+			}
+			assertClientMessageReservationReleased(t, ctx, rdb, frame.From, frame.ClientMsgId)
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("sql expectations: %v", err)
+			}
+		})
+	}
+}
+
+func TestPushMessageUniqueRaceReauthorizesLoadedMessage(t *testing.T) {
+	ctx := context.Background()
+	rdb, cleanup := newTestRedis(t)
+	defer cleanup.Close()
+
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New error = %v", err)
+	}
+	defer db.Close()
+
+	frame := &api.WireMessage{
+		From:        "1001",
+		To:          "1002",
+		ToType:      "user",
+		Body:        "racing body",
+		ClientMsgId: "client-race",
+	}
+	mock.ExpectQuery("SELECT message_id, client_msg_id, conversation_id, session_id, seq").
+		WithArgs(frame.From, frame.ClientMsgId).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT status").
+		WithArgs(frame.From, frame.To).
+		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("normal"))
+	mock.ExpectQuery("SELECT COALESCE\\(MAX\\(seq\\), 0\\)").
+		WithArgs("c2c:1001:1002").
+		WillReturnRows(sqlmock.NewRows([]string{"max_seq"}).AddRow(0))
+	dupErr := &mysql.MySQLError{
+		Number:  1062,
+		Message: "Duplicate entry '1001-client-race' for key 'uk_sender_client_msg'",
+	}
+	mock.ExpectExec("INSERT INTO messages").
+		WithArgs(
+			"c2c:1001:1002-1",
+			frame.ClientMsgId,
+			"c2c:1001:1002",
+			"c2c:1001:1002",
+			int64(1),
+			frame.From,
+			frame.To,
+			frame.ToType,
+			frame.Body,
+			sqlmock.AnyArg(),
+		).
+		WillReturnError(dupErr)
+	existing := &api.WireMessage{
+		MessageId:   "c2c:1001:1002-8",
+		ClientMsgId: frame.ClientMsgId,
+		SessionId:   "c2c:1001:1002",
+		Seq:         8,
+		From:        frame.From,
+		To:          frame.To,
+		ToType:      frame.ToType,
+		Body:        "persisted winner",
+		SentAt:      1710100000000,
+	}
+	expectLoadMessageByClientMsgID(mock, existing)
+	mock.ExpectQuery("SELECT status").
+		WithArgs(existing.From, existing.To).
+		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("blocked"))
+
+	h := &LogicHandler{Rdb: rdb, DB: db, Delivery: &delivery.RedisDelivery{Rdb: rdb}}
+	_, err = h.PushMessage(ctx, pushMessageRequest(t, frame))
+	if err == nil || !strings.Contains(err.Error(), "normal friend") {
+		t.Fatalf("PushMessage error = %v, want post-race permission rejection", err)
+	}
+	assertClientMessageReservationReleased(t, ctx, rdb, frame.From, frame.ClientMsgId)
+	assertNoPendingDelivery(t, ctx, rdb, existing.To)
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
 func TestLoadGroupRecipientsFromDBSkipsSender(t *testing.T) {
 	ctx := context.Background()
 	db, mock, err := sqlmock.New()
@@ -397,6 +602,70 @@ func persistedTestFrame() *api.WireMessage {
 		Body:        "hello",
 		SentAt:      1710100000000,
 		MsgType:     api.MsgType_NORMAL,
+	}
+}
+
+type recordingGroupDispatcher struct {
+	calls int
+}
+
+func (d *recordingGroupDispatcher) PublishGroupDispatch(context.Context, *api.WireMessage, []string) error {
+	d.calls++
+	return nil
+}
+
+func pushMessageRequest(t *testing.T, frame *api.WireMessage) *api.PushMsgReq {
+	t.Helper()
+	payload, err := proto.Marshal(frame)
+	if err != nil {
+		t.Fatalf("marshal push frame: %v", err)
+	}
+	return &api.PushMsgReq{UserId: frame.From, Content: payload}
+}
+
+func expectLoadMessageByClientMsgID(mock sqlmock.Sqlmock, frame *api.WireMessage) {
+	mock.ExpectQuery("SELECT message_id, client_msg_id, conversation_id, session_id, seq").
+		WithArgs(frame.From, frame.ClientMsgId).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"message_id",
+			"client_msg_id",
+			"conversation_id",
+			"session_id",
+			"seq",
+			"from_uid",
+			"to_id",
+			"to_type",
+			"content",
+			"create_time",
+		}).AddRow(
+			frame.MessageId,
+			frame.ClientMsgId,
+			frame.SessionId,
+			frame.SessionId,
+			frame.Seq,
+			frame.From,
+			frame.To,
+			frame.ToType,
+			frame.Body,
+			frame.SentAt,
+		))
+}
+
+func assertClientMessageReservationReleased(t *testing.T, ctx context.Context, rdb *redis.Client, uid, clientMsgID string) {
+	t.Helper()
+	if _, err := rdb.Get(ctx, clientMessageKey(uid, clientMsgID)).Result(); err != redis.Nil {
+		t.Fatalf("client message reservation error = %v, want redis.Nil", err)
+	}
+}
+
+func assertNoPendingDelivery(t *testing.T, ctx context.Context, rdb *redis.Client, uid string) {
+	t.Helper()
+	count, err := rdb.ZCard(ctx, "pending_ack:"+uid).Result()
+	if err != nil {
+		t.Fatalf("read pending delivery: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("pending deliveries = %d, want 0", count)
 	}
 }
 
