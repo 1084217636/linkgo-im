@@ -14,7 +14,8 @@
 2. 看懂 String、Hash、Set、ZSet、TTL、Lua 和 Pub/Sub。
 3. 说出 LinkGo 主要 Redis Key 的真实内容。
 4. 解释 Pub/Sub 为什么只能做在线通知。
-5. 说明当前代码支持怎样的 Redis 部署，不支持怎样的 Redis Cluster。
+5. 解释新连接占用路由、旧连接条件续期和条件清理为什么是三个不同操作。
+6. 说明当前代码支持怎样的 Redis 部署，不支持怎样的 Redis Cluster。
 
 ## 1. Redis 是什么
 
@@ -131,7 +132,7 @@ Logic 发布到 im_message_push:gateway-3
 
 Redis 的单条命令通常是原子执行的。例如 `INCR` 可以安全地把一个数字加一。多个步骤需要作为一个整体判断和修改时，项目使用 Lua 脚本。
 
-### 为什么清理路由要用 Lua
+### 为什么路由需要“占用、续期、清理”三种语义
 
 用户快速重连：
 
@@ -140,9 +141,17 @@ Redis 的单条命令通常是原子执行的。例如 `INCR` 可以安全地把
 新连接：gateway-3|new
 ```
 
-如果旧连接关闭时直接 `DEL route:uid`，会把新连接刚写入的位置删掉。
+这里的完整 `routeValue` 同时包含 Gateway 和连接身份，它是一个简化的所有权栅栏。只比较 Gateway ID 不够，因为同一台 Gateway 内也可能先后存在旧、新两条连接。
 
-正确动作是一个不可分割的“比较后删除”：
+三个操作分别是：
+
+1. `ClaimRoute`：新的已认证连接直接把 `route:uid` 写成自己的完整 `routeValue`，有意取代旧路由。
+2. `RefreshRouteIfMatch`：心跳只在 Redis 当前值仍等于自己的 `routeValue` 时续期 route、反向索引和活跃标记。匹配失败说明所有权已转移，旧 WebSocket 会退出，不能靠心跳把新路由覆盖回去。
+3. `ClearRouteIfMatch`：连接结束时只删除仍由自己持有的路由。
+
+如果旧连接心跳时直接重写 `route:uid`，它会抢回新连接的位置；如果关闭时直接 `DEL route:uid`，又会把新路由删掉。
+
+所以续期和清理都必须是不可分割的“比较后修改”。以清理为例：
 
 ```text
 如果 route:uid 仍等于 gateway-1|old
@@ -150,7 +159,9 @@ Redis 的单条命令通常是原子执行的。例如 `INCR` 可以安全地把
 否则不动
 ```
 
-`internal/server/route.go` 的 `clearRouteScript` 在 Redis 内完成这件事。
+`internal/server/route.go` 的 `refreshRouteIfMatchScript` 和 `clearRouteScript` 在 Redis 内完成这两类条件操作。如果在 Go 中先 `GET` 再 `EXPIRE/DEL`，两步之间可能刚好出现新登录，检查结果立即过期。
+
+这是单路由、最新连接获得所有权的模型，不是手机和电脑同时保持独立路由的多端模型。
 
 ### 会话序号为什么用 Lua
 
@@ -266,15 +277,19 @@ redis.NewClient(&redis.Options{Addr: oneAddress})
 
 工程化章节会解释健康检查怎样暂时停止向依赖异常的实例导流。这里先记影响面。
 
-## 代码锚点
+## 本章代码阅读任务
 
-1. `cmd/gateway/internal/svc/servicecontext.go`：Gateway 创建 Redis Client。
-2. `cmd/logic/internal/svc/servicecontext.go`：Logic 连接同一逻辑 Redis。
-3. `internal/server/route.go`：Key 命名、TTL、比较删除 Lua。
-4. `internal/delivery/redis.go`：pending、路由查询和 Pub/Sub。
-5. `internal/server/manager.go`：Gateway 订阅自己的 channel。
-6. `internal/server/sync.go`：timeline 和共享 payload。
-7. `internal/logic/handler.go`：`sessionSeqScript`、`client_msg`。
+| 顺序 | 打开位置 | 这次只看什么 |
+| --- | --- | --- |
+| 1 | `cmd/gateway/internal/svc/servicecontext.go` 与 `cmd/logic/internal/svc/servicecontext.go` 的 `NewServiceContext` | 找到两边都用 `redis.NewClient` 和一个配置地址，确认它是跨进程共享服务 |
+| 2 | `internal/server/route.go` 中的 `RouteKey`、`GatewayUsersKey`、`PendingAckKey`、`SessionTimelineKey` 等 Key 函数 | 把函数返回值按 String、Hash、Set、ZSet 分类，不背全部 Key |
+| 3 | `internal/server/route.go` 的 `BuildRouteValue`、`ClaimRoute`、`RefreshRouteIfMatch`、`ClearRouteIfMatch` | 对比新连接直接占用、旧连接条件续期和条件删除；逐行读两个 Lua 的比较条件 |
+| 4 | `internal/delivery/redis.go` 的 `RedisDelivery.Deliver`、`trackPendingAck` | 看 pending 为什么先于 GET route 和 PUBLISH，并记录发布无订阅者时的 offline 分支 |
+| 5 | `internal/server/manager.go` 的 `ClientManager.SubscribeRedis` | 找到每个 Gateway 订阅自己的 channel，然后回到本机 `GetConn` |
+| 6 | `internal/server/sync.go` 的 `RememberSessionMessage`、`SyncOfflineMessages` | 只看 timeline/payload 是短期补偿，不把它理解成永久历史 |
+| 7 | `internal/logic/handler.go` 顶部 `sessionSeqScript` 与 `reserveClientMessage` | 看 `INCR + PEXPIRE` 和 `client_msg` 预占分别解决顺序与重复 |
+
+看到这个程度就停：给你一个 Redis Key，你能说出数据类型、写入者、读取者、TTL 和丢失后的影响；你也能解释 `ClaimRoute` 与 `RefreshRouteIfMatch` 不能互换。暂时不必学习 Redis 持久化文件、复制协议、Sentinel 选主和 Cluster 槽迁移内部实现。
 
 ## 动手练习
 
@@ -294,13 +309,13 @@ session_timeline:c2c:1001:1002
 
 假设 `PUBLISH` 返回 1。列出它不能证明的两件事。标准答案至少包括“Gateway 已经写 WebSocket”和“B 的客户端已经处理”。
 
-### 练习三：检查路由删除
+### 练习三：检查路由所有权
 
 ```bash
-go test ./internal/server -run 'TestClientManagerRemoveOnlyMatchingSession|TestParseRoute' -v
+go test ./internal/server -run 'TestClientManagerRemoveOnlyMatchingSession|TestParseRoute|TestStaleConnectionCannotRefreshNewerRoute' -v
 ```
 
-再阅读 `clearRouteScript`，用自己的话说出 ARGV 中旧 routeValue 的作用。
+再阅读两段 Lua，用自己的话说明旧 routeValue 为什么既不能续期新路由，也不能删除新路由。
 
 ## 闭卷检查
 
@@ -311,8 +326,29 @@ go test ./internal/server -run 'TestClientManagerRemoveOnlyMatchingSession|TestP
 5. 当前 `ack_idx` 是否只是 message_id 指针？
 6. Pub/Sub 为什么不能做最终消息存储？
 7. `PUBLISH` 返回订阅者数量能证明用户收到吗？
-8. 为什么清理路由要比较 connection identity？
+8. `ClaimRoute`、`RefreshRouteIfMatch`、`ClearRouteIfMatch` 各自的语义是什么？
 9. Pipeline、Redis TxPipeline、MySQL 事务有什么区别？
 10. 当前代码是否原生支持 Sentinel 或 Redis Cluster？
+
+## 动手练习与闭卷检查参考答案
+
+### 动手练习答案
+
+1. `route:1002` 是 String；`gateway_users:gateway-3` 是 Set；`ack_idx:1002` 是 Hash；`pending_ack:1002` 与 `session_timeline:c2c:1001:1002` 是 ZSet。
+2. 返回 1 只表示发布当时有一个 Redis 订阅客户端。它不能证明 Gateway 已解析并写 WebSocket，也不能证明 B 页面解码、展示或 ACK。
+3. 旧 routeValue 与 Redis 当前值不相等时，`refreshRouteIfMatchScript` 立即返回 0，不执行过期时间刷新；`clearRouteScript` 也不执行删除。比较和修改在同一次 Lua 执行中完成，因此旧连接检查之后不会插入一个竞态窗口去覆盖或删除新连接。
+
+### 闭卷检查答案
+
+1. map 只在一个 Go 进程内；Redis 是独立网络服务，多实例可共享，但访问会有网络故障和外部依赖成本。
+2. Gateway 可能突然宕机而无法清理。TTL 让旧路由最终自动失效，但不能保证过期前每一刻都准确。
+3. Set 成员无序且不重复；ZSet 还给成员一个 score，可按时间或 seq 排序、范围查询。
+4. `pending_ack` 用 ZSet 保存待确认 message_id 和投递时间；`ack_idx` 用 Hash 保存 message_id 对应的 Base64 完整 payload。
+5. 不是。当前它保存 payload 副本，不只是指向共享 `message_payload` 的 ID。
+6. 订阅断线期间事件不会保留或重放，也没有永久查询模型；消息事实必须在 MySQL，短期补偿另靠 pending/timeline。
+7. 不能。它只报告订阅 Redis channel 的客户端数量。
+8. `ClaimRoute` 让新认证连接覆盖旧位置；`RefreshRouteIfMatch` 只为仍持有相同 routeValue 的连接续期；`ClearRouteIfMatch` 只删除仍属于自己的路由。
+9. Pipeline 主要批量发送以减少网络往返；Redis TxPipeline 用 MULTI/EXEC 让命令连续执行，但没有通用业务回滚；MySQL 事务提供关系数据的一致提交、回滚和隔离。三者都不能让 Redis 与 MySQL 自动成为一个分布式事务。
+10. 不支持。当前是单地址 `redis.Client`，没有 `NewFailoverClient`、`ClusterClient`，多 Key Lua 也未设计 Cluster 同槽规则。
 
 下一步：[10 跨 Gateway 单聊](10_MULTI_GATEWAY_CHAT.md)

@@ -14,7 +14,7 @@
 2. 红包主表和领取明细表分别保存什么？
 3. `SELECT ... FOR UPDATE` 为什么能防止并发超发？
 4. 有行锁后为什么仍然需要唯一索引？
-5. 顺序重试和真正并发的重复领取，当前响应为什么不同？
+5. 顺序重试和真正并发的重复领取，当前怎样返回同一结果？
 6. 为什么当前红包不能称为资金系统？
 
 ## 1. 先定义当前功能边界
@@ -253,7 +253,7 @@ Gateway 把它转换成正常业务响应：
 
 对于前一次请求已经提交、下一次请求在事务外预查询命中的顺序重试，客户端能看到同一个结果，而不是再领一份。
 
-但两个相同用户请求真正并发时，二者可能都在预查询阶段看不到记录。后拿到锁的请求会触发唯一键冲突，当前 Service 返回 `ErrRedPacketAlreadyClaimed` 但没有携带原 claim，Gateway 会返回错误，而不会再次查询并转换成上面的正常 `already_claimed` 响应。这是响应语义缺口；数据库仍能保证不会多领。
+两个相同用户请求真正并发时，二者可能都在事务外预查询阶段看不到记录。后续请求插入领取明细若触发 MySQL 1062 重复键，Service 会先回滚当前事务，再从已提交的 `red_packet_claims` 读取胜出记录，连同 `ErrRedPacketAlreadyClaimed` 返回。Gateway 因而仍能转换成同一个正常 `already_claimed` 响应。数据库唯一索引负责阻止多领，回读则让并发重复与顺序重试的响应语义一致。
 
 这里的幂等键不是额外的 request ID，而是业务唯一组合：
 
@@ -308,16 +308,17 @@ red_packet_id + user_id
 
 领取时会比较 `expires_at`。过期红包会拒绝领取。
 
-但是当前代码在事务内执行 `markRedPacketExpired` 后立即返回错误，defer 随后回滚事务，所以这个状态更新不会真正提交。也没有后台定时任务批量把 active 改成 expired。
+Claim 在事务内观察到过期时，会执行 `markRedPacketExpired` 并显式提交，然后返回 `ErrRedPacketExpired`。若主行剩余数已经为零但状态仍是 active，也会修正为 finished 并提交。
 
-结果是：
+当前边界是：
 
 - 过期后 Claim 会被拒绝；
-- 数据库 `status` 可能仍显示 active；
+- 至少有一次 Claim 观察到过期后，数据库 `status` 会提交为 expired；
+- 没有人再调用 Claim 时，没有后台定时任务主动扫描，status 仍可能暂时是 active；
 - 没有自动退款，因为本来就没有钱包扣款；
 - 详情接口本身不会根据当前时间动态改写状态。
 
-这是需要修复的真实缺口，不能说已经完成“24 小时过期退款闭环”。
+因此可以说领取路径会持久化状态修正，不能说已经完成“24 小时定时过期退款闭环”。
 
 ## 13. 热点红包为什么会变慢
 
@@ -349,7 +350,9 @@ red_packet_id + user_id
 - 100 分 3 份分配为 34、33、33；
 - 创建 SQL 的初始值；
 - Claim 的 `BEGIN → FOR UPDATE → INSERT → UPDATE → COMMIT` 顺序；
-- 事务外预查询已存在 claim 时返回已有结果；这不覆盖两个并发请求同时预查询 miss 后的唯一键冲突响应。
+- 事务外预查询已存在 claim 时返回已有结果；
+- 并发重复触发唯一键冲突时，回滚并回读已有领取结果；
+- 领取时观察到 expired 或剩余为零时，状态修正会提交。
 
 这些是单元级 SQL 行为证据，不是真实 MySQL 上几百 goroutine 并发抢红包的集成压测。
 
@@ -371,18 +374,20 @@ red_packet_id + user_id
 
 可以这样说：
 
-> 我实现的是等额红包并发业务模型，不是真实支付系统。金额使用 int64 的分，主表保存总额和剩余值，领取表用 red_packet_id + user_id 唯一索引。领取事务在 Read Committed 下 SELECT FOR UPDATE 锁住红包主行，插入领取明细后条件扣减剩余金额和份数，最后一份把状态改为 finished；行锁保护总量，唯一索引保证同一用户不会多领。顺序重试预查询命中时会返回原领取结果，但真正并发的重复请求在唯一键冲突后目前返回业务错误，这是待完善边界。当前没有钱包扣款、入账、退款、流水和对账，过期状态提交也有待修复，前端只是普通文本引用红包 ID，所以我不会把它描述成资金系统。
+> 我实现的是等额红包并发业务模型，不是真实支付系统。金额使用 int64 的分，主表保存总额和剩余值，领取表用 red_packet_id + user_id 唯一索引。领取事务在 Read Committed 下 SELECT FOR UPDATE 锁住红包主行，插入领取明细后条件扣减剩余金额和份数，最后一份把状态改为 finished；行锁保护总量，唯一索引保证同一用户不会多领。顺序重试会返回原领取结果，并发重复在唯一键冲突后也会回滚并回读同一结果。领取路径观察到过期或空余额时会提交状态修正，但没有定时扫描、钱包扣款、入账、退款、流水和对账；前端也只是普通文本引用红包 ID，所以我不会把它描述成资金系统。
 
-## 代码锚点
+## 本章代码阅读任务
 
-按顺序阅读：
+| 顺序 | 打开位置 | 这次只看什么 |
+| --- | --- | --- |
+| 1 | `sql/init.sql` 的 `red_packets`、`red_packet_claims` | 圈出整数金额、remaining 字段、状态和 `UNIQUE(red_packet_id,user_id)` |
+| 2 | `cmd/gateway/internal/handler/redpackethandler.go` 的三个 Handler 与 `cmd/gateway/internal/logic/redpacketlogic.go` 的 `Create`、`Claim`、`Detail` | 找到 JWT uid、单聊/群聊资源授权，以及 `ErrRedPacketAlreadyClaimed` 到正常响应的转换 |
+| 3 | `internal/logic/redpacket.go` 的 `RedPacketService`、`Create`、`Claim`、`Detail`、`nextEqualClaimAmount` | 对 Claim 逐行标注事务外幂等查询、Begin、FOR UPDATE、INSERT claim、条件 UPDATE、Commit |
+| 4 | 同文件 `Claim` 的 duplicate-key、expired、remaining=0 三个分支 | 确认重复键先回滚再回读，expired/finished 状态修正显式 Commit |
+| 5 | `public/index.html` 的 `createRedPacket()`、`claimRedPacket()`、`sendRedPacketNotice()` | 确认页面发的是普通文本提示，不存在结构化红包 WebSocket 消息类型 |
+| 6 | `internal/logic/redpacket_test.go` 的六个 `TestRedPacket...` | 分别写出 SQL mock 覆盖的创建、锁定领取、两种重复和两种状态提交，不把它当真实并发压测 |
 
-1. `sql/init.sql`：`red_packets` 与 `red_packet_claims`。
-2. `cmd/gateway/internal/logic/redpacketlogic.go`：身份、会话权限和响应转换。
-3. `internal/logic/redpacket.go`：Create、Claim、Detail 和分配算法。
-4. `cmd/gateway/internal/handler/redpackethandler.go`：HTTP 入口。
-5. `public/index.html`：搜索 `createRedPacket`、`claimRedPacket`、`sendRedPacketNotice`。
-6. `internal/logic/redpacket_test.go`：当前测试到底验证了什么。
+看到这个程度就停：你能闭卷画出 Claim 事务，并能分别说明行锁、唯一索引、回滚回读和状态提交的作用。暂时不必学习 Redis 抢红包、钱包总账、支付清结算、风控和真实压测调优。
 
 ## 动手练习
 
@@ -405,12 +410,33 @@ COMMIT
 3. 100 分 3 份当前怎样分配？
 4. `FOR UPDATE` 的锁保持到什么时候？
 5. 行锁与唯一索引分别保护什么？
-6. 哪种顺序重试会返回原金额？并发唯一键冲突为什么目前只返回错误？
+6. 顺序重试与并发唯一键冲突分别怎样返回原金额？
 7. 当前哪些用户可以领取单聊红包？
-8. 当前过期状态处理有什么缺口？
+8. 当前过期状态怎样提交，还缺少什么？
 9. 为什么不能把项目红包写成真实支付系统？
 10. 当前测试是不是多线程真实 MySQL 压测？
 
 十个问题能闭卷讲清楚后，再进入第 15 章。
+
+## 动手练习与闭卷检查参考答案
+
+### 动手练习答案
+
+C 先 BeginTx 并通过 `FOR UPDATE` 获得红包主行锁；D 的相同查询等待。C 看到最后一份，插入 claim、把 remaining 扣为 0 并将 status 改 finished，Commit 后释放锁。D 随后读到 finished 或 remaining=0，提交必要的状态修正后返回不能领取，不会再插入一份。
+
+同一用户两个并发请求也先由红包主行锁串行读取和扣减；如果两个请求都在事务外幂等查询 miss，数据库唯一索引在第二次 `INSERT red_packet_claims` 阻止重复。Service 捕获 1062 后回滚，再读取胜出的 claim 返回同一金额。
+
+### 闭卷检查答案
+
+1. 二进制浮点不能精确表示所有十进制金额，累计会出现舍入误差；整数分让加减与守恒直接可检验。
+2. 主表保存红包总量、剩余和状态；领取表保存每个用户最终领取金额与时间。
+3. base 为 33，remainder 为 1，领取顺序得到 34、33、33 分，总和 100。
+4. 从 `SELECT ... FOR UPDATE` 获锁开始，直到当前事务 Commit 或 Rollback。
+5. 行锁串行化同一红包剩余量更新；唯一索引保证同一用户对同一红包最多一条 claim。
+6. 前一次已提交时，事务外查询直接返回原 claim；真正并发触发 1062 时，当前事务回滚后再查已提交 claim，也返回原金额和 already_claimed 状态。
+7. 单聊会话 ID 中任一参与者都可领取，包括发送者本人；当前没有只允许接收方的规则。
+8. Claim 观察到过期会把 status 改 expired 并 Commit，观察到剩余为零也会提交 finished；缺少后台定时扫描、详情动态修正和钱包退款任务。
+9. 当前没有余额扣款、入账、资金流水、退款、对账、风控和支付审计，只是红包业务状态与并发约束模型。
+10. 不是。测试使用 sqlmock 验证 SQL 顺序和分支，没有启动真实 MySQL，也没有几百 goroutine 争抢同一行的集成压测。
 
 下一步：[15 AI 虚拟好友](15_AI_BOT.md)

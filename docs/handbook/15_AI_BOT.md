@@ -390,20 +390,20 @@ Ask 保存 question 时也执行这类基础替换。
 
 > 我把 AI 作为系统用户 9001 接入普通单聊。用户问题先按普通消息完成权限校验、seq 和 MySQL 落库，之后 Logic 启动后台 goroutine调用 AskService；AskService 对固定项目文档做关键词 topK 召回，再调用 mock 或 OpenAI-compatible provider。回复重新调用 Logic.PushMessage，所以也有普通消息的 message_id、seq、历史和 ACK。Provider 层有 timeout、可选 mock fallback、调用结果与 attempt 审计。群总结当前是独立 HTTP 接口，会校验群成员并读取 MySQL 历史。我要明确两个边界：默认演示是 mock，检索不是向量 RAG；goroutine 也不是持久 Worker，群聊 @AI 回写、任务恢复、成本控制和完整 DLP 尚未实现。
 
-## 代码锚点
+## 本章代码阅读任务
 
-按顺序阅读：
+| 顺序 | 打开位置 | 这次只看什么 |
+| --- | --- | --- |
+| 1 | `internal/ai/provider.go` 的 `Provider`、`ProviderOptions`、`NewProviderWithOptions` | 写出业务只依赖的两个方法，并看配置怎样选择 mock、外部 provider 和 fallback 包装 |
+| 2 | `internal/ai/mock_provider.go` 的 `Summarize`、`Answer`、`extractMockTodos`、`extractMockRisks` | 确认 mock 是确定性规则，不把输出当大模型效果 |
+| 3 | `internal/ai/knowledge_base.go` 的 `NewKnowledgeBase`、`Search`、`extractSearchTerms`、`scoreKnowledgeDocument` | 跟一个中文问题完成分段、词项、字符串计分和 topK，不寻找 embedding |
+| 4 | `internal/ai/ask_service.go` 的 `Ask`、`saveResult` 与 `internal/ai/audit.go` 的 `saveProviderAttempts` | 按顺序看检索、provider、`ai_qa_records` 和每次 provider attempt 落库 |
+| 5 | `internal/ai/openai_provider.go` 的 `Answer` 及请求结构，再看 `internal/ai/fallback_provider.go` 的 `Answer` | 找到 HTTP timeout、Bearer Key、primary 失败和 mock 降级后的 provider 名称 |
+| 6 | `internal/logic/bot.go` 的 `triggerBotResponse` 与 `cmd/logic/internal/svc/ai_bot_responder.go` 的 `BuildReply` | 确认 goroutine 在原消息完成后启动，回复重新构造普通 `WireMessage` 并再次进 `PushMessage` |
+| 7 | `internal/ai/summary_service.go` 的 `Generate`、`validateActiveGroupMember`、`loadMessages`、`saveResult` | 看群权限、最近消息顺序、结果和调用日志，确认它是 HTTP 业务而非群内命令 |
+| 8 | `cmd/gateway/internal/logic/aiasklogic.go` 的 `Ask`、`aisummarylogic.go` 的 `Generate` 与页面 `openAIChat()` | 对照两个 HTTP 入口和网页当前实际提供的 AI 私聊入口 |
 
-1. `internal/ai/provider.go`：Provider 接口和配置选择。
-2. `internal/ai/mock_provider.go`：mock 实际怎样生成结果。
-3. `internal/ai/knowledge_base.go`：关键词检索算法。
-4. `internal/ai/ask_service.go`：问答、sources 和落库。
-5. `internal/ai/summary_service.go`：群权限、历史读取和总结落库。
-6. `internal/ai/openai_provider.go`：外部 HTTP 请求。
-7. `internal/ai/fallback_provider.go`：降级路径。
-8. `internal/logic/bot.go` 与 `cmd/logic/internal/svc/ai_bot_responder.go`：虚拟好友回写。
-9. `cmd/gateway/internal/logic/aiasklogic.go` 与 `aisummarylogic.go`：HTTP 入口逻辑。
-10. `public/index.html`：搜索 `openAIChat`。
+看到这个程度就停：你能画出 1001 到 9001 的原问题和 9001 到 1001 的回复两条普通消息，并能指出 provider 调用夹在哪里；也能明确说当前检索不是向量 RAG，goroutine 不是持久 Worker。暂时不必学习模型训练、Transformer 数学、向量数据库部署和多 Agent 框架。
 
 ## 动手练习
 
@@ -432,5 +432,26 @@ AI 回复： 9001 → 1001
 10. AI provider 故障为什么不应该回滚用户原消息？
 
 十个问题能闭卷讲清楚后，再进入第 16 章。
+
+## 动手练习与闭卷检查参考答案
+
+### 动手练习答案
+
+第一条是 1001 构造普通 WireMessage，经 `LogicHandler.PushMessage` 得到 `c2c:1001:9001` 的 seq N，写入 MySQL 并投递。原流程完成后 `triggerBotResponse` 启动 goroutine；`BuildReply` 调 AskService 和 provider，构造 From=9001、To=1001、没有服务端 ID 的回复。它第二次调用 `PushMessage`，分配 seq N+1，再写一条 MySQL 消息并投递给 1001。
+
+若 primary 的 HTTP client 先超时而外层 context 仍有效，FallbackProvider 调 mock，用户看到 mock 结果，provider 名类似 `deepseek:fallback:mock`；`ai_qa_records` 保存最终成功结果，`ai_provider_attempt_logs` 应有 primary error 和 mock success 两次 attempt。若外层业务 context 已整体到期，fallback 也会看到取消并可能失败，此时问答记录为 error，不能承诺一定降级成功。
+
+### 闭卷检查答案
+
+1. 业务层只依赖 `Answer/Summarize`，模型厂商的 HTTP 格式和选择被隔离，测试可注入 mock；代价是厂商特有流式和工具调用没有暴露。
+2. 它离线、无 Key、无费用、结果稳定，适合验证权限、检索和落库；规则拼接不代表大模型语义质量。
+3. Markdown 启动时分段进内存，对问题提取字符串和中文相邻片段，在 title/path/content 计分后取 topK。没有 embedding、向量相似度、向量库和 reranker。
+4. 回复再次走普通消息链路，因而复用身份、好友权限、seq、MySQL 历史、RedisDelivery 和 ACK，而不是绕过 IM 直接写页面。
+5. goroutine 只在当前 Logic 内存中，没有任务持久化、claim、lease 和失败恢复；进程崩溃会丢失正在生成的回复。
+6. 是独立 `/api/v1/ai/group-summary` HTTP 接口，不是群内 `@AI` 或 `/summary` 普通消息命令。
+7. 用户和排障人员需要知道结果是否由真实 provider 还是 mock 降级生成，否则质量、成本和故障判断会失真。
+8. `ai_qa_records` 保存问答与 sources；`ai_summary_records` 保存群总结覆盖范围和结果；`ai_call_logs` 保存群总结业务调用耗时状态；`ai_provider_attempt_logs` 保存 primary/fallback 每次尝试。
+9. 只对部分 Token、Key、password、secret 文本做正则替换，没有外发前身份证/手机号识别、租户策略、prompt injection 防护和模型数据保留控制。
+10. 用户原消息是已经通过校验并应持久保存的聊天事实。模型慢或失败不应让它回滚，也不应长期占住 Gateway/Logic 的普通消息热路径。
 
 下一步：[16 安全、日志、指标和故障](16_SECURITY_OBSERVABILITY.md)

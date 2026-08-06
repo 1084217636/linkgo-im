@@ -48,7 +48,6 @@ user:conversation:read:<uid>
 失败处理：
 
 ```text
-用户不存在 -> user not found
 未知用户、密码错误或账号禁用 -> invalid credentials
 会话列表失败 -> 记录日志，不影响登录主流程
 ```
@@ -68,12 +67,14 @@ gorilla/websocket Upgrade
   ↓
 server.Manager.Add(userID, conn)
   ↓
-server.RefreshRoute 写 route:<uid>
+server.ClaimRoute 让新认证连接写 route:<uid>
   ↓
 server.SyncOfflineMessages 回放 pending / timeline
   ↓
 server.StartClientLoop 读取客户端消息
 ```
+
+心跳使用 `RefreshRouteIfMatch`，只续期仍等于本连接完整 routeValue 的路由；defer 使用 `ClearRouteIfMatch`，旧连接不能覆盖或删除新连接。
 
 涉及 Redis：
 
@@ -132,6 +133,8 @@ trackPendingAck
 GET route:<target_uid>
   ↓
 Publish im_message_push:<gatewayId> 或 MarkOffline
+  ↓
+Logic 调用返回后，Gateway Worker 向发送端写 MESSAGE_ACCEPTED 或 MESSAGE_REJECTED
 ```
 
 涉及表：
@@ -189,17 +192,11 @@ server.StartClientLoop
   ↓
 server.AckMessage(uid, ack_message_id)
   ↓
-HGET ack_idx:<uid>
+HGET ack_idx:<uid> 解析 session_id / seq 并推进 Redis read_seq
   ↓
 MarkConversationRead
   ↓
-ZREM pending_ack:<uid>
-  ↓
-ZREM offline_msg:<uid>
-  ↓
-HDEL ack_idx:<uid>
-  ↓
-HDEL ack_retry:<uid>
+Lua 原子清理 pending_ack / offline_msg / ack_idx / ack_retry
 ```
 
 ACK 超时重试：

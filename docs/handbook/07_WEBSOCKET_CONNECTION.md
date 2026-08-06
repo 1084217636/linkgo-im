@@ -14,7 +14,8 @@
 2. 说清 WebSocket 握手、双向通信、帧和心跳。
 3. 沿代码找到连接创建、登记、读循环和清理位置。
 4. 说明当前一个 Gateway 怎样保存本机连接。
-5. 说出浏览器客户端的真实重连与多端边界。
+5. 解释为什么并发写需要互斥锁，慢连接为什么还需要写超时。
+6. 说出浏览器客户端的真实重连与多端边界。
 
 ## 1. HTTP 为什么不够方便
 
@@ -106,9 +107,10 @@ http://127.0.0.1:8088
 
 ```go
 type ClientConn struct {
-    Conn      *websocket.Conn
-    SessionID string
-    writeMu   sync.Mutex
+    Conn         *websocket.Conn
+    SessionID    string
+    WriteTimeout time.Duration
+    writeMu      sync.Mutex
 }
 ```
 
@@ -126,11 +128,11 @@ user_id → *ClientConn
 
 ## 6. 为什么写连接需要互斥锁
 
-心跳回复、实时消息和错误帧都可能尝试向同一 WebSocket 写数据。`ClientConn.WriteBinary` 使用 `writeMu` 把写操作串行化。
+心跳回复、实时消息和错误帧都可能尝试向同一 WebSocket 写数据。`ClientConn.WriteBinary` 使用 `writeMu` 把写操作串行化，并在每次写入前设置默认 5 秒写 deadline。
 
 互斥锁（mutex）保证同一时刻只有一个 goroutine 进入受保护代码。这里不是为了让业务消息全局有序，而是避免多个 goroutine 并发写同一连接。
 
-当前读操作集中在一个 `StartClientLoop` 中，写操作统一经过 `WriteBinary`。
+当前读操作集中在一个 `StartClientLoop` 中，写操作统一经过 `WriteBinary`。如果只加锁不设超时，一个长时间无法接收数据的客户端可能让写操作一直占有锁，连带阻塞后续心跳回复、实时消息和回放。写超时让失效连接尽快退出；代价是在非常慢的网络上也可能主动断开。5 秒是当前工程默认值，不是经过生产 SLO 校准的结论。
 
 ## 7. 读循环做什么
 
@@ -158,6 +160,8 @@ user_id → *ClientConn
 ```
 
 如果网页超过 45 秒没有收到 PONG，会主动关闭 WebSocket。服务端默认路由 TTL 和读取期限是 75 秒，只有收到心跳帧时才延长读取 deadline。
+
+心跳还会续期这条连接对应的共享路由，但续期前必须确认 Redis 中仍然是同一个 `gateway_id|connection_id`。如果同一用户已在另一台 Gateway 登录，旧连接的心跳不能把新路由改回去，服务端会结束这条旧连接。第 09、10 章会解释这个路由所有权检查。
 
 TCP 层也有保活机制，但应用心跳还能携带业务进度，并让项目按自己的时间要求判断失活。
 
@@ -203,16 +207,18 @@ user_id → 多个 device_id/connection_id → 各自 Gateway
 
 并分别维护推送、ACK 和清理。这个模型当前没有实现。
 
-## 代码锚点
+## 本章代码阅读任务
 
-按顺序阅读：
+| 顺序 | 打开位置 | 这次只看什么 |
+| --- | --- | --- |
+| 1 | `cmd/gateway/internal/handler/routes.go` 中注册 `/ws` 的 Route | 写下中间件顺序，确认认证和限流发生在 Handler 前 |
+| 2 | `cmd/gateway/internal/middleware/authmiddleware.go` 的 `Handle` | 找到查询参数 Token 解析和 uid 写入 Context 的位置 |
+| 3 | `cmd/gateway/internal/handler/websockethandler.go` 的 `WebSocketHandler`、`webSocketOriginAllowed`、`authorizeReplaySession` | 按源码顺序看 Origin、回放授权、Logic 客户端、Upgrade、`ClientConn`、`ClaimRoute` 和 defer 清理 |
+| 4 | `internal/server/manager.go` 的 `ClientConn`、`ClientManager`、`NewClientConn`、`Add`、`Remove`、`WriteBinary` | 圈出 `SessionID`、`writeMu`、写 deadline 和 `CompareAndDelete` |
+| 5 | `internal/server/client.go` 的 `StartClientLoop` | 只区分 ACK、HEARTBEAT 和普通消息三个分支，并找到 64 KiB 读取限制 |
+| 6 | `public/index.html` 的 `connectWebSocket()`、`startHeartbeat()`、`encodeWireMessage()` | 对照浏览器建连、20 秒心跳和二进制编码 |
 
-1. `cmd/gateway/internal/handler/routes.go`：`/ws` 的中间件和 Handler。
-2. `cmd/gateway/internal/middleware/authmiddleware.go`：握手认证。
-3. `cmd/gateway/internal/handler/websockethandler.go`：Origin、Upgrade、登记与清理。
-4. `internal/server/manager.go`：`ClientConn`、`ClientManager.Add/Remove/GetConn`。
-5. `internal/server/client.go`：`StartClientLoop`。
-6. `public/index.html`：`connectWebSocket`、`startHeartbeat`、`encodeWireMessage`。
+看到这个程度就停：你能从 `/ws?token=...` 讲到本机 `ClientManager` 登记，再讲到读循环退出后的条件清理；也能解释 `ClientConn.SessionID` 是连接身份。暂时不必读 WebSocket 帧协议 RFC、gorilla/websocket 内部实现和完整 Protobuf 编码算法。
 
 ## 动手练习
 
@@ -248,5 +254,26 @@ go test ./cmd/gateway/internal/handler -run 'TestWebSocketOriginAllowed|TestReje
 8. 为什么旧连接清理不能直接删除 user_id？
 9. 当前网页是否实现自动退避重连？
 10. 当前是否支持同账号多设备并存？
+
+## 动手练习与闭卷检查参考答案
+
+### 动手练习答案
+
+1. 顺序是 JWT 中间件、WebSocket 限流、Handler 内 Origin、可选会话回放授权、取得 Logic 客户端、Upgrade。列出的检查都在 Upgrade 前完成；Upgrade 后才登记连接和启动读循环。
+2. 测试先把 `old` 加入 uid，再用 `new` 替换，最后让旧连接执行 `Remove`。普通 `Delete(uid)` 会把新连接一起删掉；`CompareAndDelete(uid, old)` 发现当前值已是 `new`，因此保留新连接。
+3. 配置白名单中的 scheme、host、port 精确匹配时允许；未列出的、相似恶意域名、scheme 或 port 不同、格式错误时拒绝。缺少 Origin 默认拒绝，只有 `allowMissingOrigin=true` 才允许受信任非浏览器客户端继续认证。
+
+### 闭卷检查答案
+
+1. 登录 HTTP 返回后请求已经结束，只得到 JWT；轮询会产生空请求与延迟，SSE 主要是单向下行，WebSocket 在一条长连接上允许双方持续发消息和心跳，但增加连接状态管理成本。
+2. JWT、限流、Origin、可选回放资源授权、Logic 客户端存在性检查。JWT 证明 uid 身份；资源授权证明该 uid 可以读取指定单聊或群 timeline。
+3. 限制哪些网页来源可以借浏览器建立连接，降低跨站 WebSocket 滥用；它不能替代 JWT。
+4. 不是。它是这一次 WebSocket 连接的随机身份，用来区分同 uid 的旧、新连接。
+5. 保存在当前 Gateway 进程的 `ClientManager` 内存中，其他 Gateway 不能直接读取。
+6. 心跳回复、实时投递和结果帧可能由不同 goroutine 写同一 socket；mutex 把写操作串行化，写 deadline 则避免慢连接长期占锁。
+7. 网页每 20 秒发送心跳，45 秒未收到 PONG 会主动关闭。
+8. uid 可能已经由新连接占用。旧连接只能在当前 map 值仍是自己时删除，否则会误伤新连接。
+9. 没有。当前只有手动“重连 WS”，`onclose` 不执行指数退避自动重连。
+10. 不支持。uid 在本机连接表和 Redis route 中都是单值，新连接替换旧位置。
 
 下一步：[08 先看单台 Gateway 的单聊](08_SINGLE_GATEWAY_CHAT.md)

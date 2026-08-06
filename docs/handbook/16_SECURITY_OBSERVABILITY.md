@@ -173,13 +173,18 @@ Go 代码在事件发生时更新 Counter/Gauge/Histogram
 
 例如 Redis 不可用：在线路由、pending 和 Pub/Sub 受影响；已经提交到 MySQL 的历史仍在。Gateway readiness 可以失败以停止接收新流量，Redis 恢复后客户端重连并进行现有补偿。不能说“完全无影响”。
 
-## 代码锚点
+## 本章代码阅读任务
 
-- `internal/middleware/`：JWT 等通用校验。
-- `cmd/gateway/internal/middleware/`：Gateway HTTP 中间件。
-- `internal/metrics/`：指标定义。
-- `internal/health/`：健康检查辅助。
-- `deploy/observability/`：Prometheus、Grafana 和告警配置。
+| 顺序 | 打开位置 | 这次只看什么 |
+| --- | --- | --- |
+| 1 | `internal/middleware/auth.go` 的 `GenerateToken`、`ParseToken` 与 `cmd/gateway/internal/middleware/authmiddleware.go` 的 `Handle` | 看签名、过期和 uid Context，列出 JWT 不能替代的资源授权 |
+| 2 | `internal/middleware/ratelimit.go` 的 `TokenBucketLimiter`、`Allow`，再看 `cmd/gateway/internal/middleware/ratelimitmiddleware.go` | 找到按 key 分桶、补充令牌和拒绝入口，确认状态只在单 Gateway 内存 |
+| 3 | `cmd/gateway/internal/handler/websockethandler.go` 的 `webSocketOriginAllowed`、`authorizeReplaySession` | 分别写出来源校验与资源授权拦截的威胁，不把两者混成 JWT |
+| 4 | `internal/health/health.go` 的 `LiveHandler`、`ReadyHandler` 与 `cmd/gateway/internal/handler/routes.go` 的三项 readiness check | 确认 live 不检查外部依赖，ready 逐项检查 Logic、Redis、MySQL |
+| 5 | `internal/metrics/metrics.go` 中 `WSConnections`、`PushQueueDepth`、`PushQueueSubmissions`、`PushProcessingLatencySeconds` 与 `Handler` | 为每项写 Counter/Gauge/Histogram 类型、更新位置和一个不能放进 label 的高基数字段 |
+| 6 | `deploy/observability/prometheus.yml` 与 `deploy/observability/rules/linkgo-alerts.yml` | 找到 scrape target、queue full 和 Kafka 失败规则；确认仓库没有通知通道配置 |
+
+看到这个程度就停：给出一个安全或故障问题时，你能指出入口拦截、日志关联 ID、指标、探针和仍未覆盖的边界。暂时不必搭 Loki/Grafana 集群、实现 OpenTelemetry 全链路追踪或设计公司统一 IAM。
 
 ## 动手练习
 
@@ -193,5 +198,20 @@ Go 代码在事件发生时更新 Counter/Gauge/Histogram
 2. 日志和指标分别适合解决什么问题？
 3. healthz 与 readyz 有何区别？
 4. Redis 故障时哪些数据仍在，哪些能力受影响？
+
+## 动手练习与闭卷检查参考答案
+
+### 动手练习答案
+
+1. `/healthz` 证明 Gateway 进程能响应；`/readyz` 展示 Logic、Redis、MySQL 是否适合接流量；`/metrics` 输出 Prometheus 文本时间序列。三者都不等于端到端聊天测试。
+2. 先从 Gateway 接收日志按 `client_msg_id` 或时间找到 `trace_id`；再到 Logic 的持久化/投递日志找 `message_id`。若某一步没有携带字段，应记录为可观测性缺口，不能靠猜测补链路。
+3. Redis 暂停后，Gateway `ReadyHandler` 中 `Rdb.Ping` 失败，`/readyz` 应返回失败并指出 Redis 检查；恢复后再次 Ping 成功，readiness 恢复。`/healthz` 不应因为 Redis 抖动就要求重启进程。
+
+### 闭卷检查答案
+
+1. JWT 只能证明请求者 uid，不能证明该 uid 属于某个群或可读某个 session；群成员和会话参与者检查是资源级授权。
+2. 日志保存一次具体事件和高基数关联字段，适合追单条失败；指标聚合次数、当前值和耗时趋势，适合发现整体异常和告警。
+3. healthz 判断进程活着；readyz 判断实例当前是否适合接新流量，可以检查关键依赖。依赖抖动通常不应放进 liveness 造成重启风暴。
+4. 已提交的 MySQL 消息、账号和关系仍在；在线 route、seq 分配、幂等预占、pending/ACK 重试、短期 timeline、Pub/Sub 和最近会话缓存受影响，当前实时发送会失败而不是无缝退化到 MySQL。
 
 下一步：[17 Docker 与 GitHub Actions](17_DOCKER_AND_CI.md)

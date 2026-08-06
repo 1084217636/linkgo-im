@@ -106,15 +106,16 @@ curl http://127.0.0.1:8090/healthz
 → 页面更新状态
 ```
 
-## 代码锚点
+## 本章代码阅读任务
 
-按顺序阅读：
+| 顺序 | 打开位置 | 这次只看什么 |
+| --- | --- | --- |
+| 1 | `cmd/gateway/internal/handler/routes.go` 的 `RegisterHandlers` | 找到 `/healthz`、`/readyz` 和带 `/api/v1` 前缀的 `/login`，看方法与 Handler 怎样配对 |
+| 2 | `internal/health/health.go` 的 `LiveHandler`、`ReadyHandler` | 比较只返回存活与逐项执行依赖检查的差异 |
+| 3 | `cmd/gateway/internal/handler/loginhandler.go` 的 `LoginHandler` | 只看 JSON 怎样进入 `types.LoginReq`，以及结果怎样写回 HTTP |
+| 4 | `public/index.html` 的 `apiFetch()` 与 `login()` | 找到 `POST /api/v1/login`、请求体和页面处理响应的位置 |
 
-1. `cmd/gateway/internal/handler/routes.go`：找到路径。
-2. 对应的 handler 文件：看输入怎样交给下一层。
-3. `public/index.html` 中搜索 `/api/v1/login`：看客户端怎样发请求。
-
-本章不要继续追数据库和 JWT，它们在第 05、06 章解释。
+看到这个程度就停：你能从浏览器的路径反查到 `RegisterHandlers` 和对应 Handler，并能解释 Handler 负责网络格式。暂时不追 `LoginLogic.Login` 后面的 gRPC、MySQL 和 JWT。
 
 ## 动手练习
 
@@ -134,5 +135,15 @@ curl -i http://127.0.0.1:8090/readyz
 3. Router、Handler、Logic 各负责什么？
 4. 前端的 `fetch()` 与 Gateway 的路由怎样对应？
 5. 登录为什么适合 HTTP，而实时消息推送为什么不只靠普通 HTTP？
+
+## 动手练习与闭卷检查参考答案
+
+练习中，`/healthz` 只说明 Gateway 进程能响应，正常时返回成功；`/readyz` 会运行 Logic、Redis 和 MySQL 检查，任一关键依赖异常都可能返回非成功状态。两者都成功仍不能证明一条聊天消息端到端可用。
+
+1. 方法、路径、请求头和请求体。
+2. `401` 表示身份没有通过；`403` 表示身份已知，但没有目标资源或操作权限。
+3. Router 根据方法和路径选 Handler；Handler 解析网络输入并写响应；Logic 编排业务步骤。
+4. `login()` 把 `/api/v1/login`、POST 和 JSON 交给 `apiFetch()`；Gateway 用同样的方法和路径在 `RegisterHandlers` 中匹配 `LoginHandler`。
+5. 登录是一次输入对应一次结果，HTTP 契合请求响应；聊天下行要求服务端在任意时刻主动推送，普通 HTTP 请求结束后没有持续通道，所以项目另建 WebSocket。
 
 下一步：[05 MySQL 与最小数据模型](05_MYSQL_AND_DATA.md)

@@ -192,19 +192,19 @@ Secret 不能写入公开 Git 仓库中的生产配置。公司环境通常通�
 
 所以不能回答“JWT 签发后服务端随时可以立刻撤销”。在现有实现里，除非更换 Secret，否则已签发 Token 通常持续有效到过期。
 
-## 代码锚点
+## 本章代码阅读任务
 
-按这个顺序追一次：
+| 顺序 | 打开位置 | 这次只看什么 |
+| --- | --- | --- |
+| 1 | `public/index.html` 的 `login()` | 找到请求路径、`username/password` 请求体和页面保存 `token/user_id` 的位置 |
+| 2 | `cmd/gateway/internal/handler/routes.go` 的登录 Route，再看 `cmd/gateway/internal/handler/loginhandler.go` 的 `LoginHandler` | 确认 `/api/v1/login` 怎样进入 Gateway Logic |
+| 3 | `cmd/gateway/internal/logic/loginlogic.go` 的 `Login` | 找到 `LogicRouter.GetClient` 和生成的 gRPC `Login` 调用，画出第一个进程边界 |
+| 4 | `api/protocol.proto` 的 `LoginReq`、`LoginReply`、`rpc Login` | 只读手写协议字段，不读整个生成文件 |
+| 5 | `cmd/logic/internal/server/logicserver.go` 与 `cmd/logic/internal/logic/loginlogic.go` 的 `Login` | 看 gRPC 请求怎样进入核心 `LogicHandler` |
+| 6 | `internal/logic/handler.go` 的 `Login`、`verifyPassword`、`upgradeLegacyPassword` | 找到 users 查询、统一错误、bcrypt 校验、旧明文迁移和会话列表降级 |
+| 7 | `internal/middleware/auth.go` 的 `GenerateToken`、`ParseToken`，再看 `cmd/gateway/internal/middleware/authmiddleware.go` 的 `Handle` | 确认签发字段、签名校验和 `user_id` 写入 Context 的位置 |
 
-1. `public/index.html`：搜索 `async function login`。
-2. `cmd/gateway/internal/handler/routes.go`：登录路由。
-3. `cmd/gateway/internal/handler/loginhandler.go`：解析 HTTP 请求。
-4. `cmd/gateway/internal/logic/loginlogic.go`：发起 gRPC。
-5. `api/protocol.proto`：`LoginReq`、`LoginReply`、`rpc Login`。
-6. `cmd/logic/internal/server/logicserver.go`：gRPC 入口。
-7. `internal/logic/handler.go`：`Login`、`verifyPassword`、`upgradeLegacyPassword`。
-8. `internal/middleware/auth.go`：Token 生成与解析。
-9. `cmd/gateway/internal/middleware/authmiddleware.go`：请求身份写入 Context。
+看到这个程度就停：你能从 `login()` 连续说出 HTTP、Gateway、gRPC、Logic、MySQL、bcrypt、JWT 和 HTTP 响应，且能指出两个同名 LoginLogic 分属不同进程。暂时不必背 JWT 库实现、HS256 数学细节、Protobuf 生成代码和 gRPC HTTP/2 帧。
 
 ## 动手练习
 
@@ -239,5 +239,26 @@ go test ./internal/logic -run 'TestLogin|TestVerifyPassword' -v
 8. AuthMiddleware 把 user_id 放在哪里？
 9. 当前 Token 能否即时撤销？
 10. 为什么所有 Gateway 和 Logic 实例必须共享 JWT Secret？
+
+## 动手练习与闭卷检查参考答案
+
+### 动手练习答案
+
+1. Gateway 框内是浏览器 HTTP、路由、`LoginHandler`、Gateway `LoginLogic`；两个框之间是 gRPC；Logic 框内是 gRPC Server、Logic `LoginLogic`、`LogicHandler.Login` 和 MySQL 查询。HTTP 响应由 Gateway 写回浏览器。
+2. `TestLoginUsesGenericCredentialError` 验证不存在用户、禁用或错误密码不向客户端暴露可枚举差异；`TestLoginUpgradesLegacyPlaintextPassword` 验证旧明文校验成功后写 bcrypt；`TestVerifyPasswordSupportsBcrypt` 验证正常 bcrypt 比较。
+3. 四项依次是错、错、对、错。JWT payload 可解码；资源授权仍需单独检查；默认有效期 24 小时；会话列表错误只记录日志，已完成的登录仍返回。
+
+### 闭卷检查答案
+
+1. 登录是提交凭据的用户动作；认证确认身份；授权判断该身份能否操作某个资源。
+2. 明文泄漏后可直接使用；MD5 太快且不适合密码存储；bcrypt 带盐并故意增加计算成本，降低批量破解速度，但也需要限流和合理成本参数。
+3. 普通函数调用只在同一进程地址空间内；Gateway 与 Logic 是独立进程，只能通过网络 RPC 交互。
+4. Protobuf 定义并编码强类型字段；gRPC 使用这份契约发起远程方法调用并返回结果。
+5. `login()` -> `POST /api/v1/login` -> `LoginHandler` -> Gateway `LoginLogic.Login` -> gRPC `Logic.Login` -> `LogicServer.Login` -> Logic `LoginLogic.Login` -> `LogicHandler.Login` -> MySQL users -> bcrypt -> JWT -> 返回。
+6. 统一 `invalid credentials` 避免攻击者通过文案判断用户名是否存在或账号是否禁用；数据库内部错误只应留在受控日志。
+7. 签名用于发现 payload 被篡改，内容本身仍可解码；加密才负责隐藏内容。当前 JWT 是签名 Token，不是加密容器。
+8. 放入本次请求的 `context.Context`，后续 Handler 和 Logic 从 Context 取已认证 uid。
+9. 当前没有黑名单或即时撤销；通常要等过期，或者轮换 Secret 使一批 Token 同时失效。
+10. Logic 用 Secret 签发，所有 Gateway 用 Secret 验证。值不一致会让一个实例签发的 Token 被另一个实例判为无效。
 
 下一步：[07 从 HTTP 升级为 WebSocket](07_WEBSOCKET_CONNECTION.md)

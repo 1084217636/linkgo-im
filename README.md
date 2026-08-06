@@ -6,7 +6,7 @@ LinkGo 是一个使用 Go 和 go-zero 实现的 `IM + 红包 + AI` 秋招项目�
 
 如果你只会 Go 基本语法，请不要从架构图或面试题开始。
 
-从 [LinkGo 从零学习手册](docs/handbook/README.md) 的第 00 章按顺序学习。教材会先解释客户端、服务器、HTTP 和数据库，再逐步引入 WebSocket、Redis、多 Gateway、Kafka、Docker 和 Kubernetes。
+学习本项目时只看 [LinkGo 从零学习手册](docs/handbook/README.md)，从第 00 章开始按编号顺序读到第 21 章。`docs/handbook/` 是唯一学习主线；其他 docs 目录分别用于查代码、执行操作、查看证据或提供程序运行时语料。
 
 完整文档分类见 [docs/README.md](docs/README.md)。
 

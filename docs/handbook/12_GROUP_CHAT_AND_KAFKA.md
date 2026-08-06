@@ -309,7 +309,7 @@ Kafka 只替换了“怎样安排多接收者投递任务”，没有替换最�
 
 ### Logic 写 MySQL 成功，但写 Kafka 失败
 
-当前 `PushMessage` 返回内部错误并释放 Redis 的 `client_msg_id` 预占，但 Gateway 后台 Worker 只记录错误，没有正式发送失败确认帧。
+当前 `PushMessage` 返回内部错误并释放 Redis 的 `client_msg_id` 预占。Gateway Worker 得到错误后，会尝试向原发送连接返回可重试的 `MESSAGE_REJECTED`。如果 WebSocket 已断开，客户端仍可能看不到结果，所以恢复仍依赖相同 `client_msg_id` 重试和历史核对。
 
 如果客户端再次使用相同 `client_msg_id` 发送，Logic 会从 MySQL 找回原消息并再次尝试 Kafka 分发。
 
@@ -361,16 +361,18 @@ Transfer 无法 claim recipient，也无法记录 pending 或查在线路由，�
 
 > 单聊只有一个接收者，群聊会产生 fan-out。我的 Logic 先校验群成员、分配会话 seq，并在 MySQL 只保存一行群消息；然后查询当前 active 成员，把 WireMessage 和 recipients 快照写入 Kafka。Transfer 使用 consumer group 异步逐成员调用与单聊相同的 RedisDelivery。消费采用 FetchMessage 加手动 Commit，只有全部处理成功，或者 retry/DLQ 写成功后才提交。为处理投递完成但 offset 未提交导致的重复消费，我用 message_id + recipient 的 Redis Lua 状态实现 processing owner、lease 和 done。当前仍会在 Logic 同步加载完整成员列表，也缺少 MySQL Outbox 和超大群分片，所以我会说它完成了可靠异步扩散原型，而不是已经解决百万群生产问题。
 
-## 代码锚点
+## 本章代码阅读任务
 
-按顺序阅读：
+| 顺序 | 打开位置 | 这次只看什么 |
+| --- | --- | --- |
+| 1 | `internal/logic/handler.go` 的 `resolveRecipients`、`deliverPersistedMessage` | 确认群成员从 MySQL 取 active 列表并排除发送者，群聊走 `GroupDispatcher` 而不是逐个同步 Deliver |
+| 2 | `cmd/logic/internal/svc/kafka_dispatcher.go` 的 `groupDispatchJob`、`PublishGroupDispatch` | 圈出 `Frame/Recipients/Attempt`，找到 Kafka key 使用 `SessionId` 和 producer 写入位置 |
+| 3 | `cmd/transfer/main.go` 的 `consumeLoop`、`processFetchedMessage`、`commitFetchedMessage` | 按分支写出 Fetch、正常处理、retry/DLQ 写成功、Commit 的先后条件 |
+| 4 | `cmd/transfer/recipient_lease.go` 的三个 Lua 与 `claimGroupRecipient`、`completeGroupRecipient`、`releaseGroupRecipient` | 画 `absent -> processing:owner -> done`，写出 lease 到期后的接管条件 |
+| 5 | `cmd/transfer/main.go` 的 `deliverGroupRecipient` 与 `internal/delivery/redis.go` 的 `Deliver` | 确认 Transfer 不持有 WebSocket，只复用 pending、route 和 Pub/Sub |
+| 6 | `cmd/transfer/main_test.go` 的 `TestConsumeLoopCommitsOnlyAfterMalformedMessageReachesDLQ`、`TestProcessFetchedMessageDoesNotSucceedWhenDLQPublishFails`、两个 `TestRecipientLease...` | 逐个写出测试安排的故障与断言，不把单测说成真实多 broker 演练 |
 
-1. `internal/logic/handler.go`：`resolveRecipients` 和 `deliverPersistedMessage`。
-2. `cmd/logic/internal/svc/kafka_dispatcher.go`：Kafka job 与 producer 写入。
-3. `cmd/transfer/main.go`：Fetch、处理、retry/DLQ、Commit 顺序。
-4. `cmd/transfer/recipient_lease.go`：收件人状态机和 Lua。
-5. `internal/delivery/redis.go`：Transfer 最后怎样复用单聊投递。
-6. `cmd/transfer/main_test.go`：提交顺序和 lease 测试实际覆盖什么。
+看到这个程度就停：你能从一条 Kafka record 讲到每个 recipient 的 lease、投递、retry/DLQ 和 offset 提交，并能解释提交前崩溃为什么会重复而不是必然丢失。暂时不必搭 Kafka 集群、学习 controller/ISR 内部协议或完成百万群容量规划。
 
 ## 动手练习
 
@@ -396,5 +398,25 @@ Transfer 无法 claim recipient，也无法记录 pending 或查在线路由，�
 9. MySQL 写成功但 Kafka 写失败怎样恢复？当前缺少什么？
 
 九个问题能闭卷讲清楚后，再进入第 13 章。
+
+## 动手练习与闭卷检查参考答案
+
+### 动手练习答案
+
+首次处理时，B 从 absent 被 claim 为 `processing:owner1`，投递成功后变 `done`；C 被 claim 后投递失败，当前 owner 释放 processing，使 Key 回到 absent；D 因循环在 C 失败处停止，还没有状态。完整 job 增加 Attempt 后写 retry，原记录在 retry 写成功后才提交。
+
+retry 时 B 读到 done 直接跳过；C 重新 claim、投递并完成；D 第一次被 claim 和投递。若 C 的 RedisDelivery 已返回，但 `completeGroupRecipient` 前进程崩溃，C 会暂时停在 processing；lease 到期后另一个 Worker 可重新 claim 并再次投递，因此客户端仍要按 message_id 去重。
+
+### 闭卷检查答案
+
+1. 一条输入需要分别安排给多个接收者，输出数量随群成员增长，这叫扇出。
+2. 包含已经分配 ID/seq 的 `Frame`、发送时的 `Recipients` 快照和 `Attempt`。它不是群成员永久事实源，也不是客户端 ACK 记录。
+3. 没有。Logic 仍同步查询完整 active 成员并把 recipients 放进一条 Kafka job，成本仍随 N 增长；Kafka 解耦的是逐成员投递。
+4. 先提交再处理时，进程崩溃会跳过未完成任务；处理或成功转存 retry/DLQ 后再提交，重启可以从未提交位置继续，代价是可能重复。
+5. retry 接收暂时失败、仍可自动再处理的完整 job；DLQ 隔离坏格式或超过上限的任务，等待人工检查。当前没有完善的 DLQ 修复回放工具。
+6. 永久 processing 会让 owner 崩溃后的任务永远卡住；lease 给其他 Worker 在到期后接管机会。
+7. 同 consumer group 的并行上限受 partition 数限制；同一群 key 通常还落在同一 partition，增加副本不保证线性提速。
+8. 不能。seq 和同 partition 提供排序基础，但 retry、网络、Pub/Sub 和 ACK 重推会让实时到达迟到或重复。
+9. 消息正文可能已在 MySQL，Kafka job 没有成功。Gateway 会尝试返回可重试拒绝；客户端用同一 `client_msg_id` 重试时 Logic 从数据库标准记录恢复并再发 Kafka。当前缺事务 Outbox 自动补投。
 
 下一步：[13 好友、群组与会话](13_RELATIONSHIPS_AND_CONVERSATIONS.md)

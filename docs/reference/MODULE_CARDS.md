@@ -33,8 +33,10 @@ ACK 重试：internal/server/retry.go
 ```text
 入口：internal/logic/handler.go
 会话状态：internal/logic/conversation.go
-好友：internal/logic/friend.go
-群组：internal/logic/group.go
+发送关系权限：internal/logic/relations.go 的 validateSendPermission
+好友 REST：cmd/gateway/internal/logic/friendlogic.go 的 Apply / Respond
+建群 REST：cmd/gateway/internal/logic/groupcreatelogic.go 的 Create
+群成员 REST：cmd/gateway/internal/logic/groupmemberslogic.go 的 List
 红包：internal/logic/redpacket.go
 ```
 

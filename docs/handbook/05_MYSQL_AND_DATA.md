@@ -236,15 +236,17 @@ LIMIT 50
 
 如果异步会话更新失败，消息历史仍可能已经存在，但登录时的会话摘要可能暂时不完整。这是当前实现边界，不应写成“消息和会话元信息原子提交”。
 
-## 代码锚点
+## 本章代码阅读任务
 
-按顺序阅读：
+| 顺序 | 打开位置 | 这次只看什么 |
+| --- | --- | --- |
+| 1 | `sql/init.sql` 的 `users`、`messages`、`conversations`、`conversation_members` 建表段 | 先圈出主键、两个消息唯一约束和 `idx_session_seq`，不背字段类型 |
+| 2 | `cmd/logic/internal/svc/servicecontext.go` 的 `ServiceContext`、`NewServiceContext` | 找到 `sql.Open`、`SetMaxOpenConns`、`SetMaxIdleConns`，理解一个 `sql.DB` 是连接池句柄 |
+| 3 | `internal/logic/handler.go` 的 `Login`、`GetHistory`、`saveMessage` | 各找一条参数化 `SELECT` 和 `INSERT`，确认占位符参数没有字符串拼接 |
+| 4 | 同文件的 `PushMessage`、`deliverPersistedMessage`，再到 `internal/logic/conversation.go` 的 `updateConversationState`、`persistConversationState` | 按调用顺序确认消息同步写入，会话 MySQL 摘要由 goroutine 异步尽力更新 |
+| 5 | `cmd/gateway/internal/svc/servicecontext.go` 的 `ServiceContext`、`NewServiceContext` | 确认 Gateway 也有 `DB` 字段，避免把当前实现讲成 Gateway 完全不访问 MySQL |
 
-1. `sql/init.sql`：`users`、`messages`、`conversations`、`conversation_members`。
-2. `cmd/logic/internal/svc/servicecontext.go`：`sql.Open` 和连接池参数。
-3. `internal/logic/handler.go`：`Login`、`saveMessage`、`GetHistory`。
-4. `internal/logic/conversation.go`：`updateConversationState`、`persistConversationState`。
-5. `cmd/gateway/internal/svc/servicecontext.go`：确认 Gateway 当前也持有 `DB`。
+看到这个程度就停：你能指出四张表的职责，能沿 `PushMessage -> saveMessage -> deliverPersistedMessage -> updateConversationState` 说清同步和异步边界。暂时不必掌握 InnoDB B+ 树内部实现、隔离级别细节、执行计划成本模型或数据库高可用搭建。
 
 ## 动手练习
 
@@ -284,5 +286,27 @@ LIMIT 50;
 11. 为什么核心业务事实选择 MySQL，它不能替代哪些实时能力？
 
 能把第 7、8、9 题准确回答后，再进入登录章节。
+
+## 动手练习与闭卷检查参考答案
+
+### 动手练习答案
+
+1. 查询条件和排序都以 `session_id` 开头，再按 `seq` 过滤和排序，最匹配 `idx_session_seq(session_id, seq)`。是否实际使用仍应以真实数据上的 `EXPLAIN` 为准。
+2. 理论上限是 `6 x 80 = 480`。`MaxOpenConns` 是允许同时打开的最大值，连接池按请求量建立和复用连接，空闲或低流量时不必始终保持 480 条。
+3. 首次消息在 `PushMessage` 中同步调用 `saveMessage`。成功后进入 `deliverPersistedMessage`，完成 recipients 和投递编排，再调用 `updateConversationState`。Redis 会话热状态在当前调用中更新；`updateConversationState` 内启动 goroutine，用独立 3 秒上下文调用 `persistConversationState` 写 MySQL 会话摘要。`saveMessage` 或投递错误会同步返回，异步会话写失败只记录日志。
+
+### 闭卷检查答案
+
+1. map 属于单进程内存，进程重启会丢失，其他实例也不能共享；账号、关系和历史需要持久事实源。
+2. 主键唯一标识一行；唯一约束阻止特定业务组合重复；普通索引加速常用查询，但会占空间并增加写维护成本。
+3. `messages` 保存每条消息正文和 ID、seq；`conversations` 保存会话级 `last_seq`、类型和更新时间摘要。
+4. 当前聊天消息把两者保存成同一个会话标识，是兼容字段，不是两个独立业务会话。
+5. 参数化查询让驱动把用户输入当数据，而不是 SQL 结构，降低 SQL 注入风险。
+6. 连接池复用数据库连接并限制总打开数，避免每个请求重新握手，也避免应用无限占用数据库连接。
+7. 不是。Gateway 的好友、群组、红包和 AI HTTP 逻辑也直接使用 `ServiceContext.DB`。
+8. 不在。`messages INSERT` 同步完成，会话 Redis 热状态随后更新，MySQL 会话摘要在独立 goroutine 中尽力写入。
+9. 最近 50 条，当前没有完整游标分页参数。
+10. 应用连接代理、VIP 或托管数据库提供的稳定域名；入口后面可以完成主从切换。当前代码仍只有一个 DSN，也没有应用层读写分离。
+11. 结构稳定的消息、关系和红包需要事务、唯一约束、索引和长期查询，MySQL与这些需求匹配。它不保存 WebSocket 对象，也不替代在线路由、低延迟通知和短期待确认状态。
 
 下一步：[06 登录、密码与 JWT](06_LOGIN_AND_JWT.md)

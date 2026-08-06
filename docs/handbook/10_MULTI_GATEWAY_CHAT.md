@@ -108,7 +108,7 @@ LOGIC_ADDR 为空 → 从 Etcd /services/logic 发现实例
 routeValue = gateway-1|connection-a7f...
 ```
 
-`RefreshRoute` 写入：
+WebSocket 刚建立时，`ClaimRoute` 写入：
 
 ```text
 route:A = gateway-1|connection-a7f...       TTL 75 秒
@@ -125,14 +125,18 @@ route:B = gateway-3|connection-b91...
 
 所有 Gateway 和 Logic 连接同一逻辑 Redis，所以 Logic-2 能读到 Gateway-3 写的 B 路由。
 
+`ClaimRoute` 的含义是“让这条新的已认证连接成为当前路由”，它会有意覆盖同一 uid 的旧值。这与心跳续期不同：新连接可以取代旧连接，旧连接不能在心跳时反向覆盖新值。
+
 这些反向索引不是为了重复保存同一事实：`route:uid` 适合按用户找 Gateway；`gateway_users` 适合某台 Gateway 做心跳、ACK 重试和退出清理时找自己负责的用户；`gateway_conn` 适合拿连接 ID 反查用户。如果只有 `route:*`，按某个 Gateway 清理就可能需要全库 `SCAN`。代价是一次建连要维护多份 Redis 状态，所有写入、续期和比较删除必须保持语义一致；当前单值 route 仍不支持多端。
 
 ## 5. 谁负责续期
 
 需要区分两种心跳：
 
-- 客户端心跳到达 Gateway 时，`RefreshRoute` 续期这个用户的 route、connection 和 Gateway 相关 Key。
+- 客户端心跳到达 Gateway 时，`RefreshRouteIfMatch` 先比较 `route:<uid>` 是否仍等于本连接的完整 routeValue。只有匹配时才续期 route、connection 和 Gateway 相关 Key。
 - Gateway 后台心跳 `StartGatewayHeartbeat` 定期刷新 `gateway_live` 和 `gateway_users` TTL，但不会替每一个没有心跳的用户无条件续期 `route:<uid>`。
+
+条件续期是一个 Lua 原子操作。如果旧连接在 Gateway-1，新连接已在 Gateway-3 执行 `ClaimRoute`，那么 Gateway-1 的旧心跳会得到 `owned=false`，读循环随即退出。Redis 错误时也会结束连接，因为服务端无法确认它还是当前 owner。这是 fail-closed：宁可让客户端重连，也不让旧会话抢回路由。
 
 因此用户长期不发心跳时，个人 route 会过期；Gateway 进程活着不等于每条客户端连接都活着。
 
@@ -218,8 +222,9 @@ trackPendingAck
 ```text
 解析 PushEnvelope
 → Manager.GetConn(target_id)
+→ 比较 envelope.route_value 与本机 conn.SessionID
 → Base64 解码 payload
-→ conn.WriteBinary
+→ conn.WriteBinary（默认 5 秒写超时）
 ```
 
 如果本机找不到 B：
@@ -229,6 +234,10 @@ trackPendingAck
 3. 不会盲目删除 B 可能已经在别处建立的新 route。
 
 如果写 WebSocket 失败，也会标记 offline、比较清理 route、关闭并移除本机连接。
+
+`PushEnvelope` 保存 Logic 查路由时读到的完整 routeValue。订阅端用它检查本机连接身份，避免一条发给旧本机连接的通知被写入同 uid 的新连接。不匹配时会标记 offline，关闭旧 socket，并记录 `stale_route` 指标。
+
+这道检查不是“发布后撤回”机制。如果 Logic 在新登录前刚好读到旧 route 并发布了事件，而旧 Gateway 仍保留对应的旧 socket，这条在途事件仍可能在旧连接退出前到达。当前 fencing 保证的是旧心跳不能重占路由、旧清理不能删新路由、通知不会误写到不同连接身份的本机 socket。
 
 如果写成功，只能证明操作系统接受了本次连接写入，不能证明 B 页面已解码和处理。最终还需要 B 的应用层确认。
 
@@ -277,7 +286,7 @@ WebSocket 是已建立的长连接，不能把一条连接无损地从 Gateway-1
 3. 旧连接继续留在原 Gateway。
 4. 若旧节点需要下线，先停止给它分配新连接。
 5. 等连接自然结束，或通知客户端重新连接。
-6. 新连接写入新的 Redis routeValue。
+6. 新连接通过 `ClaimRoute` 写入新的 Redis routeValue。
 7. 客户端使用确认进度和历史接口恢复可能缺失消息。
 
 Kubernetes 怎样创建实例、停止导流和滚动更新在第 18 章解释。本章只回答网络事实：扩容首先影响新连接，不会自动迁移旧连接。
@@ -316,19 +325,22 @@ Kafka 会在群聊章节加入这张图；现在单聊链路不需要为了“�
 - 已实现跨机房一致性和自动容灾演练。
 - 已把现有 WebSocket 自动迁移到新 Gateway。
 
-## 代码锚点
+## 本章代码阅读任务
 
-按链路顺序阅读：
+按一条 A 到 B 的链路读，不要按目录扫文件。
 
-1. `cmd/gateway/internal/svc/logicrouter.go`：直连与 Etcd 两种模式、`p2c_ewma`。
-2. `cmd/logic/etc/logic.yaml`：Etcd Key。
-3. `deploy/k8s/logic.yaml`：向实例注入 `POD_IP`。
-4. `cmd/gateway/internal/handler/websockethandler.go`：建立 routeValue、登记连接。
-5. `internal/server/route.go`：路由写入、心跳、比较删除、启动清理。
-6. `internal/logic/handler.go`：消息保存后进入投递。
-7. `internal/delivery/redis.go`：pending、route 查询、PUBLISH、offline。
-8. `internal/server/manager.go`：订阅目标 Gateway channel 并写本机连接。
-9. `deploy/k8s/production/configmap.yaml`：外部共享地址示例。
+| 顺序 | 打开位置 | 这次只看什么 |
+| --- | --- | --- |
+| 1 | `cmd/gateway/internal/svc/logicrouter.go` 的 `LogicRouterPool`、`NewLogicRouter`、`GetClient`、`Ready` | 对比 `Logic.Addr` 直连和 Etcd `/services/logic`，找到 `p2c_ewma`，确认 `GetClient` 的 key 当前未做用户固定路由 |
+| 2 | `cmd/logic/etc/logic.yaml` 的 Etcd Key 与 `deploy/k8s/logic.yaml` 的 `POD_IP` | 解释监听 `0.0.0.0` 与注册可访问 Pod IP 的区别 |
+| 3 | `cmd/gateway/internal/handler/websockethandler.go` 的 `WebSocketHandler` | 找到 `BuildRouteValue`、本机 `Manager.Add`、`ClaimRoute` 和 defer 中的 `ClearRouteIfMatch` |
+| 4 | `internal/server/route.go` 的 `ClaimRoute`、`RefreshRouteIfMatch`、`ClearRouteIfMatch`、`CleanupGatewayRoutes` | 写下每个函数修改的 Key 和所有权条件 |
+| 5 | `internal/logic/handler.go` 的 `PushMessage`、`deliverPersistedMessage` | 找到 MySQL `saveMessage` 在投递前，单聊 recipients 是目标 B |
+| 6 | `internal/delivery/redis.go` 的 `Deliver` | 逐行标记 pending、GET route、封装 `PushEnvelope`、PUBLISH 和 offline 分支 |
+| 7 | `internal/server/manager.go` 的 `PushEnvelope`、`RouteMatchesConnection`、`SubscribeRedis` | 看 Gateway-3 怎样验证 `route_value`、查本机连接并 `WriteBinary` |
+| 8 | `deploy/k8s/production/configmap.yaml` 的外部 Redis、MySQL、Kafka、Etcd 地址 | 只确认应用连接稳定入口，不把占位地址说成真实集群 |
+
+看到这个程度就停：你应当能不看文档，从 A 的 WebSocket 依次指到 Gateway-1、某个 Logic、MySQL、Redis、Gateway-3 和 B，并能给每条箭头说出协议或 Redis 动作。暂时不必掌握 Etcd Raft、P2C 数学推导、云 LB 实现和 Redis/MySQL 集群搭建。
 
 ## 动手练习
 
@@ -382,10 +394,41 @@ go test ./cmd/gateway/internal/svc -run TestWaitForLogicReady -v
 5. `p2c_ewma` 是一致性哈希吗？
 6. A 在 Gateway-1、B 在 Gateway-3 时，完整单聊链路是什么？
 7. `route:B` 为什么同时包含 gatewayID 和 connectionID？
-8. 客户端心跳和 Gateway 后台心跳分别续期什么？
-9. `PUBLISH` 返回订阅者数量为什么不等于 B 收到？
-10. 同一 Gateway 的消息当前是否有本地快路径？
-11. 新增 Gateway 为什么不能自动搬迁旧 WebSocket？
-12. 当前 Redis/MySQL 多服务器能力有哪些明确边界？
+8. `ClaimRoute` 为什么可以取代旧路由，旧连接的 `RefreshRouteIfMatch` 为什么不可以？
+9. 客户端心跳和 Gateway 后台心跳分别续期什么？
+10. `PUBLISH` 返回订阅者数量为什么不等于 B 收到？
+11. 同一 Gateway 的消息当前是否有本地快路径？
+12. 新增 Gateway 为什么不能自动搬迁旧 WebSocket？
+13. 当前 Redis/MySQL 多服务器能力有哪些明确边界？
+
+## 动手练习与闭卷检查参考答案
+
+### 动手练习答案
+
+1. 图上应有：`A -(WebSocket)-> Gateway-1 -(gRPC)-> Logic-2 -(SQL INSERT)-> MySQL`；Logic 再 `GET route:B`、先登记 pending 并向 Redis `PUBLISH im_message_push:Gateway-3`；Gateway-3 订阅事件后 `-(WebSocket)-> B`。不要画 Gateway-1 直接读取 Gateway-3 的 map。
+2. `LOGIC_ADDR=logic:9001` 经环境覆盖写入 `Config.Logic.Addr`，`NewLogicRouter` 使用 direct client；地址为空且有 `ETCD_ENDPOINTS` 时使用 Etcd `/services/logic` 发现实例，并设置 `p2c_ewma`。
+3. 故障推演：
+   - MySQL INSERT 前 Logic 崩溃：没有新消息正文持久化，发送方可能收到 `MESSAGE_REJECTED` 或因连接故障收不到结果；应复用同一 `client_msg_id` 重试。
+   - MySQL INSERT 成功后 Redis 不可用：历史仍在 MySQL，实时投递和 pending 失败，Logic 返回错误，Gateway 尝试发送可重试的 `MESSAGE_REJECTED`。重试可按 MySQL 标准记录恢复，但当前没有 Outbox 自动扫描该窗口。
+   - PUBLISH 时没有 Gateway-3 订阅者：`Deliver` 比较清理当时的 route，保留 pending，写 `offline_msg:B`，不把订阅者为零当成已送达。
+   - Gateway-3 收到事件但本机没有 B：订阅端标记 offline，并只清理 envelope 中匹配的旧 route；消息仍有 MySQL 和 pending 状态。
+   - B 从 Gateway-3 重连到 Gateway-4：新连接 `ClaimRoute` 覆盖旧 route；旧心跳续期失败，旧 defer 也不能删新值；带旧 `route_value` 的通知不能误写到本机另一条新连接。已经在途且仍对应旧 socket 的事件仍可能在旧连接退出前到达。
+4. `TestWaitForLogicReady` 只验证 gRPC connection state 能到 `Ready` 或被判不可用。它没有调用 `PushMessage`，不能证明权限、MySQL、Redis 或接收方链路正常。
+
+### 闭卷检查答案
+
+1. 实例是服务代码的一次运行；集群是同类实例集合；入口 LB 给客户端稳定地址并把新连接分给健康 Gateway。
+2. Etcd 保存 Logic 的可访问实例地址和租约，不保存消息、好友、群成员或 WebSocket。
+3. Logic 启动 zRPC 服务，使用 Etcd Key `/services/logic` 和在 K8s 中注入的 `POD_IP:9001` 注册，租约失效后地址被发现端移除。
+4. 非空时直连该地址；为空时根据 Etcd endpoints 发现 `/services/logic` 下的实例。
+5. 不是。它根据少量候选和近期延迟选择调用实例，不保证同一用户固定到同一 Logic。
+6. A 帧进入 Gateway-1，按 uid 入队，通过 Etcd 发现的 gRPC client 调 Logic；Logic 验身份和权限、幂等、分配 seq、写 MySQL；RedisDelivery 先记 B 的 pending，读 `route:B` 后发布到 Gateway-3；Gateway-3 校验 routeValue、查本机连接、写 B；B 解码后 ACK。
+7. gatewayID 用来选择定向频道，connectionID 是路由所有权栅栏，防止旧通知或旧清理误伤同 uid 的新连接。
+8. 新认证连接有意取得最新单路由所有权；心跳只能延长自己仍持有的值，否则旧连接会抢回新路由。
+9. 客户端心跳条件续期该用户 route、连接反查和相关活跃状态；Gateway 后台心跳刷新 Gateway 活跃标记和用户集合 TTL，不无条件替每个用户续 route。
+10. 它只证明当时存在 Redis 订阅客户端，不能证明事件解析、WebSocket 写入、页面处理或 ACK。
+11. 没有。同机仍经过 Redis route 和 Gateway 定向 Pub/Sub。
+12. WebSocket 对象和 TCP 状态存在旧 Gateway 内存与内核中，新增实例只能承接新握手；旧连接要断开并由客户端重连。
+13. 代码可连接外部稳定 Redis/MySQL 入口，多应用实例共享它们；但不原生支持 Redis Sentinel/Cluster、Cluster 多 Key Lua 同槽和 MySQL 应用层读写分离，也没有真实跨机房容灾证据。
 
 下一步：[11 ACK、重试与离线恢复](11_RELIABILITY_AND_OFFLINE.md)

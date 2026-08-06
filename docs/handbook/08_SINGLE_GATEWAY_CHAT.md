@@ -86,7 +86,16 @@ pool_closed
 context_canceled
 ```
 
-如果没有被接收，Gateway 写回 `SYSTEM` 二进制帧，其中包含：
+这四个名称只描述 Gateway 内部队列的提交结果：
+
+| 结果 | 当前含义 | 发送端是否收到帧 |
+| --- | --- | --- |
+| `accepted` | 任务已放入某个 Gateway shard | 入队时不立即回帧；Worker 完成 Logic 调用后再返回 `MESSAGE_ACCEPTED` 或 `MESSAGE_REJECTED` |
+| `queue_full` | 该 shard 的有界队列已满 | 是，`SERVER_BUSY`，可重试 |
+| `pool_closed` | 工作池已关闭 | 是，`SERVER_UNAVAILABLE`，可重试 |
+| `context_canceled` | 提交时上下文已取消 | 是，`REQUEST_CANCELED`，不自动重试 |
+
+如果队列拒绝任务，Gateway 写回 `SYSTEM` 二进制帧，其中包含：
 
 ```text
 code
@@ -96,7 +105,7 @@ retry_after_ms
 原 trace_id
 ```
 
-网页识别 `SERVER_BUSY` 后复用同一个 `client_msg_id`，采用指数增长并加入随机抖动的等待时间，最多自动重试 5 次。
+错误帧会带回原 `client_msg_id` 和 `trace_id`，让网页能把拒绝绑定到正确的气泡。网页识别 `SERVER_BUSY` 后复用同一个 `client_msg_id`，采用指数增长并加入随机抖动的等待时间，最多自动重试 5 次。
 
 随机抖动表示每个客户端的等待时间略有不同，避免大量客户端同时重试形成第二次流量尖峰。
 
@@ -176,16 +185,16 @@ A 网页
 
 ## 10. 发送方什么时候知道成功
 
-这里必须按当前源码说实话。
+这里必须区分入队结果、Logic 处理结果和接收方 ACK。
 
-- 队列立即拒绝时，Gateway 会向网页返回结构化错误帧。
-- 队列接收任务后，`PushMsgReply` 是内部空响应，不会作为“发送成功帧”返回浏览器。
-- 如果后续 gRPC/Logic 处理失败，当前 worker 主要记录日志和指标，没有再向原客户端发送结构化失败帧。
-- 网页先乐观显示 pending 消息，并在约 900 ms 后调用历史接口刷新。
+- 队列立即拒绝时，Gateway 返回 `SERVER_BUSY`、`SERVER_UNAVAILABLE` 或 `REQUEST_CANCELED`。
+- 任务成功入队时不会立刻宣告成功。Worker 调用 Logic 完成后，通过原连接返回一个 `SYSTEM` 结果帧。
+- Logic 返回成功时，结果码是 `MESSAGE_ACCEPTED`。这表示 `LogicHandler.PushMessage` 已正常返回，首次消息已经完成 MySQL 持久化和当前投递编排，或者同一 `client_msg_id` 对应的已完成请求被幂等接受。它不表示 B 已收到或 ACK。
+- gRPC、权限、MySQL、Redis 等处理失败时，结果码是 `MESSAGE_REJECTED`。可重试错误会要求网页复用同一个 `client_msg_id` 重试。
+- 同 ID 的前一个请求仍在处理时，Logic 把 `ErrClientMessageInFlight` 转为 gRPC `Aborted`，Gateway 将其作为可重试的 `MESSAGE_REJECTED` 返回，不会把“正在处理”误报成成功。
+- 网页先乐观显示 pending 气泡；收到 `MESSAGE_ACCEPTED` 后改成 accepted，收到不可重试拒绝后改成 rejected，并仍可通过历史接口刷新服务端最终记录。
 
-因此当前还没有完整的“服务端已持久化回执”协议。`client_msg_id` 为安全重试提供基础，但浏览器不能仅凭 `ws.send` 返回就断言 MySQL 已成功提交。
-
-这是重要的当前边界，也是一项后续可优化内容：Logic 返回最终 `message_id/seq`，Gateway 再给发送端明确的接受回执。
+当前正向结果帧只带回 `client_msg_id` 和 `trace_id`，没有携带服务端最终 `message_id/seq`。因此它已经补上了“Logic 是否接受”的反馈，但还不是包含完整服务端消息对象的商业级发送回执。
 
 ## 11. 发送者会不会收到自己的实时投递
 
@@ -193,18 +202,20 @@ A 网页
 
 A 页面上的消息来自乐观渲染，随后通过历史接口看最终记录；B 才是在线投递的目标。多设备同步尚未实现，因此也没有把 A 的消息实时推送到 A 的其他设备。
 
-## 代码锚点
+## 本章代码阅读任务
 
-按顺序阅读：
+| 顺序 | 打开位置 | 这次只看什么 |
+| --- | --- | --- |
+| 1 | `public/index.html` 的 `sendMessage()`、`handleSystemMessage()`、`scheduleMessageRetry()` | 找到乐观 pending、相同 `client_msg_id` 重试和 accepted/rejected 状态变化 |
+| 2 | `api/protocol.proto` 的 `WireMessage`、`PushMsgReq` | 圈出客户端字段与 Gateway 另传的认证 `user_id` |
+| 3 | `internal/server/client.go` 的 `StartClientLoop` 普通消息分支 | 看解码、补 `trace_id`、`SubmitWithResult` 和完成回调怎样写结果帧 |
+| 4 | `internal/server/pool.go` 的 `PushWorkerPool`、`SubmitWithResult`、`runShard`、`processPushTask` | 找到 shard 哈希、有界 channel、串行 worker 和 `onComplete` 调用 |
+| 5 | `internal/server/client_error.go` 的 `pushRejectionDetail`、`pushProcessingDetail`、`writePushResult` | 区分入队拒绝码和 Logic 最终处理结果码 |
+| 6 | `cmd/logic/internal/server/logicserver.go` 与 `cmd/logic/internal/logic/pushmessagelogic.go` 的 `PushMessage` | 看 gRPC 入口，以及 `ErrClientMessageInFlight` 怎样映射为 `codes.Aborted` |
+| 7 | `internal/logic/handler.go` 的 `PushMessage`、`normalizeFrame`、`saveMessage`、`deliverPersistedMessage` | 按源码顺序写出验身份、权限、seq、MySQL 和投递步骤 |
+| 8 | `internal/server/manager.go` 的 `SubscribeRedis` | 只定位目标 Gateway 最终调用本机 `GetConn` 和 `WriteBinary` 的位置，细节留到第 10 章 |
 
-1. `public/index.html`：`sendMessage`、`encodeWireMessage`、`scheduleMessageRetry`。
-2. `api/protocol.proto`：`WireMessage` 和 `PushMsgReq`。
-3. `internal/server/client.go`：`StartClientLoop`。
-4. `internal/server/pool.go`：`PushWorkerPool.Submit`、`runShard`、`processPushTask`。
-5. `internal/server/client_error.go`：队列拒绝错误帧。
-6. `cmd/logic/internal/server/logicserver.go`：`PushMessage` gRPC 入口。
-7. `internal/logic/handler.go`：`PushMessage`、`normalizeFrame`、`saveMessage`、`deliverPersistedMessage`。
-8. `internal/server/manager.go`：稍后返回到目标 Gateway 后的本机写出位置。
+看到这个程度就停：你能分别指出“浏览器送入 Gateway”、“Gateway 排队”、“Worker 调 Logic”、“Logic 返回结果”四个阶段，且不会把入队 accepted、`MESSAGE_ACCEPTED` 和 B 的 ACK 混成一件事。暂时不必掌握 Redis 投递 Key 和 Kafka 群聊。
 
 ## 动手练习
 
@@ -245,5 +256,28 @@ B 的 WebSocket WriteBinary 成功
 8. 当前同 Gateway 单聊是否直接调用本机 Manager？
 9. 当前下游 Logic 失败是否一定会通知发送网页？
 10. 发送者页面为什么能先看到自己的消息？
+11. `accepted` 为什么不能解释成“消息已落 MySQL”？
+
+## 动手练习与闭卷检查参考答案
+
+### 动手练习答案
+
+1. `TestPushWorkerPoolPreservesOrderForSameUID` 证明同 uid 进入同 shard 串行处理；`TestPushWorkerPoolRunsDifferentShardsInParallel` 证明刻意选择到不同 shard 的任务可并行；`TestPushWorkerPoolReportsQueueFull` 证明有界队列满时明确返回背压。不同 uid 仍可能哈希到同一 shard，不能保证任意不同用户都并行。
+2. `normalizeFrame` 使用 `PushMsgReq.UserId` 代表认证 uid。frame.from 为空时补 uid，不为空且不等于 uid 时返回 sender mismatch，所以 userA 不能靠修改 Protobuf 冒充 userB。
+3. `ws.send` 只表示浏览器把数据交给 WebSocket；内部 `SubmitAccepted` 只表示任务进入 Gateway 内存队列；MySQL INSERT 成功证明消息正文持久化；B 的 `WriteBinary` 成功只表示数据交给网络连接，仍需客户端解码和 ACK。当前网页另会收到 `MESSAGE_ACCEPTED/REJECTED` 表示 Logic 调用结果。
+
+### 闭卷检查答案
+
+1. `from`、`to`、`to_type`、`msg_type`、`body`、`client_msg_id`、`sent_at` 和可选 `trace_id`；服务端随后规范化服务端字段。
+2. 帧内容可被客户端篡改，认证 uid 来自握手 JWT。两者分开传递才能在 Logic 校验发送者。
+3. 同步慢操作会阻塞连接读循环；每消息无限起 goroutine 会失去资源上限并破坏同用户顺序，所以使用有界 worker 队列。
+4. 它限制内存中的待处理任务并显式暴露过载；代价是队列满时必须拒绝或让客户端重试。
+5. 相比全局单 worker，不同 shard 可以并行且同 uid 保持提交 FIFO；它不保证跨 Gateway 全局顺序，也不保证两个不同 uid 一定在不同 shard。
+6. 网页需要把拒绝关联到正确气泡，并用相同 ID 安全重试，避免另生成 ID 导致重复消息。
+7. 解码和规范化、认证发送者、字段校验、关系权限、会话 ID、幂等、seq、message_id、MySQL 持久化，然后进入收件人投递和会话更新。
+8. 不直接调用。当前同机和跨机都进入统一 Redis 定向投递路径。
+9. 服务端会尝试通过 Worker 完成回调写 `MESSAGE_REJECTED`；可重试错误携带 retryable 和建议等待时间。但若原 WebSocket 已断开或结果帧写失败，页面不一定实际看到，所以题目中的“一定”仍应回答不能保证。
+10. 页面先乐观渲染自己刚构造的消息，不是服务器把 A 当接收者实时推回。
+11. 内部 `SubmitAccepted` 只表示任务进入 Gateway 内存。只有后续 `MESSAGE_ACCEPTED` 才表示 Logic 正常返回；它仍不证明 B 已收到或 ACK。
 
 下一步：[09 Redis 基础与在线状态](09_REDIS_BASICS.md)

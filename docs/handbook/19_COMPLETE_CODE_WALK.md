@@ -2,7 +2,7 @@
 
 ## 本章前置
 
-你已经完成 00–18 章。本章不再从零解释 HTTP、WebSocket、MySQL、Redis、Kafka 或 Kubernetes，而是把它们重新拼成当前代码。
+你已经完成第 00 到 18 章。本章不再从零解释 HTTP、WebSocket、MySQL、Redis、Kafka 或 Kubernetes，而是把它们重新拼成当前代码。
 
 ## 本章目标
 
@@ -99,6 +99,7 @@ A 在 Gateway-1 发送 WireMessage
    → WebSocket 写出
    → B 返回 ACK
    → 清理 pending/ack 状态并推进客户端收到进度
+→ Gateway-1 Worker 在 Logic 调用返回后，向 A 写 MESSAGE_ACCEPTED 或 MESSAGE_REJECTED
 ```
 
 必须主动说明两条边界：MySQL 消息与会话摘要不是同一事务；Redis Pub/Sub 通知丢失不能靠 Pub/Sub 自己重放。
@@ -234,6 +235,22 @@ Logic 崩溃会丢失尚未完成的 goroutine 任务。当前不是 Kafka/数�
 - `internal/logic/redpacket.go`
 - `internal/ai/`
 
+## 本章代码阅读任务
+
+这次不再按知识点读，而是为六条链路建立可现场定位的代码地图。
+
+| 顺序 | 打开位置 | 这次必须记录什么 |
+| --- | --- | --- |
+| 1 | `api/protocol.proto` 的 `WireMessage`、`PushMsgReq`、`Logic` service | 写出消息 10 个关键字段，标记哪些来自客户端、哪些由服务端生成；生成的 `.pb.go` 只确认类型存在 |
+| 2 | `cmd/gateway/internal/svc/servicecontext.go` 的 `ServiceContext`、`logicrouter.go` 的 `LogicRouterPool` | 写出谁在 Gateway 启动时创建它们、DB/Redis/Manager/LogicRouter 等字段由谁使用 |
+| 3 | `internal/server/manager.go` 的 `ClientConn`、`ClientManager` 与 `internal/server/pool.go` 的 `PushWorkerPool` | 为三个结构各做一张“谁创建、谁持有、关键字段、两个方法、失败路径”卡 |
+| 4 | `cmd/logic/internal/svc/servicecontext.go` 的 `ServiceContext` 与 `internal/logic/handler.go` 的 `LogicHandler` | 写出 Core 怎样获得 DB/Rdb/Delivery/GroupDispatcher/BotResponder，再沿 `PushMessage` 走一遍 |
+| 5 | `internal/delivery/redis.go` 的 `RedisDelivery`、`cmd/logic/internal/svc/kafka_dispatcher.go` 与 `cmd/transfer/main.go` 的 `groupDispatchJob` | 对比单聊直接 Deliver 与群聊 job 后逐收件人 Deliver，确认 job 两端 JSON 字段一致 |
+| 6 | `internal/logic/redpacket.go` 的 `RedPacketService` 与 `internal/ai/ask_service.go` 的 `AskService` | 各写出依赖字段、两个入口方法和一个当前无法自动恢复的失败路径 |
+| 7 | 关闭文档，使用练习中的四条 `rg` 命令 | 任意选择登录、单聊、群聊、红包或 AI，十分钟内从外部入口画到存储与失败出口 |
+
+看到这个程度才算完成：十二个结构体都能说出所有权，六条链路任意抽一条都能在十分钟内定位真实函数，不需要背行号。暂时不必阅读任何生成文件实现、第三方库源码和未出现在主链路的辅助函数。
+
 ## 动手练习
 
 任选一条链路，关闭本手册后执行：
@@ -255,5 +272,20 @@ rg "FetchMessage|CommitMessages" cmd/transfer
 4. Transfer 收件人列表来自哪里？
 5. ACK 清理哪些短期状态，它是否代表用户阅读？
 6. AI 回复为什么可能在 Logic 宕机时丢失？
+
+## 动手练习与闭卷检查参考答案
+
+### 动手练习答案
+
+`rg "PushMessage"` 应把 Gateway gRPC client、Logic gRPC server、核心 `LogicHandler.PushMessage` 和 Bot 的第二次调用连起来；`rg "Deliver\("` 应看到单聊核心与 Transfer 都复用 `RedisDelivery.Deliver`；`rg "pending_ack"` 应回到 Key 定义、投递登记、重试/回放/ACK 清理；`rg "FetchMessage|CommitMessages"` 应在 Transfer 看到先取记录、处理或耐久转存、最后提交。画图必须来自这些调用点，不要求抄出所有搜索结果。
+
+### 闭卷检查答案
+
+1. 浏览器 HTTP 先进入 Gateway，Gateway 再通过 gRPC 进入独立 Logic 进程。
+2. `*websocket.Conn` 包在当前 Gateway 的 `ClientConn` 中，并由本机 `ClientManager` 以 uid 持有；Redis 只保存 routeValue。
+3. Logic 完成身份、权限、幂等和 seq 后，先 `saveMessage` 写 MySQL，再调用 RedisDelivery；群聊也先写 MySQL，再写 Kafka job。
+4. Logic 在发送时从 MySQL `group_members` 查询 active 成员、排除发送者，作为 recipients 快照写进 Kafka；Transfer 不重新查群成员。
+5. ACK 的 Lua 清理 `pending_ack`、`offline_msg`、`ack_idx`、`ack_retry`，并另用 payload 推进 Redis read seq。它表示客户端程序收到并处理到消息，不是用户肉眼阅读。
+6. `triggerBotResponse` 只启动 Logic 进程内 goroutine，没有持久任务、claim 或重试状态；进程退出时未完成任务随内存消失。
 
 下一步：[20 面试讲述与逐层追问](20_INTERVIEW_PREP.md)

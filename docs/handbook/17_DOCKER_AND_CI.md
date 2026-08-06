@@ -42,6 +42,8 @@ LinkGo 的 Dockerfile 先在构建阶段编译 Go 二进制，再把运行所需
 
 三个服务共用同一个镜像，但由启动命令决定运行哪个二进制：Compose 中分别使用 `./gateway`、`./logic`、`./transfer`。这样一次构建能得到同一版本的三个程序；代价是镜像包含当前容器用不到的另外两个二进制。对本项目规模可以接受，生产中也可以拆成三个更小镜像。
 
+运行阶段还创建固定 UID/GID 10001 的 `linkgo` 用户，并用 `USER 10001:10001` 启动应用。这样即使应用进程被利用，也不会默认拥有容器内 root 权限。它不能单独形成完整沙箱，K8s 仍需禁止提权、删除 Linux capabilities，并限制文件系统和网络权限。
+
 阅读时只问：
 
 1. 基础镜像是什么？
@@ -144,7 +146,7 @@ push / Pull Request
 → GitHub 创建干净的 ubuntu runner
 → Checkout 把这次 commit 的代码拉下来
 → setup-go 按 go.mod 准备 Go
-→ test-build 依次检查格式、测试、构建、前端、文档和配置
+→ test-build 依次检查格式、go vet、普通测试、race 测试、构建、前端、文档和配置
 → 只有 test-build 成功
    ├→ docker-build 构建本次 SHA 标签的镜像
    └→ manifest-check 渲染 Kubernetes 清单
@@ -212,14 +214,17 @@ Git commit SHA
 ghcr.io/example/linkgo-im:530d3e7
 ```
 
-## 代码锚点
+## 本章代码阅读任务
 
-- `Dockerfile`
-- `docker-compose.yml`
-- `Makefile`
-- `.github/workflows/ci.yml`
-- `scripts/validate_frontend.py`
-- `scripts/validate_k8s.sh`
+| 顺序 | 打开位置 | 这次只看什么 |
+| --- | --- | --- |
+| 1 | `Dockerfile` 的 `builder` 阶段、三个 `go build`、runtime COPY、`USER 10001:10001` | 画源码到三个二进制再到 non-root 运行镜像的过程，确认最终镜像没有 Go 编译器 |
+| 2 | `docker-compose.yml` 的 `mysql`、`redis`、`logic`、`gateway-a`、`gateway-b`、`transfer` service | 对每个 service 写 command、内部服务名地址、宿主机端口和依赖；注意本地 MySQL root 只用于演示 |
+| 3 | `Makefile` 的 `fmt-check`、`vet`、`test`、`test-race`、`build`、`compose-config`、`docs-check`、`frontend-static-check` | 把每个 target 展开成实际命令，不把 Make 当成隐藏的自动魔法 |
+| 4 | `.github/workflows/ci.yml` 的 trigger、`test-build`、`docker-build`、`manifest-check` | 找到 `needs`、独立 runner、SHA 镜像标签、`push:false` 和 K8s render |
+| 5 | `scripts/validate_frontend.py`、`scripts/validate_docs.py`、`scripts/validate_k8s.sh` | 每个脚本只读入口和失败条件，写出它检查什么、漏掉什么 |
+
+看到这个程度就停：你能从一次 commit/push 讲到 runner 拉取该 SHA、执行 vet/test/race/build、构建但不推送镜像、渲染清单；也能解释容器以 10001 而非 root 运行。暂时不必学习 Docker overlayfs、镜像 registry 实现和 GitHub Actions 自建 runner 运维。
 
 ## 动手练习
 
@@ -241,5 +246,24 @@ make k8s-check
 2. Compose 为什么不是生产多服务器证明？
 3. CI 与 CD 有什么区别？
 4. 为什么发布镜像应使用 commit SHA？
+
+## 动手练习与闭卷检查参考答案
+
+### 动手练习答案
+
+1. `make test` 证明当前 Go 单元/包测试通过，不证明没写到的并发和真实依赖场景。
+2. `make build` 证明三个 main 及依赖可编译，不证明二进制启动后依赖可用。
+3. `make compose-config` 证明 Compose 变量替换和 YAML 合并可解析，不会启动容器，也不证明网络链路正确。
+4. `make frontend-static-check` 证明页面关键控件、函数和接口契约没有明显漂移，不是真实浏览器端到端测试。
+5. `make k8s-check` 运行仓库的 K8s 规则和渲染检查，证明清单结构可合并；它不创建集群、不拉镜像，也不证明云 LB、存储和 Secret 已准备好。
+
+CI 还单独执行 `make vet` 与 `make test-race`。vet 是静态可疑用法检查，race 只在测试实际执行到的并发路径上探测数据竞争，都不能替代业务正确性测试。
+
+### 闭卷检查答案
+
+1. 镜像是只读运行模板，容器是该镜像的一次运行实例；同一镜像可启动多个容器。
+2. Compose 在一台开发机的 Docker 网络中复现多组件，单节点依赖、宿主机端口和演示凭据都不是多服务器生产高可用证据。
+3. CI 自动检查和构建一个明确 commit；CD 把通过检查的制品发布到环境并处理验证、回滚。当前 Actions 不推镜像，仓库只有发布脚本示例。
+4. SHA 标签不可变地对应源码和 CI 结果，运行版本可追溯，回滚能指向上一明确镜像；`latest` 会不断改变指向。
 
 下一步：[18 Kubernetes 多服务器部署](18_KUBERNETES_DEPLOYMENT.md)

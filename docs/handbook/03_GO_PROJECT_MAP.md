@@ -94,7 +94,7 @@ routes.go
 
 例如本地 Redis 地址和公司 Redis 地址不同，但不需要复制两份业务代码。
 
-## 第一次源码导航练习
+## 本章代码阅读任务
 
 执行：
 
@@ -106,6 +106,17 @@ rg "service Logic" api/protocol.proto
 
 目标不是理解所有结果，而是能回答“入口在哪里”。
 
+建议按下面顺序核对结果：
+
+| 顺序 | 打开位置 | 这次只看什么 |
+| --- | --- | --- |
+| 1 | `cmd/gateway/main.go`、`cmd/logic/main.go`、`cmd/transfer/main.go` 的 `func main()` | 把三个目录与三个进程职责对应起来 |
+| 2 | `cmd/gateway/internal/handler/routes.go` 的 `RegisterHandlers` | 看一个路由表怎样把路径连接到 Handler |
+| 3 | `api/protocol.proto` 的 `service Logic`、`WireMessage` | 看手写协议字段，不进入生成的 `.pb.go` |
+| 4 | `cmd/gateway/internal/svc/servicecontext.go` 的 `ServiceContext` | 只看它持有哪些共享依赖，不追初始化细节 |
+
+看到这个程度就停：给你一个 HTTP 路径时，你知道先去 `routes.go`，再找 Handler、Gateway Logic 和 `ServiceContext`；给你内部消息字段时，你先看 `.proto`。暂时不必读生成文件、所有业务 Logic 或每个配置环境变量。
+
 ## 闭卷检查
 
 1. `cmd/gateway`、`cmd/logic`、`cmd/transfer` 分别是什么？
@@ -113,5 +124,15 @@ rg "service Logic" api/protocol.proto
 3. 为什么优先读 `.proto`，而不是背生成的 `.pb.go`？
 4. 配置文件和业务代码分别决定什么？
 5. 三个进程和四层目录分别解决什么问题，又各增加了什么成本？
+
+## 源码导航与闭卷检查参考答案
+
+三个命令应分别命中三个 `func main()`、Gateway 的 `RegisterHandlers` 和 `.proto` 中的 `service Logic`。练习完成标准不是看懂搜索结果的每一行，而是能在一分钟内重新定位它们。
+
+1. Gateway 接入客户端并维护连接；Logic 处理消息、登录和历史等核心流程；Transfer 异步消费群投递任务。
+2. Handler 处理网络输入输出，Gateway Logic 编排单次接口，ServiceContext 保存可复用依赖，Types 定义 HTTP 请求和响应结构。
+3. `.proto` 是人工维护的协议契约，字段少且意图清楚；`.pb.go` 是工具生成实现，篇幅大且会随生成器变化。
+4. 业务代码决定程序具备什么行为；配置决定这次运行监听哪里、连接哪些依赖和使用哪些开关。
+5. 三进程拆分隔离连接、同步业务和群扩散并允许单独扩容，成本是 RPC、部署和排障变复杂；四层拆分代码职责，成本是文件和调用跳转增加。
 
 下一步：[04 第一次 HTTP 请求](04_HTTP_FIRST_REQUEST.md)

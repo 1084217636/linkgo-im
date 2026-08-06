@@ -171,7 +171,23 @@ MySQL/Redis          15
 真实性               5
 ```
 
-低于 70 回到对应教材；70–84 继续源码定位；85 以上再做压力追问。
+低于 70 回到对应教材；70 到 84 继续源码定位；85 以上再做压力追问。
+
+## 本章代码阅读任务
+
+面试准备不能只背上面的口径。下面七个位置用于证明你能把回答落回代码。
+
+| 顺序 | 打开位置 | 面试前必须能现场指出什么 |
+| --- | --- | --- |
+| 1 | `api/protocol.proto` 的 `WireMessage` | 不看文档解释 `client_msg_id/message_id/session_id/seq/trace_id` 的区别 |
+| 2 | `internal/server/manager.go` 的 `ClientConn`、`ClientManager` 与 `internal/server/route.go` 的三个路由操作 | 解释本机连接、共享位置和旧连接 fencing |
+| 3 | `internal/server/client.go` 的 `StartClientLoop`、`pool.go` 的 `SubmitWithResult`、`client_error.go` 的 `writePushResult` | 从浏览器帧讲到 uid 分片，再讲 accepted/rejected 如何回发送端 |
+| 4 | `internal/logic/handler.go` 的 `PushMessage`、`saveMessage`、`deliverPersistedMessage` 与 `internal/delivery/redis.go` 的 `Deliver` | 现场指出权限、幂等、seq、MySQL、pending、route、PUBLISH 的先后 |
+| 5 | `cmd/transfer/main.go` 的 `processFetchedMessage`、`commitFetchedMessage` 与 `cmd/transfer/recipient_lease.go` | 回答提交位点前宕机、lease owner 崩溃和 retry/DLQ 失败 |
+| 6 | `internal/logic/redpacket.go` 的 `Claim` | 指出 `FOR UPDATE`、唯一键回读、expired/finished Commit 和资金系统边界 |
+| 7 | `internal/logic/bot.go` 的 `triggerBotResponse` 与 `internal/ai/ask_service.go` 的 `Ask` | 指出 goroutine、检索、provider、审计和再次 PushMessage |
+
+看到这个程度才算可面试：面试官随机抽一个名词时，你能在十秒内说出文件和符号，在两分钟内画完相邻调用，在追问失败时明确当前处理与缺口。暂时不必背行号、第三方库源码和没有测试数据支撑的 QPS/P99。
 
 ## 闭卷检查
 
@@ -179,5 +195,33 @@ MySQL/Redis          15
 2. 解释 MySQL 成功、Redis 通知前宕机的当前结果。
 3. 说出三个绝对不能夸大的边界。
 4. 从 `WireMessage` 讲到 B 的 ACK，至少指出五个代码位置。
+
+## 面试追问与闭卷检查参考答案
+
+### 追问树参考口径
+
+1. A、B 不在一台 Gateway：A 经 WebSocket 到 Gateway-1，uid 分片后 gRPC 调 Logic；Logic 写 MySQL，RedisDelivery 先记 B 的 pending，再读 `route:B` 并发布到 Gateway-3；Gateway-3 查本机 B、写 WebSocket，B 返回 ACK。
+2. B 离线：消息正文已在 MySQL，Redis 保留 pending/ack_idx 并写 offline；重连回放 pending，可按一个授权 session 的 last_seq 补近期 timeline。当前不自动从 MySQL 扫全部会话。
+3. 群聊不同：一条消息要扇出多个成员。Logic 写一条 MySQL 消息并把 recipients 快照写 Kafka，Transfer 异步逐成员复用 RedisDelivery。
+4. Pub/Sub 会丢为何还用：它只承担已知目标 Gateway 的低延迟在线通知，不承担事实存储；MySQL、pending、ACK 和历史负责其他层级。代价是 Redis 成为实时强依赖且仍有通知窗口。
+5. 为什么不加 MongoDB：当前消息结构固定，关系、事务、唯一约束和按 session/seq 查询均由 MySQL 满足；没有容量和查询证据时再加数据库会产生双事实源和同步成本。
+6. 为什么 Kafka：同步逐成员投递会随群规模拉长 Logic 请求并造成级联拥塞；Kafka 让 Transfer 缓冲、独立扩容和重试。它不防 Go 死锁，Logic 仍同步查完整 recipients。
+7. Etcd 与 p2c_ewma：Etcd维护 Logic 实例地址和租约；p2c_ewma 在已发现实例中结合少量候选和近期延迟选一次 RPC。它不是一致性哈希。
+8. MySQL 成功、Redis 前宕机：历史已存在但没有自动实时通知；当前无 Outbox。发送端复用 client_msg_id 重试时可从 MySQL 标准记录恢复，或者通过历史接口看到消息。
+9. B 收到但 ACK 丢失：pending 保留，超时后同 message_id 重推；客户端去重并再次 ACK，服务器再清理。
+10. Kafka 投递完成、提交前宕机：重启会重复 Fetch；`message_id+recipient` 的 done 跳过已完成成员，processing lease 到期可接管，仍可能发生安全的重复投递。
+11. Redis、Logic、Transfer 宕机：Redis 影响 route/seq/pending/PubSub，MySQL 历史仍在；Logic 中断正在执行的 gRPC，已提交消息仍在但 Outbox 缺失；Transfer 宕机时未提交 Kafka 记录保留，重启可继续。
+12. `WireMessage` 关键字段：from/to/to_type/msg_type/body、client_msg_id、message_id、session_id、seq、ack_message_id、last_seq、sent_at、trace_id。重点能解释 ID 和进度字段，不要求死背生成结构。
+13. `ClientManager`：当前 Gateway 进程内的 `sync.Map`，把 uid 映射为当前 `ClientConn`；`Add` 替换旧连接，`Remove` 只删除匹配对象，`GetConn` 用于最后一跳。
+14. `RedisDelivery.Deliver`：先写 pending_ack/ack_idx/ack_retry，再 GET route、封装 envelope、PUBLISH；无路由或无订阅者时写 offline，并只清理匹配 route。
+15. 群成员解析：`internal/logic/handler.go` 的 `resolveRecipients` 从 MySQL 查询 active `group_members` 并排除发送者，结果随 Kafka job 发送。
+16. 红包加锁：`internal/logic/redpacket.go` 的 `RedPacketService.Claim` 在 MySQL 事务中执行 `SELECT ... FOR UPDATE`，锁保持到 Commit/Rollback。
+
+### 闭卷检查答案
+
+1. 参考 1 分钟版本应完整覆盖：多 Gateway 本机连接、共享 Redis route、Etcd 发现 Logic、MySQL 先落库、Redis pending/PubSub、B ACK、Kafka 群扩散、红包和 AI 边界。只列技术名词不算通过。
+2. MySQL 中消息历史保住；实时 pending/通知可能没有发生，发送方也可能收不到结果。当前靠同 client_msg_id 主动重试或历史查询恢复，缺少事务 Outbox 自动补发。
+3. 任意三项均可，但必须具体，例如：重连不自动扫 MySQL 全部会话；单账号只保留一个 route，不支持多端；Redis/MySQL 只接稳定入口，不原生实现 Cluster/Sentinel/读写分离；Logic 仍加载完整群成员；K8s 未在真实生产集群验证。
+4. 一条合格路径至少指出 `api/protocol.proto::WireMessage`、`internal/server/client.go::StartClientLoop`、`internal/server/pool.go::SubmitWithResult`、`internal/logic/handler.go::PushMessage/saveMessage`、`internal/delivery/redis.go::Deliver`、`internal/server/manager.go::SubscribeRedis`、`internal/server/ack.go::AckMessage`。
 
 下一步：[21 学习检查表](21_CHECKLIST.md)

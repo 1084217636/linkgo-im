@@ -89,6 +89,8 @@ Logic 的项目主路径不是只依赖一个 Service 长连接做负载均衡�
 
 Secret 也通过环境变量注入当前容器，但应由部署平台或秘密管理系统创建，而不是把真实值提交到 Git。它解决的是“把敏感值与普通源码配置分开管理”；代价是还要管理谁能读取、怎样轮换以及存储时是否加密。基础 Secret 的内容常见只是 Base64 编码，编码不是加密。
 
+本地 demo 清单里的 MariaDB readiness 也从 Secret 注入的 `MYSQL_ROOT_PASSWORD` 环境变量读取，不再把 `-proot` 写死在探针命令里。这避免凭据再复制一份到 Pod spec；它仍是本地演示 root 账号，不是生产最小权限数据库账号。
+
 ### Probe
 
 K8s 周期请求健康接口：readiness 决定是否接收新流量，liveness 判断是否需要重启容器。
@@ -96,6 +98,8 @@ K8s 周期请求健康接口：readiness 决定是否接收新流量，liveness 
 如果没有 readiness，新 Pod 进程刚启动、依赖尚未准备好时就可能收到请求；选择 readiness 后，失败 Pod 会从 Service 的可用端点中移除。代价是检查条件过严会把仍能提供部分能力的 Pod 摘掉。
 
 如果没有 liveness，已经卡死但进程未退出的容器可能一直占着资源；选择 liveness 后，连续失败会触发重启。代价是把短暂 Redis 抖动写进 liveness 可能造成重启风暴，所以依赖检查通常放 readiness。当前 Logic 使用 `tcpSocket` 探针，只能证明 gRPC 端口能建立 TCP 连接，不等于每条业务链路和依赖都健康。
+
+三个应用容器的 `securityContext` 都要求 `runAsNonRoot: true`，使用 UID/GID 10001，禁止权限提升并 drop 全部 capabilities。这与 Dockerfile 的 `USER 10001:10001` 对应。它降低容器进程默认权限，但仍要依靠 NetworkPolicy、Secret 权限和宿主机/集群安全共同限制攻击面。
 
 ## 公司场景的目标单集群拓扑
 
@@ -191,15 +195,19 @@ CI 已验证并由调用者推送 image:<commit-sha>
 
 还要区分两套清单：`scripts/k8s_release.sh` 当前固定应用包含单节点依赖的 `deploy/k8s` demo base；`deploy/k8s/production` 只渲染应用工作负载，但发布脚本尚未支持选择该 overlay。因此可以演示脚本逻辑，不能把它说成已完成 production overlay 的一键发布。
 
-## 代码锚点
+## 本章代码阅读任务
 
-- `deploy/k8s/gateway.yaml`
-- `deploy/k8s/logic.yaml`
-- `deploy/k8s/transfer.yaml`
-- `deploy/k8s/configmap.yaml`
-- `deploy/k8s/production/`
-- `scripts/k8s_release.sh`
-- `scripts/validate_k8s.sh`
+| 顺序 | 打开位置 | 这次只看什么 |
+| --- | --- | --- |
+| 1 | `deploy/k8s/gateway.yaml` 的 Deployment、Service、Probe、`rollingUpdate`、`securityContext` | 把 replicas、selector、port、readiness/liveness 和 UID 10001 对应到本章概念 |
+| 2 | `deploy/k8s/logic.yaml` 的 `POD_IP` env 与 Etcd 配置、`deploy/k8s/transfer.yaml` 的消费者 env | 解释 Logic 为什么注册 Pod IP，以及三个应用怎样使用同一镜像运行不同命令 |
+| 3 | `deploy/k8s/configmap.yaml`、`secret.yaml` 与三个 Deployment 的 `envFrom` | 分类普通地址和敏感 DSN/JWT/AI Key，确认生产真实值不能提交 Git |
+| 4 | `deploy/k8s/dependencies.yaml` 的 MariaDB env 和 readiness command | 找到 `MYSQL_ROOT_PASSWORD` 来自 Secret，并由 `mysqladmin ... "$MYSQL_ROOT_PASSWORD"` 使用，不出现硬编码 `-proot` |
+| 5 | `deploy/k8s/hpa.yaml` 的三个 HPA | 看 target、min/max replicas 和 CPU 指标，写出为何 CPU 不足以描述 Gateway 连接压力 |
+| 6 | `deploy/k8s/production/kustomization.yaml`、`configmap.yaml`、`secret.example.yaml` | 确认 overlay 只包含应用工作负载，外部依赖是占位稳定地址，示例 Secret 未被自动包含 |
+| 7 | `scripts/validate_k8s.sh` 与 `scripts/k8s_release.sh` | 找到 non-root、Secret、不可变镜像校验，以及 apply、set image、rollout status、smoke、ERR rollback 顺序 |
+
+看到这个程度就停：你能拿一份 Gateway YAML 指出 Pod 由谁创建、Service 怎样选它、何时进入流量、以什么用户运行、怎样滚动更新；也能解释 production overlay 为什么只引用外部依赖。暂时不必搭真实云集群、学习 scheduler 源码、CNI/CSI 内部实现和数据库 Operator。
 
 ## 动手练习
 
@@ -222,5 +230,22 @@ kubectl kustomize deploy/k8s/production --load-restrictor LoadRestrictionsNone
 4. Logic 为什么要注册 Pod IP？
 5. 新增 Gateway 为什么不会自动搬迁旧 WebSocket？
 6. production overlay 为什么不部署单节点 MySQL/Redis？
+
+## 动手练习与闭卷检查参考答案
+
+### 动手练习答案
+
+`kubectl kustomize deploy/k8s` 的 demo 输出包含 Gateway/Logic/Transfer，也包含本地单节点 Redis、MariaDB、Kafka、Etcd 等依赖，适合练习环境。`kubectl kustomize deploy/k8s/production` 只渲染应用 Deployment、Service、HPA、PDB、NetworkPolicy 等，并把依赖地址改为 `*.example.internal`；它不包含 `secret.example.yaml`，不能原样 apply 成公司环境。两条命令只渲染文本，不连接集群。
+
+阅读渲染结果还应确认三个应用有 `runAsNonRoot: true` 和 UID 10001；demo MariaDB readiness 通过 Secret-backed 环境变量读取密码。看到这些字段只证明清单表达了约束，不证明集群准入策略和秘密管理已经生产落地。
+
+### 闭卷检查答案
+
+1. Docker 把程序和运行文件做成一致镜像；Kubernetes 负责在多个 Node 上调度、维持副本、提供发现、探活、扩缩和滚动发布。
+2. Deployment 维护期望数量的 Pod；Pod 内运行应用容器；Service 用 label selector 找 ready Pod，并给它们提供稳定入口。
+3. ConfigMap 保存非敏感配置；Secret 分离 DSN、密码和 JWT/AI Key。Secret 仍需 RBAC、加密存储和轮换，Base64 不是加密。
+4. `0.0.0.0` 只能表示本进程监听所有网卡，不能作为其他 Pod 的目标；Logic 用实际 `POD_IP:9001` 注册 Etcd，Gateway 才能直连实例。
+5. 已建立 WebSocket 的 TCP 状态和 `ClientConn` 在旧 Pod 中。新增 Pod 只会承接新连接，旧连接要断开、客户端重连并重建 Redis route。
+6. 单 Pod 数据库随 Pod/Node 故障会形成数据和可用性单点。production overlay 把有状态依赖放到应用发布边界之外，通过托管或独立 HA 稳定入口连接，也诚实表明仓库没有实现这些外部集群。
 
 下一步：[19 完整调用链与代码地图](19_COMPLETE_CODE_WALK.md)

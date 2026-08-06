@@ -15,7 +15,8 @@
 3. `conversation`、`session_id` 和一条 `message` 有什么区别？
 4. 登录时最近会话从哪里读取？
 5. `last_seq`、`read_seq`、`unread_count` 怎样计算？
-6. 当前会话与群组功能有哪些一致性和权限缺口？
+6. 关系数据库不可用时，为什么发送、群扩散和成员列表都要拒绝？
+7. 当前会话与群组功能还有哪些一致性和权限边界？
 
 ## 1. 消息不是全部业务数据
 
@@ -137,7 +138,9 @@ WHERE user_id = ? AND friend_id = ?;
 
 只有 `normal` 才能发送。
 
-所以 Redis route 只回答“B 在线哪里”，不回答“A 有没有权利给 B 发消息”。权限事实来自 MySQL 好友关系。
+所以 Redis route 只回答“B 在线哪里”，不回答“A 有没有权利给 B 发消息”。权限事实来自 MySQL 好友关系。如果 Logic 没有数据库句柄，或查询因表缺失、连接错误而失败，当前代码会 fail-closed 拒绝发送，不会把“无法判断”当成“允许”。
+
+为什么不在 MySQL 故障时临时根据 Redis 缓存放行？好友删除、拉黑或群成员移除后，缓存可能还是旧值。放行会把数据库故障变成越权发送。当前选择的代价是 MySQL 问题会直接影响发消息可用性，生产环境需要通过高可用数据库入口和故障恢复降低这个影响。
 
 ## 6. 群组与群成员为什么也分表
 
@@ -173,7 +176,7 @@ joined_at
 
 一个群只有一条 `im_groups`，但可以有很多条 `group_members`。
 
-如果把群名、群状态、每个成员角色全塞进一行或为每个成员重复群信息，修改群名会更新很多副本，角色和退出状态也很难单独约束。拆表后，`im_groups` 保存群本身，`group_members` 保存“谁以什么状态属于群”；代价是发送、列表和权限校验要额外查询或 JOIN，并且 Redis 成员缓存需要处理与 MySQL 最终关系的一致性。
+如果把群名、群状态、每个成员角色全塞进一行或为每个成员重复群信息，修改群名会更新很多副本，角色和退出状态也很难单独约束。拆表后，`im_groups` 保存群本身，`group_members` 保存“谁以什么状态属于群”；代价是发送、列表和权限校验要额外查询或 JOIN，并且创建群后写入的 Redis 成员缓存与 MySQL 之间还需要一致性策略。当前消息验权和 recipients 解析不会在 MySQL 失败时回退到 Redis 成员集合。
 
 ## 7. 当前创建群的真实链路
 
@@ -183,22 +186,24 @@ joined_at
 POST /api/v1/group/create
 → JWT 得到 creator_id
 → 把 creator 自动加入成员集合
-→ MySQL 事务 upsert im_groups
-→ 事务内 upsert 每个 group_members
+→ MySQL 事务 INSERT im_groups
+→ 相同 group_id 已存在时回滚并拒绝，不接管原群
+→ 事务内写入每个 group_members
 → commit
 → 再把成员写入 Redis group_members:<gid>
 → 再写 user_groups:<uid>
 ```
 
-MySQL 是正常路径的群成员事实来源；Redis 集合用于兼容和加速。
+MySQL 是群和群成员的授权事实来源；Redis 集合是创建后的辅助索引，不在数据库失败时替代验权。拒绝重复 group_id 的理由是：如果把创建写成无条件 upsert，另一个已登录用户可能用同一 ID 覆盖群主和成员，这不是普通冲突，而是资源接管风险。
+
+查询群成员列表时，服务端先从 JWT 取请求者 uid，再查询该用户的 `group_members.status`。只有 `active` 成员才能继续查全部 active 成员；非成员、数据库不可用和查询错误都不会降级放行。
 
 当前代码需要诚实说明几个缺口：
 
 - 没有检查请求中的每个成员用户是否真实存在；
-- 对已存在的相同 `group_id`，没有先验证当前调用者是原 owner，就会更新群名和状态；
-- MySQL 已 commit 后 Redis 更新失败时，接口可能返回错误，但数据库已经成功，没有补偿任务；
+- MySQL 已 commit 后 Redis 更新失败时，接口记录错误但仍按数据库成功返回，避免让客户端误以为可以重新创建同一群；当前没有缓存重建任务，Redis 辅助索引可能暂时缺失；
 - 没有完整的邀请审批、退群、踢人、解散群管理接口；
-- 查询群成员列表的 REST 接口目前只要求登录，没有校验请求者本人属于该群。
+- 没有更细的 owner/admin/member 管理 RBAC；当前成员列表只区分“active 成员”和“其他人”。
 
 因此它是基本群关系原型，不是完整商业群管理系统。
 
@@ -212,6 +217,8 @@ mute_until 必须已经到期，或者为 0
 ```
 
 群消息的 recipients 来自全部 active 成员，发送者本人被排除。
+
+这份 recipients 也只从 MySQL `group_members` 读取。如果 DB 句柄缺失或查询失败，Logic 不会从 Redis `group_members:<gid>` 猜一份成员列表，而是终止群任务发布。否则已退群或被移除的用户可能继续出现在 Kafka job 的收件人快照中。
 
 查询群历史时也会先检查请求用户仍是 active 成员，再查询 `messages`。
 
@@ -292,6 +299,8 @@ user:conversation:read:<uid>            HASH
 ```
 
 `user:conversations` 的 score 是最近更新时间，所以能倒序取最近会话。
+
+异步步骤可能乱序完成，因此 Redis 更新不是无条件覆盖：`updateConversationLastScript` 只接受不小于当前 `last_seq` 的消息，`user:conversations` 使用 `ZADD GT` 只在新 score 更大时推进。MySQL 的 upsert 也使用 `GREATEST(last_seq, VALUES(last_seq))`。这些保护避免旧消息晚完成时把会话摘要倒退，但不能把异步会话元信息变成与 messages 同事务的强一致结果。
 
 发送者发送一条消息后，Redis 中其 `read_seq` 会推进到该消息 seq。
 
@@ -414,19 +423,21 @@ Transfer 管群扩散
 
 可以这样说：
 
-> messages 只能保存消息正文，完整 IM 还需要好友、群成员和会话关系。我的好友申请与好友关系分表，接受申请时在一个 MySQL 事务里更新申请并写双向关系；Logic 发送单聊前校验 normal 好友，群聊前校验 active 成员和禁言时间。会话用 c2c:排序后的两个 uid 或 group:gid 标识，conversations 保存 last_seq 和更新时间，conversation_members 保存用户参与关系和 read_seq。登录先读 Redis 最近会话热索引，未命中回源 MySQL。当前会话元信息是消息落库后的异步更新，接收方 ACK read_seq 也只写 Redis，群管理权限和历史分页还不完整，所以我把它描述为关系与会话基本闭环，不夸大成商业级多端已读系统。
+> messages 只能保存消息正文，完整 IM 还需要好友、群成员和会话关系。我的好友申请与好友关系分表，接受申请时在一个 MySQL 事务里更新申请并写双向关系；Logic 发送单聊前校验 normal 好友，群聊前校验 active 成员和禁言时间。MySQL 是这些授权和群 recipients 的事实源，数据库不可用时会拒绝，不会用可能过期的 Redis 集合降级放行。创建群遇到重复 group_id 会回滚，只有 active 成员才能查成员列表。会话用 c2c:排序后的两个 uid 或 group:gid 标识，conversations 保存 last_seq 和更新时间，conversation_members 保存用户参与关系和 read_seq。登录先读 Redis 最近会话热索引，未命中回源 MySQL。当前会话元信息是消息落库后的异步更新，接收方 ACK read_seq 也只写 Redis，群管理 RBAC 和历史分页还不完整，所以我不会把它夸大成商业级多端已读系统。
 
-## 代码锚点
+## 本章代码阅读任务
 
-按顺序阅读：
+| 顺序 | 打开位置 | 这次只看什么 |
+| --- | --- | --- |
+| 1 | `sql/init.sql` 的 `friend_requests`、`friend_relations`、`im_groups`、`group_members`、`conversations`、`conversation_members` | 对每张表写一句“它保存的事实”，并圈出联合主键或唯一约束 |
+| 2 | `cmd/gateway/internal/handler/routes.go` 中好友、群组 Route，再看 `cmd/gateway/internal/logic/friendlogic.go` 的 `Apply`、`Respond` | 找到 JWT uid、申请状态更新、MySQL transaction 和双向关系写入 |
+| 3 | `cmd/gateway/internal/logic/groupcreatelogic.go` 的 `Create` | 看 creator 来自 Context、重复 group_id 返回冲突、MySQL commit 在 Redis cache 前、缓存失败只记录日志 |
+| 4 | `cmd/gateway/internal/logic/groupmemberslogic.go` 的 `List` | 找到请求者必须是 active 成员的第一条查询，再看第二条查询怎样列成员 |
+| 5 | `internal/logic/relations.go` 的 `validateSendPermission`、单聊和群聊校验函数 | 确认 DB 缺失、查询错误和关系不允许都 fail-closed，不回退到 Redis 猜权限 |
+| 6 | `internal/logic/handler.go` 的 `buildSessionID`、`resolveRecipients`、`GetHistory` | 对比单聊好友、群成员、历史授权与 recipients 解析 |
+| 7 | `internal/logic/conversation.go` 的 `listConversations`、`updateConversationState`、`cacheConversationState`、`persistConversationState` | 看 Redis miss 回 MySQL、`last_seq` 单调保护和异步 3 秒 MySQL 更新 |
 
-1. `sql/init.sql`：`friend_*`、`im_groups`、`group_members`、`conversations`、`conversation_members`。
-2. `cmd/gateway/internal/logic/friendlogic.go`：好友申请和事务。
-3. `cmd/gateway/internal/logic/groupcreatelogic.go`：创建群和 Redis 更新。
-4. `internal/logic/relations.go`：消息发送权限与群 recipients。
-5. `internal/logic/conversation.go`：会话 Redis/MySQL 更新与登录列表。
-6. `internal/logic/handler.go`：会话 ID 和历史查询。
-7. `cmd/gateway/internal/handler/routes.go`：这些 REST 接口在哪里注册。
+看到这个程度就停：你能从一条好友申请推到双向关系，从建群推到成员授权，并能分清 messages、conversation 摘要和成员 read seq。暂时不必学习完整社交产品的邀请审批、踢人、解散群、消息搜索和多设备已读协议。
 
 ## 动手练习
 
@@ -453,5 +464,29 @@ Transfer 管群扩散
 9. 为什么不能说 Gateway 完全不访问 MySQL？
 
 九个问题能闭卷回答后，再进入第 14 章。
+
+## 动手练习与闭卷检查参考答案
+
+### 动手练习答案
+
+1. A 申请时写入或把 `friend_requests(A,B)` 更新为 pending。
+2. B 接受时在一个事务中把这条申请改为 accepted，并写入 `friend_relations(A,B,normal)` 与 `friend_relations(B,A,normal)`。
+3. 三类变化是申请流程行、A 指向 B 的关系行、B 指向 A 的关系行。
+4. A 发第一条消息后，`messages` 有正文、ID、seq 和会话 ID；`conversations` 异步保存该会话的 last_seq/updated_at；`conversation_members` 异步保存 A、B 参与关系，发送方 A 的 read_seq 可推进，B 初始为 0。
+5. B ACK 会推进 Redis `user:conversation:read:B`，当前不会把 B 的接收进度写回 MySQL `conversation_members`。
+
+G100 图中 `im_groups` 只有一行，保存名称、owner 和群状态；每个 owner/admin/member 各有一条 `group_members(group_id,user_id)` 行，保存角色、禁言和成员状态。
+
+### 闭卷检查答案
+
+1. 申请是可 pending/accepted/rejected 的流程历史；好友关系是当前是否允许互动的状态，生命周期和查询目标不同。
+2. 双向两行便于每个用户按自己的 uid 查好友；事务让申请状态和两行关系一起成功或回滚，避免单向好友。
+3. route 回答 B 当前连接在哪个 Gateway；好友关系回答 A 是否有权给 B 单聊。
+4. 对两个 uid 排序后，A 到 B 与 B 到 A 得到同一个 `c2c:min:max`，消息能归入同一会话和 seq 空间。
+5. conversations 是会话摘要和 last_seq；messages 是每条具体消息正文与服务端 ID。
+6. 先查 Redis `user:conversations:<uid>`；为空时查询 MySQL 会话、成员和最新消息，再尽力回填 Redis。
+7. 接收方 ACK 只更新 Redis，刷新或 Redis 丢失会回源旧 MySQL read_seq；当前还是单值路由，也没有 per-device 游标，ACK 本身也不是肉眼已读。
+8. 当前不会验证请求中每个成员账号存在，没有完整邀请、退群、踢人和角色 RBAC；MySQL commit 后 Redis 缓存失败只记录日志且无重建任务。重复 group_id 会拒绝，非 active 成员不能列成员。
+9. 好友、建群、成员列表、红包和 AI 等 Gateway REST Logic 直接持有并访问 MySQL；只有消息主链路的登录、历史和 WebSocket Push 通过独立 Logic。
 
 下一步：[14 红包并发一致性](14_RED_PACKET.md)

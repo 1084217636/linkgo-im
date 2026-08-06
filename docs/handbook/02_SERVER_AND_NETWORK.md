@@ -88,13 +88,15 @@ Logic    127.0.0.1:9001
 
 公司部署时，它们可以在不同机器或容器中。代码职责相同，只是地址、服务发现和共享依赖不同。
 
-## 代码锚点
+## 本章代码阅读任务
 
-- `cmd/gateway/etc/gateway-api.yaml`：Gateway 端口和配置。
-- `cmd/logic/etc/logic.yaml`：Logic 监听地址。
-- `cmd/gateway/main.go`、`cmd/logic/main.go`：两个不同进程的入口。
+| 顺序 | 打开位置 | 这次只看什么 |
+| --- | --- | --- |
+| 1 | `cmd/gateway/etc/gateway-api.yaml` 的 `Host`、`Port` | 把监听地址和 `127.0.0.1:8090` 的 IP/端口概念对应起来 |
+| 2 | `cmd/logic/etc/logic.yaml` 的 `ListenOn` | 确认 Logic 监听的是另一端口，并找到 Etcd 配置但先不展开 |
+| 3 | `cmd/gateway/main.go` 与 `cmd/logic/main.go` 的 `func main()` | 确认两个入口分别读取配置并启动各自服务 |
 
-只找 `package main` 和 `func main()`，暂不追函数调用。
+看到这个程度就停：你能解释“两个进程即使在同一电脑上，也靠不同端口通信，各自的 map 仍互不可见”。暂时不必读 `overrideConfigFromEnv`、Etcd 注册和 gRPC 生成代码。
 
 ## 闭卷检查
 
@@ -103,5 +105,13 @@ Logic    127.0.0.1:9001
 3. HTTP、WebSocket、gRPC 在项目中分别连接谁？
 4. 本地运行多个服务和公司多服务器部署的共同点是什么？
 5. 为什么项目没有只用一种协议完成全部通信？
+
+## 闭卷检查参考答案
+
+1. IP 找到网络中的机器或网络接口，端口找到该机器上的具体网络程序。
+2. Go map 属于创建它的进程内存。Gateway-1 与 Gateway-3 是两个进程，没有共享这块内存。
+3. HTTP 连接浏览器与 Gateway 的一次性接口；WebSocket 连接浏览器与 Gateway 的实时长连接；gRPC 用于 Gateway 与 Logic 的内部远程调用。
+4. 两者都运行相同服务代码并通过网络地址通信。区别主要是进程落在同一电脑还是不同机器或容器，以及依赖地址怎样配置。
+5. 三类交互约束不同。登录适合请求响应，实时下行需要服务端主动推送，内部 Go 服务需要强类型远程调用。强行统一会让其中一些场景更复杂。
 
 下一步：[03 看懂 Go 项目目录](03_GO_PROJECT_MAP.md)
