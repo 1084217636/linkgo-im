@@ -500,6 +500,11 @@ func (h *LogicHandler) saveMessage(ctx context.Context, frame *api.WireMessage) 
 		if handled {
 			return persisted, err
 		}
+		metrics.ConversationOutbox.WithLabelValues("schema_missing_fallback").Inc()
+		logx.Errorw("conversation outbox unavailable; falling back to direct message persistence",
+			logx.Field("message_id", frame.MessageId),
+			logx.Field("session_id", frame.SessionId),
+		)
 	}
 	return h.saveMessageWithoutOutbox(ctx, frame)
 }
