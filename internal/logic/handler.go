@@ -53,6 +53,10 @@ type LogicHandler struct {
 	Delivery        *delivery.RedisDelivery
 	GroupDispatcher GroupDispatcher
 	BotResponder    BotResponder
+	// ConversationOutbox enables atomic message + conversation-summary event
+	// persistence. It is enabled by the logic service after the migration is
+	// applied; tests and legacy callers can keep the direct fallback.
+	ConversationOutbox bool
 }
 
 func (h *LogicHandler) PushMessage(ctx context.Context, req *api.PushMsgReq) (*api.PushMsgReply, error) {
@@ -491,6 +495,76 @@ WHERE session_id = ?
 }
 
 func (h *LogicHandler) saveMessage(ctx context.Context, frame *api.WireMessage) (bool, error) {
+	if h.ConversationOutbox && h.DB != nil {
+		persisted, handled, err := h.saveMessageWithOutbox(ctx, frame)
+		if handled {
+			return persisted, err
+		}
+	}
+	return h.saveMessageWithoutOutbox(ctx, frame)
+}
+
+// saveMessageWithOutbox commits the durable message and the conversation
+// summary event in one InnoDB transaction. handled=false means the deployed
+// schema has not been migrated yet, so the caller may use the legacy path.
+func (h *LogicHandler) saveMessageWithOutbox(ctx context.Context, frame *api.WireMessage) (persisted, handled bool, err error) {
+	tx, err := h.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return false, true, err
+	}
+	rollback := func() {
+		_ = tx.Rollback()
+	}
+	query := `
+INSERT INTO messages (message_id, client_msg_id, conversation_id, session_id, seq, from_uid, to_id, to_type, content, create_time)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`
+	if _, err = tx.ExecContext(ctx, query,
+		frame.MessageId, frame.ClientMsgId, frame.SessionId, frame.SessionId,
+		frame.Seq, frame.From, frame.To, frame.ToType, frame.Body, frame.SentAt,
+	); err != nil {
+		rollback()
+		if isUnknownColumn(err, "client_msg_id") || isUnknownColumn(err, "conversation_id") || isMissingTable(err, "conversation_outbox") {
+			return false, false, nil
+		}
+		if isDuplicateClientMessage(err) {
+			existing, ok, loadErr := h.loadMessageByClientMsgID(ctx, frame.From, frame.ClientMsgId)
+			if loadErr != nil {
+				return false, true, loadErr
+			}
+			if ok {
+				proto.Reset(frame)
+				proto.Merge(frame, existing)
+				return false, true, nil
+			}
+		}
+		metrics.MessagePersisted.WithLabelValues("failure").Inc()
+		return false, true, err
+	}
+	_, err = tx.ExecContext(ctx, `
+INSERT INTO conversation_outbox
+  (message_id, session_id, from_uid, to_id, to_type, seq, sent_at, status, attempts, available_at, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)
+ON DUPLICATE KEY UPDATE message_id = VALUES(message_id)
+`, frame.MessageId, frame.SessionId, frame.From, frame.To, frame.ToType,
+		frame.Seq, frame.SentAt, frame.SentAt, frame.SentAt)
+	if err != nil {
+		rollback()
+		if isMissingTable(err, "conversation_outbox") {
+			return false, false, nil
+		}
+		metrics.MessagePersisted.WithLabelValues("failure").Inc()
+		return false, true, err
+	}
+	if err = tx.Commit(); err != nil {
+		return false, true, err
+	}
+	metrics.MessagePersisted.WithLabelValues("success").Inc()
+	metrics.ConversationOutbox.WithLabelValues("enqueued").Inc()
+	return true, true, nil
+}
+
+func (h *LogicHandler) saveMessageWithoutOutbox(ctx context.Context, frame *api.WireMessage) (bool, error) {
 	if h.DB == nil {
 		return true, nil
 	}
@@ -657,6 +731,16 @@ func isUnknownColumn(err error, column string) bool {
 	}
 	message := strings.ToLower(err.Error())
 	return strings.Contains(message, strings.ToLower(column)) && strings.Contains(message, "unknown column")
+}
+
+func isMissingTable(err error, table string) bool {
+	if err == nil || table == "" {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "table") &&
+		strings.Contains(message, strings.ToLower(table)) &&
+		(strings.Contains(message, "doesn't exist") || strings.Contains(message, "does not exist"))
 }
 
 func isDuplicateClientMessage(err error) bool {

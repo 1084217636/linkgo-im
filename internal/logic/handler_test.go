@@ -332,6 +332,75 @@ func TestSaveMessagePersistsClientMsgID(t *testing.T) {
 	}
 }
 
+func TestSaveMessageWithOutboxIsAtomic(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New error = %v", err)
+	}
+	defer db.Close()
+
+	frame := persistedTestFrame()
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO messages").
+		WithArgs(frame.MessageId, frame.ClientMsgId, frame.SessionId, frame.SessionId,
+			frame.Seq, frame.From, frame.To, frame.ToType, frame.Body, frame.SentAt).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO conversation_outbox").
+		WithArgs(frame.MessageId, frame.SessionId, frame.From, frame.To, frame.ToType,
+			frame.Seq, frame.SentAt, frame.SentAt, frame.SentAt).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	h := &LogicHandler{DB: db, ConversationOutbox: true}
+	persisted, err := h.saveMessage(ctx, frame)
+	if err != nil {
+		t.Fatalf("saveMessage with outbox error = %v", err)
+	}
+	if !persisted {
+		t.Fatal("saveMessage with outbox reported duplicate for new row")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestProcessConversationOutboxRetriesSummaryEvent(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New error = %v", err)
+	}
+	defer db.Close()
+
+	now := time.Now().UnixMilli()
+	mock.ExpectQuery("SELECT id, message_id, session_id, from_uid, to_id, to_type, seq, sent_at").
+		WithArgs(sqlmock.AnyArg(), 100).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "message_id", "session_id", "from_uid", "to_id", "to_type", "seq", "sent_at"}).
+			AddRow(int64(7), "group:G1-9", "group:G1", "1001", "G1", "group", int64(9), now))
+	mock.ExpectExec("UPDATE conversation_outbox").
+		WithArgs(sqlmock.AnyArg(), int64(7), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO conversations").
+		WithArgs("group:G1", "group", now, now, int64(9)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE conversation_outbox").
+		WithArgs(sqlmock.AnyArg(), int64(7)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	h := &LogicHandler{DB: db}
+	processed, err := h.ProcessConversationOutbox(ctx, 100)
+	if err != nil {
+		t.Fatalf("ProcessConversationOutbox error = %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
 func TestSaveMessageDuplicateClientMsgIDLoadsExistingMessage(t *testing.T) {
 	ctx := context.Background()
 	db, mock, err := sqlmock.New()

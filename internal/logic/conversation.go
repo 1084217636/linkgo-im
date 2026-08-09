@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/1084217636/linkgo-im/api"
+	"github.com/1084217636/linkgo-im/internal/metrics"
 	"github.com/1084217636/linkgo-im/internal/server"
 	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -283,7 +284,7 @@ func (h *LogicHandler) cacheConversationState(ctx context.Context, frame *api.Wi
 	return server.MarkConversationRead(ctx, h.Rdb, frame.From, frame.SessionId, frame.Seq)
 }
 
-func (h *LogicHandler) persistConversationState(ctx context.Context, frame *api.WireMessage, members []string) {
+func (h *LogicHandler) persistConversationState(ctx context.Context, frame *api.WireMessage, members []string) error {
 	if _, err := h.DB.ExecContext(ctx, `
 INSERT INTO conversations (id, type, created_at, updated_at, last_seq)
 VALUES (?, ?, ?, ?, ?)
@@ -299,14 +300,14 @@ ON DUPLICATE KEY UPDATE
 			logx.Field("seq", frame.Seq),
 			logx.Field("error", err.Error()),
 		)
-		return
+		return err
 	}
 
 	// Group membership is initialized by group create/join/leave flows. A
 	// message must not rewrite every member on the hot path. A one-to-one
 	// conversation has a constant two-user cardinality and remains safe here.
 	if frame.ToType == "group" {
-		return
+		return nil
 	}
 	for _, member := range members {
 		readSeq := int64(0)
@@ -326,9 +327,115 @@ ON DUPLICATE KEY UPDATE
 				logx.Field("target_id", member),
 				logx.Field("error", err.Error()),
 			)
+			return err
 		}
 	}
+	return nil
 }
+
+type conversationOutboxEvent struct {
+	ID        int64
+	MessageID string
+	SessionID string
+	From      string
+	To        string
+	ToType    string
+	Seq       int64
+	SentAt    int64
+}
+
+// ProcessConversationOutbox applies pending conversation summary events. The
+// claim/update protocol is deliberately idempotent: a crash after applying
+// the summary but before marking the event done only causes a harmless retry.
+func (h *LogicHandler) ProcessConversationOutbox(ctx context.Context, limit int) (int, error) {
+	if h == nil || h.DB == nil {
+		return 0, nil
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows, err := h.DB.QueryContext(ctx, `
+SELECT id, message_id, session_id, from_uid, to_id, to_type, seq, sent_at
+FROM conversation_outbox
+WHERE (status = 'pending' OR status = 'processing') AND available_at <= ?
+ORDER BY id
+LIMIT ?
+`, time.Now().UnixMilli(), limit)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	events := make([]conversationOutboxEvent, 0, limit)
+	for rows.Next() {
+		var event conversationOutboxEvent
+		if err := rows.Scan(&event.ID, &event.MessageID, &event.SessionID, &event.From,
+			&event.To, &event.ToType, &event.Seq, &event.SentAt); err != nil {
+			return 0, err
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	processed := 0
+	for _, event := range events {
+		result, err := h.DB.ExecContext(ctx, `
+UPDATE conversation_outbox
+SET status = 'processing', attempts = attempts + 1, available_at = ?
+WHERE id = ? AND (status = 'pending' OR status = 'processing') AND available_at <= ?
+`, time.Now().Add(outboxLease).UnixMilli(), event.ID, time.Now().UnixMilli())
+		if err != nil {
+			return processed, err
+		}
+		claimed, err := result.RowsAffected()
+		if err != nil || claimed == 0 {
+			continue
+		}
+
+		frame := &api.WireMessage{
+			MessageId: event.MessageID,
+			SessionId: event.SessionID,
+			From:      event.From,
+			To:        event.To,
+			ToType:    event.ToType,
+			Seq:       event.Seq,
+			SentAt:    event.SentAt,
+		}
+		if err := h.persistConversationState(ctx, frame, conversationMembers(frame, nil)); err != nil {
+			_, updateErr := h.DB.ExecContext(ctx, `
+UPDATE conversation_outbox
+SET status = 'pending', available_at = ?, last_error = ?
+WHERE id = ?
+`, time.Now().Add(outboxRetryDelay(event.ID)).UnixMilli(), err.Error(), event.ID)
+			if updateErr != nil {
+				return processed, updateErr
+			}
+			metrics.ConversationOutbox.WithLabelValues("failed").Inc()
+			continue
+		}
+		if _, err := h.DB.ExecContext(ctx, `
+UPDATE conversation_outbox
+SET status = 'done', processed_at = ?, last_error = ''
+WHERE id = ?
+`, time.Now().UnixMilli(), event.ID); err != nil {
+			return processed, err
+		}
+		metrics.ConversationOutbox.WithLabelValues("processed").Inc()
+		processed++
+	}
+	return processed, nil
+}
+
+func outboxRetryDelay(id int64) time.Duration {
+	// A bounded deterministic delay avoids a hot loop while keeping recovery
+	// fast. The attempt count remains in MySQL for operational inspection.
+	seconds := 1 + id%30
+	return time.Duration(seconds) * time.Second
+}
+
+const outboxLease = 30 * time.Second
 
 func (h *LogicHandler) readConversationSeq(ctx context.Context, uid, conversationID string) int64 {
 	value, err := h.Rdb.HGet(ctx, server.UserConversationReadKey(uid), conversationID).Result()

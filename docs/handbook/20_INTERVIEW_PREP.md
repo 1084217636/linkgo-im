@@ -80,17 +80,17 @@
 | 故障 | 为什么会受影响 | 当前保住什么 | 当前恢复或缺口 |
 |---|---|---|---|
 | Gateway 宕机 | 本机 WebSocket 随进程消失 | MySQL 历史和部分 Redis 短期状态仍在 | 客户端需重连；网页暂无自动重连，旧 route 等 TTL/比较清理 |
-| Logic 宕机 | 正在执行的 gRPC 中断 | 已提交的 MySQL 消息仍在 | 未提交请求可复用 client_msg_id 重试；MySQL 到投递缺 Outbox |
+| Logic 宕机 | 正在执行的 gRPC 中断 | 已提交的 MySQL 消息和摘要 Outbox 仍在 | Kafka/Redis 投递仍需重试或消息投递 Outbox；未提交请求可复用 client_msg_id |
 | Redis 故障 | route、seq、pending、Pub/Sub 都在实时链路 | 已提交 MySQL 历史 | readiness 停止接流量并等待恢复；MySQL 不能替代全部实时状态 |
 | MySQL 故障 | 权限、关系和消息最终历史依赖数据库 | Redis 已有短期状态不等于可以继续安全写消息 | 当前发送失败；需要数据库高可用入口和运维恢复 |
-| Kafka 故障 | 群任务无法写入或消费 | 已提交的群消息正文可能仍在 MySQL | 当前缺 Outbox 自动补投；生产写失败会让发送调用报错 |
+| Kafka 故障 | 群任务无法写入或消费 | 已提交的群消息正文和会话摘要仍在 MySQL | 当前缺 Kafka 投递 Outbox 自动补投；生产写失败会让发送调用报错 |
 | Transfer 宕机 | Kafka 群任务暂时没人扩散 | 未提交 Kafka 记录仍保留 | 重启后重读，lease 到期可接管，可能重复投递 |
 | Etcd 故障 | Gateway 无法刷新 Logic 实例列表 | 已建立的部分 gRPC 连接可能暂时可用 | 新发现和故障摘除受影响，不能描述为无感容灾 |
 
 ## 简历三条
 
 - 基于 Go/go-zero 实现 Gateway、Logic、Transfer 分层 IM；Logic 通过 Etcd 注册，Gateway 使用 zRPC `p2c_ewma` 选择实例，并利用共享 Redis 在线路由和定向 Pub/Sub 完成跨 Gateway 实时投递。
-- 使用 `client_msg_id` Redis/MySQL 双层幂等、Redis Lua 会话 seq、MySQL 同步消息落库、客户端 ACK 和短期 pending/timeline 构建可重试、可短期恢复的投递链路，并以 UID 分片有界队列暴露背压；当前 MySQL 提交到首次投递之间仍有未使用 Outbox 的故障窗口。
+- 使用 `client_msg_id` Redis/MySQL 双层幂等、Redis Lua 会话 seq、消息与会话摘要 Outbox、客户端 ACK 和短期 pending/timeline 构建可重试、可短期恢复的投递链路，并以 UID 分片有界队列暴露背压；当前 MySQL 到 Kafka/Redis 接收方仍缺跨系统投递 Outbox。
 - 通过 Kafka/Transfer 解耦群聊逐成员投递，实现成员级 lease 幂等、retry/DLQ 和手动位点提交；补充 MySQL 事务红包、AI 虚拟好友、Prometheus 指标及 Docker/Kubernetes 验证清单。
 
 不要在没有重新压测报告时写具体连接数、QPS 或 P99。
@@ -129,11 +129,11 @@
 
 ### MySQL 提交到实时通知的窗口
 
-当前没有完整消息 Outbox。如果 MySQL 消息已提交、Logic 在 RedisDelivery 前宕机，客户端不会立即收到实时通知，需要主动历史查询才能发现。演进方案是消息事务 Outbox，但不能说已经实现。
+当前有会话摘要 Outbox，但没有覆盖 Kafka/Redis 接收方的完整消息投递 Outbox。如果 MySQL 消息已提交、Logic 在 RedisDelivery 或 Kafka 写入前宕机，客户端不会立即收到实时通知，需要复用 `client_msg_id` 或主动历史查询；演进方案是把投递事件也纳入消息事务 Outbox。
 
 ### 离线同步
 
-当前不是微信式“自动扫描所有会话并从 MySQL 按游标完整同步”。重连自动使用 Redis 短期状态，历史 HTTP 接口固定最近 50 条。
+当前不是微信式“自动扫描所有会话并从 MySQL 按游标完整同步”。重连自动使用 Redis 短期状态并对单个 session 从 MySQL 按 seq 兜底，历史 HTTP 接口使用 `before_seq`，默认 50、最大 100 条。
 
 ### 多端登录
 
@@ -207,10 +207,10 @@ MySQL/Redis          15
 5. 为什么不加 MongoDB：当前消息结构固定，关系、事务、唯一约束和按 session/seq 查询均由 MySQL 满足；没有容量和查询证据时再加数据库会产生双事实源和同步成本。
 6. 为什么 Kafka：同步逐成员投递会随群规模拉长 Logic 请求并造成级联拥塞；Kafka 让 Transfer 缓冲、独立扩容和重试。它不防 Go 死锁，Logic 仍同步查完整 recipients。
 7. Etcd 与 p2c_ewma：Etcd维护 Logic 实例地址和租约；p2c_ewma 在已发现实例中结合少量候选和近期延迟选一次 RPC。它不是一致性哈希。
-8. MySQL 成功、Redis 前宕机：历史已存在但没有自动实时通知；当前无 Outbox。发送端复用 client_msg_id 重试时可从 MySQL 标准记录恢复，或者通过历史接口看到消息。
+8. MySQL 成功、Redis 前宕机：历史和摘要 Outbox 已存在，但接收方实时通知可能没有发生；当前无 Kafka/Redis 投递 Outbox。发送端复用 client_msg_id 重试时可从 MySQL 标准记录恢复，或者通过历史接口看到消息。
 9. B 收到但 ACK 丢失：pending 保留，超时后同 message_id 重推；客户端去重并再次 ACK，服务器再清理。
 10. Kafka 投递完成、提交前宕机：重启会重复 Fetch；`message_id+recipient` 的 done 跳过已完成成员，processing lease 到期可接管，仍可能发生安全的重复投递。
-11. Redis、Logic、Transfer 宕机：Redis 影响 route/seq/pending/PubSub，MySQL 历史仍在；Logic 中断正在执行的 gRPC，已提交消息仍在但 Outbox 缺失；Transfer 宕机时未提交 Kafka 记录保留，重启可继续。
+11. Redis、Logic、Transfer 宕机：Redis 影响 route/seq/pending/PubSub，MySQL 历史和摘要 Outbox 仍在；Logic 中断正在执行的 gRPC 时，Kafka/Redis 投递事件可能尚未产生；Transfer 宕机时未提交 Kafka 记录保留，重启可继续。
 12. `WireMessage` 关键字段：from/to/to_type/msg_type/body、client_msg_id、message_id、session_id、seq、ack_message_id、last_seq、sent_at、trace_id。重点能解释 ID 和进度字段，不要求死背生成结构。
 13. `ClientManager`：当前 Gateway 进程内的 `sync.Map`，把 uid 映射为当前 `ClientConn`；`Add` 替换旧连接，`Remove` 只删除匹配对象，`GetConn` 用于最后一跳。
 14. `RedisDelivery.Deliver`：先写 pending_ack/ack_idx/ack_retry，再 GET route、封装 envelope、PUBLISH；无路由或无订阅者时写 offline，并只清理匹配 route。
@@ -220,7 +220,7 @@ MySQL/Redis          15
 ### 闭卷检查答案
 
 1. 参考 1 分钟版本应完整覆盖：多 Gateway 本机连接、共享 Redis route、Etcd 发现 Logic、MySQL 先落库、Redis pending/PubSub、B ACK、Kafka 群扩散、红包和 AI 边界。只列技术名词不算通过。
-2. MySQL 中消息历史保住；实时 pending/通知可能没有发生，发送方也可能收不到结果。当前靠同 client_msg_id 主动重试或历史查询恢复，缺少事务 Outbox 自动补发。
+2. MySQL 中消息历史和会话摘要 Outbox 保住；实时 pending/通知可能没有发生，发送方也可能收不到结果。当前靠同 client_msg_id 主动重试或历史查询恢复，Kafka/Redis 投递仍缺专用 Outbox 自动补发。
 3. 任意三项均可，但必须具体，例如：重连不自动扫 MySQL 全部会话；单账号只保留一个 route，不支持多端；Redis/MySQL 只接稳定入口，不原生实现 Cluster/Sentinel/读写分离；Logic 仍加载完整群成员；K8s 未在真实生产集群验证。
 4. 一条合格路径至少指出 `api/protocol.proto::WireMessage`、`internal/server/client.go::StartClientLoop`、`internal/server/pool.go::SubmitWithResult`、`internal/logic/handler.go::PushMessage/saveMessage`、`internal/delivery/redis.go::Deliver`、`internal/server/manager.go::SubscribeRedis`、`internal/server/ack.go::AckMessage`。
 

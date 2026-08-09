@@ -166,7 +166,7 @@ Logic 集群有 Logic-1/2/3
 11. RedisDelivery 先登记 B 的待确认状态
 12. Logic-2 查询共享 Redis：route:B，得到 gateway-3|connection-b91...
 13. Logic-2 发布投递事件到 im_message_push:gateway-3
-14A. PUBLISH 返回后，Logic-2 记录 Redis timeline/payload，再同步更新 Redis 会话热状态并异步尽力更新 MySQL 会话摘要
+14A. PUBLISH 返回后，Logic-2 记录 Redis timeline/payload，再同步更新 Redis 会话热状态；MySQL 会话摘要由事务 Outbox + worker 最终一致
 14B. 同时，Gateway-3 的 Redis 订阅循环可能已收到事件，从本机 ClientManager 找 B
 15B. Gateway-3 向 B 的 WebSocket 写二进制消息
 16B. B 网页解码、展示，并发送确认帧
@@ -174,7 +174,7 @@ Logic 集群有 Logic-1/2/3
 
 `14A` 是 Logic 调用协程的后续顺序，`14B` 是另一 Gateway 的并发路径，两者没有全局先后保证。所以 B 可能在 Logic 写 timeline 之前就收到在线通知；真正必须在通知前完成的是 MySQL 消息正文和 B 的 pending 记录。
 
-第 6 步不会信任重试请求新带的 `to/body`，而是使用 `(from_uid, client_msg_id)` 查到的 MySQL 标准记录。为什么还要重新验权？否则 Redis 幂等 Key 过期后，已被拉黑的用户或已退群/被禁言的成员可以反复触发旧消息投递。代价是“已落库但首次投递未完成”的消息，若恢复前权限已被撤销，当前会 fail-closed 拒绝补投；要精确区分“合法未完成投递”与“恶意重放”，需要持久 Outbox/投递状态。
+第 6 步不会信任重试请求新带的 `to/body`，而是使用 `(from_uid, client_msg_id)` 查到的 MySQL 标准记录。为什么还要重新验权？否则 Redis 幂等 Key 过期后，已被拉黑的用户或已退群/被禁言的成员可以反复触发旧消息投递。代价是“已落库但首次投递未完成”的消息，若恢复前权限已被撤销，当前会 fail-closed 拒绝补投；会话摘要已有持久 Outbox，但接收方逐设备投递状态仍未完整持久化。
 
 这里的好友关系就是 MySQL 中双方处于可单聊状态的业务授权，不是 Redis 在线状态；第 13 章再学习申请、接受和双向关系表。本章只需记住：JWT 证明“你是 A”，好友校验决定“A 能否给 B 发”。
 
@@ -409,7 +409,7 @@ go test ./cmd/gateway/internal/svc -run TestWaitForLogicReady -v
 2. `LOGIC_ADDR=logic:9001` 经环境覆盖写入 `Config.Logic.Addr`，`NewLogicRouter` 使用 direct client；地址为空且有 `ETCD_ENDPOINTS` 时使用 Etcd `/services/logic` 发现实例，并设置 `p2c_ewma`。
 3. 故障推演：
    - MySQL INSERT 前 Logic 崩溃：没有新消息正文持久化，发送方可能收到 `MESSAGE_REJECTED` 或因连接故障收不到结果；应复用同一 `client_msg_id` 重试。
-   - MySQL INSERT 成功后 Redis 不可用：历史仍在 MySQL，实时投递和 pending 失败，Logic 返回错误，Gateway 尝试发送可重试的 `MESSAGE_REJECTED`。重试可按 MySQL 标准记录恢复，但当前没有 Outbox 自动扫描该窗口。
+   - MySQL INSERT 成功后 Redis 不可用：历史和会话摘要 Outbox 仍在 MySQL，实时投递和 pending 失败，Logic 返回错误，Gateway 尝试发送可重试的 `MESSAGE_REJECTED`。重试可按 MySQL 标准记录恢复，但当前没有覆盖 Redis 接收方的消息投递 Outbox 自动扫描该窗口。
    - PUBLISH 时没有 Gateway-3 订阅者：`Deliver` 比较清理当时的 route，保留 pending，写 `offline_msg:B`，不把订阅者为零当成已送达。
    - Gateway-3 收到事件但本机没有 B：订阅端标记 offline，并只清理 envelope 中匹配的旧 route；消息仍有 MySQL 和 pending 状态。
    - B 从 Gateway-3 重连到 Gateway-4：新连接 `ClaimRoute` 覆盖旧 route；旧心跳续期失败，旧 defer 也不能删新值；带旧 `route_value` 的通知不能误写到本机另一条新连接。已经在途且仍对应旧 socket 的事件仍可能在旧连接退出前到达。

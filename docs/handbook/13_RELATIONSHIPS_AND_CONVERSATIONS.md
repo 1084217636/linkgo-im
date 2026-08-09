@@ -423,7 +423,7 @@ Transfer 管群扩散
 
 可以这样说：
 
-> messages 只能保存消息正文，完整 IM 还需要好友、群成员和会话关系。我的好友申请与好友关系分表，接受申请时在一个 MySQL 事务里更新申请并写双向关系；Logic 发送单聊前校验 normal 好友，群聊前校验 active 成员和禁言时间。MySQL 是这些授权和群 recipients 的事实源，数据库不可用时会拒绝，不会用可能过期的 Redis 集合降级放行。创建群遇到重复 group_id 会回滚，只有 active 成员才能查成员列表。会话用 c2c:排序后的两个 uid 或 group:gid 标识，conversations 保存 last_seq 和更新时间，conversation_members 保存用户参与关系和 read_seq。登录先读 Redis 最近会话热索引，未命中回源 MySQL。当前会话元信息是消息落库后的异步更新，接收方 ACK read_seq 也只写 Redis，群管理 RBAC 和历史分页还不完整，所以我不会把它夸大成商业级多端已读系统。
+> messages 只能保存消息正文，完整 IM 还需要好友、群成员和会话关系。我的好友申请与好友关系分表，接受申请时在一个 MySQL 事务里更新申请并写双向关系；Logic 发送单聊前校验 normal 好友，群聊前校验 active 成员和禁言时间。MySQL 是这些授权和群 recipients 的事实源，数据库不可用时会拒绝，不会用可能过期的 Redis 集合降级放行。创建群遇到重复 group_id 会回滚，只有 active 成员才能查成员列表。会话用 c2c:排序后的两个 uid 或 group:gid 标识，conversations 保存 last_seq 和更新时间，conversation_members 保存用户参与关系、read_seq 和 acked_seq；消息事务同时写入会话摘要 Outbox，由 worker 最终一致。登录先读 Redis 最近会话热索引，未命中回源 MySQL。接收方 ACK 仍不是肉眼已读，群管理 RBAC、跨设备游标和完整已读系统仍未实现，所以我不会把它夸大成商业级多端已读系统。
 
 ## 本章代码阅读任务
 

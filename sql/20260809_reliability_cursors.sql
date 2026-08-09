@@ -26,3 +26,23 @@ LEFT JOIN `conversation_members` cm
   ON cm.conversation_id = CONCAT('group:', gm.group_id)
  AND cm.user_id = gm.user_id
 WHERE gm.status = 'active' AND cm.user_id IS NULL;
+
+CREATE TABLE IF NOT EXISTS `conversation_outbox` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `message_id` VARCHAR(160) NOT NULL,
+    `session_id` VARCHAR(128) NOT NULL,
+    `from_uid` VARCHAR(64) NOT NULL,
+    `to_id` VARCHAR(64) NOT NULL,
+    `to_type` ENUM('user', 'group') NOT NULL,
+    `seq` BIGINT NOT NULL,
+    `sent_at` BIGINT NOT NULL,
+    `status` ENUM('pending', 'processing', 'done') NOT NULL DEFAULT 'pending',
+    `attempts` INT NOT NULL DEFAULT 0,
+    `available_at` BIGINT NOT NULL,
+    `last_error` VARCHAR(512) NOT NULL DEFAULT '',
+    `created_at` BIGINT NOT NULL,
+    `processed_at` BIGINT NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_conversation_outbox_message` (`message_id`),
+    INDEX `idx_conversation_outbox_ready` (`status`, `available_at`, `id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会话摘要可靠投递 Outbox';

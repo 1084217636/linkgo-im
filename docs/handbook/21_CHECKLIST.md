@@ -164,8 +164,8 @@
 2. 跨 Gateway 单聊：A WebSocket -> Gateway-1 uid shard -> gRPC Logic -> 权限/幂等/seq -> MySQL -> B pending -> Redis route/PUBLISH -> Gateway-3 本机连接 -> B ACK；Logic 结果另回 A。
 3. Kafka 群聊：Logic 校验群成员、写一条 MySQL 消息、查询 recipients 并写 job；Transfer Fetch 后逐成员 claim lease 和 RedisDelivery，成功 done，失败转 retry/DLQ，输出耐久后才 Commit。
 4. MySQL 保存账号、关系、群成员、消息历史、会话摘要、红包和 AI 记录；Redis 保存在线 route、幂等预占、seq、pending/ACK、offline/timeline 和会话热数据。Redis Pub/Sub 是通知，不是存储表。
-5. 五个故障示例：Redis 宕机使实时链路失败但 MySQL 历史仍在；Logic 宕机中断 RPC且 Outbox 窗口需主动重试；Gateway 宕机要客户端重连；Transfer 宕机由未提交 offset 和 lease 恢复；ACK 丢失造成同 ID 重推并由客户端去重。
-6. 五个缺口示例：没有事务 Outbox；重连不自动扫 MySQL 所有会话；不支持多设备 route；群 recipients 不分页；没有真实生产 K8s/Redis/MySQL 集群验证。也可用历史无游标、AI Worker 不持久、红包无钱包替换其中项。
+5. 五个故障示例：Redis 宕机使实时链路失败但 MySQL 历史和摘要 Outbox 仍在；Logic 宕机中断 RPC且 Kafka/Redis 投递窗口需主动重试；Gateway 宕机要客户端重连；Transfer 宕机由未提交 offset 和 lease 恢复；ACK 丢失造成同 ID 重推并由客户端去重。
+6. 五个缺口示例：没有覆盖 Kafka/Redis 接收方的完整消息投递 Outbox；重连不自动扫 MySQL 所有会话；不支持多设备 route；群 recipients 不分页；没有真实生产 K8s/Redis/MySQL 集群验证。也可用 AI Worker 不持久、红包无钱包替换其中项。
 7. 技术选择示例：WebSocket 解决服务端实时下行，替代轮询但增加连接管理；Redis route 解决跨 Gateway 定位，替代节点两两 RPC但成为强依赖；MySQL 解决持久关系和事务，替代进程 map但增加网络磁盘成本；Kafka 解耦群扇出，替代同步循环但引入重复和积压；K8s 管理副本和滚动发布，替代手工进程运维但增加集群复杂度。每项都必须再结合当前代码位置说明，不能只背这段。
 
 完成本轮后回到：[查看手册总目录并按薄弱章节回读](README.md)。之后只针对检查表中的薄弱项复习，不再随机翻旧文档。

@@ -71,6 +71,11 @@ var (
 		Buckets: []float64{1, 10, 50, 100, 500, 1000, 5000, 10000},
 	})
 
+	ConversationOutbox = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "linkgo_conversation_outbox_events_total",
+		Help: "Conversation summary outbox events by result.",
+	}, []string{"result"})
+
 	KafkaOperations = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "linkgo_kafka_operations_total",
 		Help: "Kafka operations by stage and result.",

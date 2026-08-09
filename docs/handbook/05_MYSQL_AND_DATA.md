@@ -243,7 +243,7 @@ LIMIT 50
 | 1 | `sql/init.sql` 的 `users`、`messages`、`conversations`、`conversation_members` 建表段 | 先圈出主键、两个消息唯一约束和 `idx_session_seq`，不背字段类型 |
 | 2 | `cmd/logic/internal/svc/servicecontext.go` 的 `ServiceContext`、`NewServiceContext` | 找到 `sql.Open`、`SetMaxOpenConns`、`SetMaxIdleConns`，理解一个 `sql.DB` 是连接池句柄 |
 | 3 | `internal/logic/handler.go` 的 `Login`、`GetHistory`、`saveMessage` | 各找一条参数化 `SELECT` 和 `INSERT`，确认占位符参数没有字符串拼接 |
-| 4 | 同文件的 `PushMessage`、`deliverPersistedMessage`，再到 `internal/logic/conversation.go` 的 `updateConversationState`、`persistConversationState` | 按调用顺序确认消息同步写入，会话 MySQL 摘要由 goroutine 异步尽力更新 |
+| 4 | 同文件的 `PushMessage`、`deliverPersistedMessage`，再到 `internal/logic/conversation.go` 的 `updateConversationState`、`persistConversationState`、`ProcessConversationOutbox` | 按调用顺序确认消息与摘要 Outbox 同事务写入；Redis 热状态立即更新，MySQL 摘要由 worker 最终一致 |
 | 5 | `cmd/gateway/internal/svc/servicecontext.go` 的 `ServiceContext`、`NewServiceContext` | 确认 Gateway 也有 `DB` 字段，避免把当前实现讲成 Gateway 完全不访问 MySQL |
 
 看到这个程度就停：你能指出四张表的职责，能沿 `PushMessage -> saveMessage -> deliverPersistedMessage -> updateConversationState` 说清同步和异步边界。暂时不必掌握 InnoDB B+ 树内部实现、隔离级别细节、执行计划成本模型或数据库高可用搭建。

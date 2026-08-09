@@ -313,7 +313,7 @@ Kafka 只替换了“怎样安排多接收者投递任务”，没有替换最�
 
 如果客户端再次使用相同 `client_msg_id` 发送，Logic 会从 MySQL 找回原消息并再次尝试 Kafka 分发。
 
-当前没有 MySQL Outbox 自动恢复这个故障窗口。
+当前已有会话摘要 Outbox，可以恢复摘要更新；但消息 MySQL 提交与 Kafka job 写入之间仍没有“投递 Outbox”，这个跨系统故障窗口仍需客户端复用 `client_msg_id` 或后续补做消息投递 Outbox。
 
 ### Kafka 写成功，Logic 随后崩溃
 
@@ -346,7 +346,7 @@ Transfer 无法 claim recipient，也无法记录 pending 或查在线路由，�
 
 ### 尚未实现或尚未验证充分
 
-- MySQL 消息事务与 Kafka 事件之间的 Outbox。
+- MySQL 消息事务与 Kafka 事件之间的投递 Outbox；当前只有会话摘要 Outbox。
 - 超大群成员分片、分页或分批任务；当前 recipients 全部装入一个 job。
 - 生产 topic 的 partition、副本和容量规划。
 - 有延迟策略的 retry topic。
@@ -359,7 +359,7 @@ Transfer 无法 claim recipient，也无法记录 pending 或查在线路由，�
 
 可以这样说：
 
-> 单聊只有一个接收者，群聊会产生 fan-out。我的 Logic 先校验群成员、分配会话 seq，并在 MySQL 只保存一行群消息；然后查询当前 active 成员，把 WireMessage 和 recipients 快照写入 Kafka。Transfer 使用 consumer group 异步逐成员调用与单聊相同的 RedisDelivery。消费采用 FetchMessage 加手动 Commit，只有全部处理成功，或者 retry/DLQ 写成功后才提交。为处理投递完成但 offset 未提交导致的重复消费，我用 message_id + recipient 的 Redis Lua 状态实现 processing owner、lease 和 done。当前仍会在 Logic 同步加载完整成员列表，也缺少 MySQL Outbox 和超大群分片，所以我会说它完成了可靠异步扩散原型，而不是已经解决百万群生产问题。
+> 单聊只有一个接收者，群聊会产生 fan-out。我的 Logic 先校验群成员、分配会话 seq，并在 MySQL 只保存一行群消息；会话摘要事件通过同事务 Outbox 保证可恢复，然后查询当前 active 成员，把 WireMessage 和 recipients 快照写入 Kafka。Transfer 使用 consumer group 异步逐成员调用与单聊相同的 RedisDelivery。消费采用 FetchMessage 加手动 Commit，只有全部处理成功，或者 retry/DLQ 写成功后才提交。为处理投递完成但 offset 未提交导致的重复消费，我用 message_id + recipient 的 Redis Lua 状态实现 processing owner、lease 和 done。当前仍会在 Logic 同步加载完整成员列表，MySQL 到 Kafka 仍缺投递 Outbox，也没有超大群分片，所以我会说它完成了可靠异步扩散原型，而不是已经解决百万群生产问题。
 
 ## 本章代码阅读任务
 
@@ -417,7 +417,7 @@ retry 时 B 读到 done 直接跳过；C 重新 claim、投递并完成；D 第�
 6. 永久 processing 会让 owner 崩溃后的任务永远卡住；lease 给其他 Worker 在到期后接管机会。
 7. 同 consumer group 的并行上限受 partition 数限制；同一群 key 通常还落在同一 partition，增加副本不保证线性提速。
 8. 不能。seq 和同 partition 提供排序基础，但 retry、网络、Pub/Sub 和 ACK 重推会让实时到达迟到或重复。
-9. 消息正文可能已在 MySQL，Kafka job 没有成功。Gateway 会尝试返回可重试拒绝；客户端用同一 `client_msg_id` 重试时 Logic 从数据库标准记录恢复并再发 Kafka。当前缺事务 Outbox 自动补投。
+9. 消息正文可能已在 MySQL，Kafka job 没有成功。Gateway 会尝试返回可重试拒绝；客户端用同一 `client_msg_id` 重试时 Logic 从数据库标准记录恢复并再发 Kafka。当前会话摘要有事务 Outbox，但 Kafka 投递事件仍缺专用 Outbox 自动补投。
 
 下一步：[13 好友、群组与会话](13_RELATIONSHIPS_AND_CONVERSATIONS.md)
 

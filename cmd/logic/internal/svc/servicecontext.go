@@ -1,7 +1,9 @@
 package svc
 
 import (
+	"context"
 	"database/sql"
+	"sync"
 	"time"
 
 	"github.com/1084217636/linkgo-im/cmd/logic/internal/config"
@@ -20,6 +22,8 @@ type ServiceContext struct {
 	DB          *sql.DB
 	KafkaWriter *kafka.Writer
 	Core        *corelogic.LogicHandler
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
@@ -82,28 +86,60 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	}
 
 	core := &corelogic.LogicHandler{
-		Rdb:             rdb,
-		DB:              db,
-		Delivery:        &delivery.RedisDelivery{Rdb: rdb},
-		GroupDispatcher: &kafkaDispatcher{writer: kafkaWriter},
+		Rdb:                rdb,
+		DB:                 db,
+		Delivery:           &delivery.RedisDelivery{Rdb: rdb},
+		GroupDispatcher:    &kafkaDispatcher{writer: kafkaWriter},
+		ConversationOutbox: true,
 		BotResponder: &aiBotResponder{
 			botID: botID,
 			ask:   ai.NewAskService(db, aiProvider, knowledgeBase, c.AI.KnowledgeTopK),
 		},
 	}
 
-	return &ServiceContext{
+	workerCtx, cancel := context.WithCancel(context.Background())
+	service := &ServiceContext{
 		Config:      c,
 		Rdb:         rdb,
 		DB:          db,
 		KafkaWriter: kafkaWriter,
 		Core:        core,
+		cancel:      cancel,
+	}
+	service.wg.Add(1)
+	go service.runConversationOutbox(workerCtx)
+	return service
+}
+
+func (s *ServiceContext) runConversationOutbox(ctx context.Context) {
+	defer s.wg.Done()
+	process := func() {
+		workCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		if _, err := s.Core.ProcessConversationOutbox(workCtx, 100); err != nil {
+			logx.Errorw("conversation outbox worker failed", logx.Field("error", err.Error()))
+		}
+	}
+	process()
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			process()
+		}
 	}
 }
 
 func (s *ServiceContext) Close() {
 	if s == nil {
 		return
+	}
+	if s.cancel != nil {
+		s.cancel()
+		s.wg.Wait()
 	}
 	if s.KafkaWriter != nil {
 		_ = s.KafkaWriter.Close()

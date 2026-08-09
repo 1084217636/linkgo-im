@@ -93,7 +93,7 @@ A 在 Gateway-1 发送 WireMessage
 → 查 route:B = Gateway-3|conn
 → PUBLISH Gateway-3 的频道
 ├→ Logic 路径：Redis session timeline / message payload
-│  → 同步更新 Redis 会话热状态；MySQL 会话摘要异步尽力更新
+│  → 同步更新 Redis 会话热状态；MySQL 会话摘要由事务 Outbox + worker 最终一致
 └→ 并发的 Gateway-3 路径：SubscribeRedis 收到
    → 本机 ClientManager 找 B
    → WebSocket 写出
@@ -102,11 +102,11 @@ A 在 Gateway-1 发送 WireMessage
 → Gateway-1 Worker 在 Logic 调用返回后，向 A 写 MESSAGE_ACCEPTED 或 MESSAGE_REJECTED
 ```
 
-必须主动说明两条边界：MySQL 消息与会话摘要不是同一事务；Redis Pub/Sub 通知丢失不能靠 Pub/Sub 自己重放。
+必须主动说明两条边界：会话摘要事件与消息在同一 MySQL 事务，但 MySQL 到 Kafka/Redis 接收方投递不是同一跨系统事务；Redis Pub/Sub 通知丢失不能靠 Pub/Sub 自己重放。
 
 PUBLISH 之后的两个分支并发执行，不能背成“timeline 一定先于客户端收到”。源码中 Logic 协程是 Deliver 返回后再 RememberSessionMessage，但目标 Gateway 可能已经并发处理通知。
 
-顺序理由：MySQL 先于通知，保证接收方看到 message_id 后能够查到历史；pending 先于 Pub/Sub，保证快速到达并快速 ACK 时服务端已经有状态可清理。代价是 MySQL 提交到 pending/通知之间仍有 Outbox 缺口，所以这套顺序缩小了风险，但没有消除所有崩溃窗口。
+顺序理由：消息与摘要 Outbox 先在 MySQL 同事务提交，保证会话元信息可恢复；pending 先于 Pub/Sub，保证快速到达并快速 ACK 时服务端已经有状态可清理。MySQL 到 Redis/Kafka 通知仍不是跨系统原子操作，所以这套顺序缩小了风险，但没有消除所有接收方投递窗口。
 
 ## 链路四：群聊
 
@@ -206,7 +206,7 @@ Logic 崩溃会丢失尚未完成的 goroutine 任务。当前不是 Kafka/数�
 谁持有      gRPC LogicServer
 关键字段    Rdb、DB、Delivery、GroupDispatcher、BotResponder
 主要方法    Login、PushMessage、GetHistory
-失败路径    MySQL 已提交但后续投递失败时缺少事务 Outbox 自动恢复
+失败路径    Kafka/Redis 投递失败时仍需 pending、重试、重连或 client_msg_id；消息投递 Outbox 尚未实现
 ```
 
 它把依赖放在结构体中而不是每次函数里重新创建，便于复用连接池并在测试中注入替身；代价是装配错误会影响整个 Logic 实例。

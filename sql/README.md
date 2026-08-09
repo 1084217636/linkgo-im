@@ -14,12 +14,13 @@
 - `20260707_ai_provider_attempt_logs.sql`：旧库补齐 AI provider attempt 明细表。
 - `20260707_ai_qa_records.sql`：旧库补齐 AI 知识问答记录表。
 - `20260708_ai_bot_seed.sql`：旧库补齐默认 AI 助手账号和演示好友关系。
-- `20260809_reliability_cursors.sql`：为 `conversation_members` 增加 `acked_seq`，并为已有 active 群成员补建会话成员记录。
+- `20260809_reliability_cursors.sql`：为 `conversation_members` 增加 `acked_seq`，补建已有 active 群成员会话记录，并创建会话摘要 Outbox。
 
 ## 关键表设计
 
 - `users`：登录账号与用户 ID 映射，也承载 AI 助手这类系统虚拟用户。
 - `messages`：保存 `message_id / client_msg_id / conversation_id / session_id / seq / from_uid / to_id / to_type / create_time`，支撑历史消息查询、会话顺序展示和发送幂等。
+- `conversation_outbox`：消息事务内写入会话摘要事件；logic worker 以 pending/processing/done 状态重试，保证进程崩溃或摘要写失败后最终可修复。
 - `friend_requests / friend_relations`：保存好友申请和双向好友关系，支撑单聊权限校验。
 - `im_groups / group_members`：保存群组和群成员关系，支撑群聊权限校验和扩散成员来源。
 - `red_packets / red_packet_claims`：保存红包主状态和领取记录，使用红包主行锁和 `red_packet_id + user_id` 唯一索引防止并发超卖与重复领取。
@@ -30,4 +31,4 @@
 
 ## 可靠性迁移顺序
 
-新数据库由 `init.sql` 创建最终基础结构；已有数据库按日期顺序执行尚未执行的迁移。`20260809_reliability_cursors.sql` 执行后，`read_seq` 只表示用户已读位置，`acked_seq` 表示客户端可靠收到并 ACK 的位置。当前仓库仍未引入自动 `schema_migrations` 记录表，执行迁移时需要由操作者记录文件名和时间。
+新数据库由 `init.sql` 创建最终基础结构；已有数据库按日期顺序执行尚未执行的迁移。`20260809_reliability_cursors.sql` 执行后，`read_seq` 只表示用户已读位置，`acked_seq` 表示客户端可靠收到并 ACK 的位置，`conversation_outbox` 负责摘要最终一致。当前仓库仍未引入自动 `schema_migrations` 记录表，执行迁移时需要由操作者记录文件名和时间。
