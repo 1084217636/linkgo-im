@@ -39,7 +39,7 @@ MySQL 写入成功
 因此，不能把 Redis Pub/Sub 当成最终送达证明。
 
 消息写入 MySQL 时，当前 logic 还会在同一个 InnoDB 事务写入
-`conversation_outbox`。它只负责“会话列表摘要最终一致”，不代表接收方已经 ACK。
+`conversation_outbox`。它只负责“会话列表摘要最终一致”，不代表接收方已经 ACK；摘要处理失败最多重试 10 次，之后进入 `dead`，由运维检查 `last_error` 后修复或回放。
 
 ## 2. LinkGo 中 ACK 的含义
 
@@ -359,7 +359,7 @@ Gateway 不会让每个 WebSocket 读循环直接无限创建 goroutine。它按
 - 单个会话的 Redis `last_seq` 近期补偿。
 - 回放的第一次 WebSocket 写失败会立即返回并关闭无效连接。
 - 队列满时向客户端返回可关联的过载错误。
-- 消息事务内写入 `conversation_outbox`，worker 对会话摘要失败进行重试。
+- 消息事务内写入 `conversation_outbox`，worker 对会话摘要失败进行重试，毒事件超过 10 次进入 `dead`。
 
 ### 尚未实现
 

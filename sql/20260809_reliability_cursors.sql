@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS `conversation_outbox` (
     `to_type` ENUM('user', 'group') NOT NULL,
     `seq` BIGINT NOT NULL,
     `sent_at` BIGINT NOT NULL,
-    `status` ENUM('pending', 'processing', 'done') NOT NULL DEFAULT 'pending',
+    `status` ENUM('pending', 'processing', 'done', 'dead') NOT NULL DEFAULT 'pending',
     `attempts` INT NOT NULL DEFAULT 0,
     `available_at` BIGINT NOT NULL,
     `last_error` VARCHAR(512) NOT NULL DEFAULT '',
@@ -46,3 +46,6 @@ CREATE TABLE IF NOT EXISTS `conversation_outbox` (
     UNIQUE KEY `uk_conversation_outbox_message` (`message_id`),
     INDEX `idx_conversation_outbox_ready` (`status`, `available_at`, `id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会话摘要可靠投递 Outbox';
+
+ALTER TABLE `conversation_outbox`
+  MODIFY COLUMN `status` ENUM('pending', 'processing', 'done', 'dead') NOT NULL DEFAULT 'pending';

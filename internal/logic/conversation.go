@@ -342,7 +342,13 @@ type conversationOutboxEvent struct {
 	ToType    string
 	Seq       int64
 	SentAt    int64
+	Attempts  int
 }
+
+const (
+	outboxLease       = 30 * time.Second
+	maxOutboxAttempts = 10
+)
 
 // ProcessConversationOutbox applies pending conversation summary events. The
 // claim/update protocol is deliberately idempotent: a crash after applying
@@ -355,7 +361,7 @@ func (h *LogicHandler) ProcessConversationOutbox(ctx context.Context, limit int)
 		limit = 100
 	}
 	rows, err := h.DB.QueryContext(ctx, `
-SELECT id, message_id, session_id, from_uid, to_id, to_type, seq, sent_at
+SELECT id, message_id, session_id, from_uid, to_id, to_type, seq, sent_at, attempts
 FROM conversation_outbox
 WHERE (status = 'pending' OR status = 'processing') AND available_at <= ?
 ORDER BY id
@@ -370,7 +376,7 @@ LIMIT ?
 	for rows.Next() {
 		var event conversationOutboxEvent
 		if err := rows.Scan(&event.ID, &event.MessageID, &event.SessionID, &event.From,
-			&event.To, &event.ToType, &event.Seq, &event.SentAt); err != nil {
+			&event.To, &event.ToType, &event.Seq, &event.SentAt, &event.Attempts); err != nil {
 			return 0, err
 		}
 		events = append(events, event)
@@ -404,15 +410,25 @@ WHERE id = ? AND (status = 'pending' OR status = 'processing') AND available_at 
 			SentAt:    event.SentAt,
 		}
 		if err := h.persistConversationState(ctx, frame, conversationMembers(frame, nil)); err != nil {
+			status := "pending"
+			availableAt := time.Now().Add(outboxRetryDelay(event.ID)).UnixMilli()
+			if event.Attempts+1 >= maxOutboxAttempts {
+				status = "dead"
+				availableAt = time.Now().UnixMilli()
+			}
 			_, updateErr := h.DB.ExecContext(ctx, `
 UPDATE conversation_outbox
-SET status = 'pending', available_at = ?, last_error = ?
+SET status = ?, available_at = ?, last_error = ?
 WHERE id = ?
-`, time.Now().Add(outboxRetryDelay(event.ID)).UnixMilli(), err.Error(), event.ID)
+`, status, availableAt, err.Error(), event.ID)
 			if updateErr != nil {
 				return processed, updateErr
 			}
-			metrics.ConversationOutbox.WithLabelValues("failed").Inc()
+			result := "failed"
+			if status == "dead" {
+				result = "dead"
+			}
+			metrics.ConversationOutbox.WithLabelValues(result).Inc()
 			continue
 		}
 		if _, err := h.DB.ExecContext(ctx, `
@@ -434,8 +450,6 @@ func outboxRetryDelay(id int64) time.Duration {
 	seconds := 1 + id%30
 	return time.Duration(seconds) * time.Second
 }
-
-const outboxLease = 30 * time.Second
 
 func (h *LogicHandler) readConversationSeq(ctx context.Context, uid, conversationID string) int64 {
 	value, err := h.Rdb.HGet(ctx, server.UserConversationReadKey(uid), conversationID).Result()

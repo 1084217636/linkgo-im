@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS `conversation_outbox` (
     `to_type` ENUM('user', 'group') NOT NULL,
     `seq` BIGINT NOT NULL,
     `sent_at` BIGINT NOT NULL,
-    `status` ENUM('pending', 'processing', 'done') NOT NULL DEFAULT 'pending',
+    `status` ENUM('pending', 'processing', 'done', 'dead') NOT NULL DEFAULT 'pending',
     `attempts` INT NOT NULL DEFAULT 0,
     `available_at` BIGINT NOT NULL,
     `last_error` VARCHAR(512) NOT NULL DEFAULT '',

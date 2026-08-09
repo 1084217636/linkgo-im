@@ -374,10 +374,10 @@ func TestProcessConversationOutboxRetriesSummaryEvent(t *testing.T) {
 	defer db.Close()
 
 	now := time.Now().UnixMilli()
-	mock.ExpectQuery("SELECT id, message_id, session_id, from_uid, to_id, to_type, seq, sent_at").
+	mock.ExpectQuery("SELECT id, message_id, session_id, from_uid, to_id, to_type, seq, sent_at, attempts").
 		WithArgs(sqlmock.AnyArg(), 100).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "message_id", "session_id", "from_uid", "to_id", "to_type", "seq", "sent_at"}).
-			AddRow(int64(7), "group:G1-9", "group:G1", "1001", "G1", "group", int64(9), now))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "message_id", "session_id", "from_uid", "to_id", "to_type", "seq", "sent_at", "attempts"}).
+			AddRow(int64(7), "group:G1-9", "group:G1", "1001", "G1", "group", int64(9), now, 0))
 	mock.ExpectExec("UPDATE conversation_outbox").
 		WithArgs(sqlmock.AnyArg(), int64(7), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -395,6 +395,42 @@ func TestProcessConversationOutboxRetriesSummaryEvent(t *testing.T) {
 	}
 	if processed != 1 {
 		t.Fatalf("processed = %d, want 1", processed)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestProcessConversationOutboxMovesPoisonEventToDead(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New error = %v", err)
+	}
+	defer db.Close()
+
+	now := time.Now().UnixMilli()
+	mock.ExpectQuery("SELECT id, message_id, session_id, from_uid, to_id, to_type, seq, sent_at, attempts").
+		WithArgs(sqlmock.AnyArg(), 100).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "message_id", "session_id", "from_uid", "to_id", "to_type", "seq", "sent_at", "attempts"}).
+			AddRow(int64(8), "group:G1-9", "group:G1", "1001", "G1", "group", int64(9), now, maxOutboxAttempts-1))
+	mock.ExpectExec("UPDATE conversation_outbox").
+		WithArgs(sqlmock.AnyArg(), int64(8), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO conversations").
+		WithArgs("group:G1", "group", now, now, int64(9)).
+		WillReturnError(errors.New("temporary database failure"))
+	mock.ExpectExec("UPDATE conversation_outbox").
+		WithArgs("dead", sqlmock.AnyArg(), "temporary database failure", int64(8)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	h := &LogicHandler{DB: db}
+	processed, err := h.ProcessConversationOutbox(ctx, 100)
+	if err != nil {
+		t.Fatalf("ProcessConversationOutbox error = %v", err)
+	}
+	if processed != 0 {
+		t.Fatalf("processed = %d, want 0 for dead event", processed)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("sql expectations: %v", err)
