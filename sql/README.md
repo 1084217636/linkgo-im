@@ -14,6 +14,7 @@
 - `20260707_ai_provider_attempt_logs.sql`：旧库补齐 AI provider attempt 明细表。
 - `20260707_ai_qa_records.sql`：旧库补齐 AI 知识问答记录表。
 - `20260708_ai_bot_seed.sql`：旧库补齐默认 AI 助手账号和演示好友关系。
+- `20260809_reliability_cursors.sql`：为 `conversation_members` 增加 `acked_seq`，并为已有 active 群成员补建会话成员记录。
 
 ## 关键表设计
 
@@ -26,3 +27,7 @@
 - `ai_call_logs`：保存 provider、调用耗时、输入消息数、状态和失败原因，支撑 AI 调用审计和性能优化。
 - `ai_provider_attempt_logs`：保存每次 provider 尝试，支撑 fallback primary/fallback 过程复盘。
 - `ai_qa_records`：保存知识库问答的问题、答案、命中资料、provider 和状态，支撑 FAQ/RAG 闭环复盘。
+
+## 可靠性迁移顺序
+
+新数据库由 `init.sql` 创建最终基础结构；已有数据库按日期顺序执行尚未执行的迁移。`20260809_reliability_cursors.sql` 执行后，`read_seq` 只表示用户已读位置，`acked_seq` 表示客户端可靠收到并 ACK 的位置。当前仓库仍未引入自动 `schema_migrations` 记录表，执行迁移时需要由操作者记录文件名和时间。

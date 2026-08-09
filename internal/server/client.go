@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"time"
 
@@ -34,6 +35,20 @@ func StartClientLoop(
 	routeTTL time.Duration,
 	authorizeReplay ReplaySessionAuthorizer,
 ) {
+	StartClientLoopWithDB(ctx, uid, conn, logic, rdb, nil, routeValue, routeTTL, authorizeReplay)
+}
+
+func StartClientLoopWithDB(
+	ctx context.Context,
+	uid string,
+	conn *ClientConn,
+	logic api.LogicClient,
+	rdb *redis.Client,
+	db *sql.DB,
+	routeValue string,
+	routeTTL time.Duration,
+	authorizeReplay ReplaySessionAuthorizer,
+) {
 	conn.Conn.SetReadLimit(64 << 10)
 	_ = conn.Conn.SetReadDeadline(time.Now().Add(routeTTL))
 	gatewayID := ParseGatewayID(routeValue)
@@ -54,17 +69,28 @@ func StartClientLoop(
 		switch frame.MsgType {
 		case api.MsgType_ACK:
 			metrics.InboundMessages.WithLabelValues("gateway", "ack").Inc()
-			AckMessage(ctx, rdb, uid, frame.AckMessageId)
+			AckMessageWithDB(ctx, rdb, db, uid, frame.AckMessageId)
 			continue
 		case api.MsgType_HEARTBEAT:
 			metrics.InboundMessages.WithLabelValues("gateway", "heartbeat").Inc()
-			if err := RefreshRoute(ctx, rdb, uid, routeValue, routeTTL); err != nil {
+			owned, err := RefreshRouteIfMatch(ctx, rdb, uid, routeValue, routeTTL)
+			if err != nil {
 				logx.Errorw("refresh route failed",
 					logx.Field("trace_id", frame.TraceId),
 					logx.Field("gateway_id", gatewayID),
 					logx.Field("target_id", uid),
 					logx.Field("error", err.Error()),
 				)
+				return
+			}
+			if !owned {
+				logx.Infow("close stale websocket after route ownership changed",
+					logx.Field("trace_id", frame.TraceId),
+					logx.Field("gateway_id", gatewayID),
+					logx.Field("target_id", uid),
+					logx.Field("session_id", conn.SessionID),
+				)
+				return
 			}
 			if frame.SessionId != "" {
 				if err := authorizeSessionReplay(ctx, authorizeReplay, uid, frame.SessionId); err != nil {
@@ -77,7 +103,9 @@ func StartClientLoop(
 					)
 					return
 				}
-				SyncSessionMessagesAfterSeq(ctx, rdb, uid, conn, frame.SessionId, frame.LastSeq, nil)
+				if err := SyncSessionMessagesAfterSeqWithDB(ctx, rdb, db, uid, conn, frame.SessionId, frame.LastSeq, nil); err != nil {
+					return
+				}
 			}
 			_ = conn.Conn.SetReadDeadline(time.Now().Add(routeTTL))
 			pong, _ := proto.Marshal(&api.WireMessage{
@@ -109,8 +137,31 @@ func StartClientLoop(
 				logx.Field("gateway_id", gatewayID),
 				logx.Field("target_id", frame.To),
 			)
+			requestFrame, ok := proto.Clone(&frame).(*api.WireMessage)
+			if !ok {
+				logx.Errorf("clone wire message failed user=%s", uid)
+				continue
+			}
 			logicCtx := ctx
-			if result := pushPool.Submit(logicCtx, uid, logic, msg, &frame, gatewayID); result != SubmitAccepted {
+			onComplete := func(processErr error) {
+				if err := writePushResult(conn, requestFrame, processErr); err != nil {
+					metrics.OutboundMessages.WithLabelValues("gateway", "result_write_error").Inc()
+					logx.Errorw("write push processing result failed",
+						logx.Field("trace_id", requestFrame.TraceId),
+						logx.Field("client_msg_id", requestFrame.ClientMsgId),
+						logx.Field("gateway_id", gatewayID),
+						logx.Field("error", err.Error()),
+					)
+					_ = conn.Close()
+					return
+				}
+				result := "accepted"
+				if processErr != nil {
+					result = "rejected"
+				}
+				metrics.OutboundMessages.WithLabelValues("gateway", "message_"+result).Inc()
+			}
+			if result := pushPool.SubmitWithResult(logicCtx, uid, logic, msg, requestFrame, gatewayID, onComplete); result != SubmitAccepted {
 				logx.Errorw("push queue rejected",
 					logx.Field("trace_id", frame.TraceId),
 					logx.Field("message_id", frame.MessageId),

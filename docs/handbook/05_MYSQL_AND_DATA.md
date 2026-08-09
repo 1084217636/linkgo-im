@@ -141,7 +141,7 @@ create_time      创建时间
 
 ### conversation_members：用户属于哪些会话
 
-保存用户与会话的关系以及 MySQL `read_seq`。但当前接收方 ACK 只推进 Redis 的 `user:conversation:read:<uid>`，不会把这个进度回写 MySQL；异步会话更新主要会用发送消息的 seq 推进发送方记录。因此这个字段现在不能被描述为可靠的接收方已读游标，更不是用户真正点开消息后的商业级已读回执。第 13 章会把 Redis 和 MySQL 两套进度放在一起解释。
+保存用户与会话的关系以及 MySQL `read_seq/acked_seq`。`read_seq` 是用户真正阅读位置，`acked_seq` 是客户端可靠收到并 ACK 的位置。ACK 会单调推进 Redis 快速游标，并尝试回写 MySQL `acked_seq`；它仍不是多端肉眼已读系统。第 13 章会把两套游标放在一起解释。
 
 ### friend_relations / group_members：发送权限
 
@@ -217,12 +217,12 @@ ORDER BY seq DESC
 LIMIT 50
 ```
 
-程序取最近 50 条后，再在内存中翻转为从旧到新的顺序返回。
+程序按 cursor 取最新页或 `seq < before_seq` 的上一页，再在内存中翻转为从旧到新的顺序返回。
 
 注意两个边界：
 
-1. 当前接口固定返回最近 50 条，没有实现完整的游标分页参数。
-2. WebSocket 重连代码不会自动从 MySQL 查询任意缺口；它先使用后续章节介绍的短期数据。网页选择会话时会单独调用这个历史 HTTP 接口。
+1. 当前接口默认返回 50 条、最大 100 条，使用 `before_seq` 和 `has_more/next_before_seq` 游标，不使用深 OFFSET。
+2. WebSocket 重连先使用 Redis 短期数据，再按 `seq > last_seq` 从 MySQL 分批兜底；历史 HTTP 与重连共用相同的 cursor 思路。
 
 ## 10. 消息表和会话表是不是一个事务写入
 
@@ -281,7 +281,7 @@ LIMIT 50;
 6. 连接池的作用是什么？
 7. 当前 Gateway 是否完全不访问 MySQL？
 8. 当前消息和会话元信息是否在同一个事务中？
-9. 当前历史接口一次返回多少条？
+9. 当前历史接口如何使用 `before_seq` 和 `limit` 分页？服务端最大允许多少条？
 10. 公司部署多个 MySQL 节点时，应用为什么仍可只配置一个稳定入口？
 11. 为什么核心业务事实选择 MySQL，它不能替代哪些实时能力？
 
@@ -305,8 +305,12 @@ LIMIT 50;
 6. 连接池复用数据库连接并限制总打开数，避免每个请求重新握手，也避免应用无限占用数据库连接。
 7. 不是。Gateway 的好友、群组、红包和 AI HTTP 逻辑也直接使用 `ServiceContext.DB`。
 8. 不在。`messages INSERT` 同步完成，会话 Redis 热状态随后更新，MySQL 会话摘要在独立 goroutine 中尽力写入。
-9. 最近 50 条，当前没有完整游标分页参数。
+9. 默认返回 50 条，最大 100 条；最新页查询 51 条判断 `has_more`，下一页使用 `seq < next_before_seq`，不使用深 `OFFSET`。
 10. 应用连接代理、VIP 或托管数据库提供的稳定域名；入口后面可以完成主从切换。当前代码仍只有一个 DSN，也没有应用层读写分离。
 11. 结构稳定的消息、关系和红包需要事务、唯一约束、索引和长期查询，MySQL与这些需求匹配。它不保存 WebSocket 对象，也不替代在线路由、低延迟通知和短期待确认状态。
 
 下一步：[06 登录、密码与 JWT](06_LOGIN_AND_JWT.md)
+
+## 可靠性升级后的必读变化
+
+本轮新增了 `conversation_members.acked_seq`。`read_seq` 是用户真正阅读到的位置，`acked_seq` 是客户端可靠收到并 ACK 到的位置；ACK 不能再被解释成“用户已读”。历史查询也从固定 50 条升级为 `before_seq + limit` 游标分页，服务端默认 50、最大 100，并通过多查一条判断 `has_more`。这两个字段和 cursor 必须回到 `internal/logic/conversation.go`、`internal/server/ack.go`、`internal/logic/handler.go` 逐个符号核对。

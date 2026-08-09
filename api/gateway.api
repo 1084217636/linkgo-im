@@ -22,6 +22,7 @@ type Conversation {
 	ReadSeq        int64  `json:"read_seq"`
 	UnreadCount    int64  `json:"unread_count"`
 	UpdatedAt      int64  `json:"updated_at"`
+	AckedSeq       int64  `json:"acked_seq"`
 }
 
 type LoginResp {
@@ -31,11 +32,15 @@ type LoginResp {
 }
 
 type HistoryReq {
-	TargetID string `form:"target_id"`
+	TargetID  string `form:"target_id"`
+	BeforeSeq int64  `form:"before_seq,optional"`
+	Limit     int    `form:"limit,optional"`
 }
 
 type HistoryResp {
-	Data []interface{} `json:"data"`
+	Data          []interface{} `json:"data"`
+	NextBeforeSeq int64         `json:"next_before_seq"`
+	HasMore       bool          `json:"has_more"`
 }
 
 type GroupCreateReq {
@@ -232,53 +237,6 @@ type AIAskResp {
 	CreatedAt     int64               `json:"created_at"`
 }
 
-type ActivityConfig {
-	Title          string `json:"title"`
-	StartAt        int64  `json:"start_at"`
-	EndAt          int64  `json:"end_at"`
-	RewardItemID   string `json:"reward_item_id"`
-	RewardQuantity int64  `json:"reward_quantity"`
-}
-
-type ActivityDraftReq {
-	ActivityID     string         `json:"activity_id"`
-	Config         ActivityConfig `json:"config"`
-	RolloutPercent int            `json:"rollout_percent"`
-}
-
-type ActivityTransitionReq {
-	ActivityID string `json:"activity_id"`
-	Version    int    `json:"version"`
-}
-
-type ActivityRollbackReq {
-	ActivityID    string `json:"activity_id"`
-	TargetVersion int    `json:"target_version"`
-}
-
-type GrantItem {
-	UserID   string `json:"user_id"`
-	ItemID   string `json:"item_id"`
-	Quantity int64  `json:"quantity"`
-}
-
-type ItemGrantReq {
-	GrantRequestID string      `json:"grant_request_id"`
-	Items          []GrantItem `json:"items"`
-}
-
-type ItemGrantQueryReq {
-	GrantRequestID string `form:"grant_request_id"`
-}
-
-type AuditQueryReq {
-	OperatorID   string `form:"operator_id,optional"`
-	ResourceType string `form:"resource_type,optional"`
-	ResourceID   string `form:"resource_id,optional"`
-	Result       string `form:"result,optional"`
-	Limit        int    `form:"limit,optional"`
-}
-
 // --- endpoints ---
 
 @server (
@@ -288,37 +246,6 @@ type AuditQueryReq {
 service gateway-api {
 	@handler Login
 	post /login (LoginReq) returns (LoginResp)
-}
-
-// The generated Auth middleware is combined with platform RBAC in routes.go.
-@server (
-	prefix: /api/v1/admin
-	middleware: Auth,RateLimit
-)
-service gateway-api {
-	@handler ActivityDraft
-	post /activities/drafts (ActivityDraftReq)
-
-	@handler ActivitySubmit
-	post /activities/submit (ActivityTransitionReq)
-
-	@handler ActivityPublish
-	post /activities/publish (ActivityTransitionReq)
-
-	@handler ActivityApprove
-	post /activities/approve (ActivityTransitionReq)
-
-	@handler ActivityRollback
-	post /activities/rollback (ActivityRollbackReq)
-
-	@handler ItemGrant
-	post /items/grant (ItemGrantReq)
-
-	@handler ItemGrantResult
-	get /items/grants (ItemGrantQueryReq)
-
-	@handler AuditList
-	get /audits (AuditQueryReq)
 }
 
 @server (

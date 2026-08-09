@@ -17,12 +17,16 @@ type LoginResp struct {
 }
 
 type HistoryReq struct {
-	TargetID string `form:"target_id"`
+	TargetID  string `form:"target_id"`
+	BeforeSeq int64  `form:"before_seq,optional"`
+	Limit     int    `form:"limit,optional"`
 }
 
 // Type manually customised to reference proto api.WireMessage.
 type HistoryResp struct {
-	Data []*api.WireMessage `json:"data"`
+	Data          []*api.WireMessage `json:"data"`
+	NextBeforeSeq int64              `json:"next_before_seq"`
+	HasMore       bool               `json:"has_more"`
 }
 
 type GroupCreateReq struct {
@@ -220,51 +224,4 @@ type AIAskResp struct {
 	KnowledgeHits int                 `json:"knowledge_hits"`
 	Provider      string              `json:"provider"`
 	CreatedAt     int64               `json:"created_at"`
-}
-
-type ActivityConfig struct {
-	Title          string `json:"title"`
-	StartAt        int64  `json:"start_at"`
-	EndAt          int64  `json:"end_at"`
-	RewardItemID   string `json:"reward_item_id"`
-	RewardQuantity int64  `json:"reward_quantity"`
-}
-
-type ActivityDraftReq struct {
-	ActivityID     string         `json:"activity_id"`
-	Config         ActivityConfig `json:"config"`
-	RolloutPercent int            `json:"rollout_percent"`
-}
-
-type ActivityTransitionReq struct {
-	ActivityID string `json:"activity_id"`
-	Version    int    `json:"version"`
-}
-
-type ActivityRollbackReq struct {
-	ActivityID    string `json:"activity_id"`
-	TargetVersion int    `json:"target_version"`
-}
-
-type GrantItem struct {
-	UserID   string `json:"user_id"`
-	ItemID   string `json:"item_id"`
-	Quantity int64  `json:"quantity"`
-}
-
-type ItemGrantReq struct {
-	GrantRequestID string      `json:"grant_request_id"`
-	Items          []GrantItem `json:"items"`
-}
-
-type ItemGrantQueryReq struct {
-	GrantRequestID string `form:"grant_request_id"`
-}
-
-type AuditQueryReq struct {
-	OperatorID   string `form:"operator_id,optional"`
-	ResourceType string `form:"resource_type,optional"`
-	ResourceID   string `form:"resource_id,optional"`
-	Result       string `form:"result,optional"`
-	Limit        int    `form:"limit,optional"`
 }

@@ -25,6 +25,20 @@ end
 return 0
 `)
 
+var refreshRouteIfMatchScript = redis.NewScript(`
+if redis.call("GET", KEYS[1]) ~= ARGV[1] then
+  return 0
+end
+redis.call("PEXPIRE", KEYS[1], ARGV[4])
+redis.call("SADD", KEYS[2], ARGV[2])
+redis.call("PEXPIRE", KEYS[2], ARGV[5])
+if ARGV[3] ~= "" then
+  redis.call("SET", KEYS[3], ARGV[2], "PX", ARGV[4])
+end
+redis.call("SET", KEYS[4], ARGV[6], "PX", ARGV[4])
+return 1
+`)
+
 func BuildRouteValue(gatewayID, sessionID string) string {
 	return gatewayID + routeSeparator + sessionID
 }
@@ -41,7 +55,9 @@ func ParseGatewayID(routeValue string) string {
 	return gatewayID
 }
 
-func RefreshRoute(ctx context.Context, rdb *redis.Client, uid, routeValue string, ttl time.Duration) error {
+// ClaimRoute publishes a newly authenticated connection as the current route.
+// It intentionally replaces an older session for the same user.
+func ClaimRoute(ctx context.Context, rdb *redis.Client, uid, routeValue string, ttl time.Duration) error {
 	gatewayID, sessionID := ParseRoute(routeValue)
 	if gatewayID == "" {
 		return rdb.Set(ctx, RouteKey(uid), routeValue, ttl).Err()
@@ -58,6 +74,26 @@ func RefreshRoute(ctx context.Context, rdb *redis.Client, uid, routeValue string
 	pipe.Set(ctx, GatewayLiveKey(gatewayID), time.Now().UnixMilli(), ttl)
 	_, err := pipe.Exec(ctx)
 	return err
+}
+
+// RefreshRouteIfMatch extends a route only while routeValue still owns it.
+// A stale connection must never overwrite a newer cross-Gateway login.
+func RefreshRouteIfMatch(ctx context.Context, rdb *redis.Client, uid, routeValue string, ttl time.Duration) (bool, error) {
+	gatewayID, sessionID := ParseRoute(routeValue)
+	if gatewayID == "" || ttl <= 0 {
+		return false, nil
+	}
+
+	result, err := refreshRouteIfMatchScript.Run(ctx, rdb, []string{
+		RouteKey(uid),
+		GatewayUsersKey(gatewayID),
+		GatewayConnKey(gatewayID, sessionID),
+		GatewayLiveKey(gatewayID),
+	}, routeValue, uid, sessionID, ttl.Milliseconds(), (ttl * gatewayRouteTTLMultiplier).Milliseconds(), time.Now().UnixMilli()).Int64()
+	if err != nil {
+		return false, err
+	}
+	return result == 1, nil
 }
 
 func ClearRouteIfMatch(ctx context.Context, rdb *redis.Client, uid, routeValue string) error {
@@ -208,4 +244,8 @@ func ConversationLastKey(conversationID string) string {
 
 func UserConversationReadKey(uid string) string {
 	return "user:conversation:read:" + uid
+}
+
+func UserConversationAckedKey(uid string) string {
+	return "user:conversation:acked:" + uid
 }

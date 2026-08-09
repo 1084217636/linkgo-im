@@ -389,7 +389,7 @@ Transfer 无法 claim recipient，也无法记录 pending 或查在线路由，�
 
 1. fan-out 是什么？
 2. 当前 Kafka job 包含哪些字段？
-3. Logic 是否已经完全摆脱 O(N) 群成员成本？
+3. Logic 是否已经完全摆脱 O(N) 群成员成本？当前消息发送还剩哪些 O(N)？
 4. 为什么要先处理、后提交 offset？
 5. retry topic 与 DLQ 有什么区别？
 6. processing lease 为什么不能只写一个永久 processing？
@@ -411,7 +411,7 @@ retry 时 B 读到 done 直接跳过；C 重新 claim、投递并完成；D 第�
 
 1. 一条输入需要分别安排给多个接收者，输出数量随群成员增长，这叫扇出。
 2. 包含已经分配 ID/seq 的 `Frame`、发送时的 `Recipients` 快照和 `Attempt`。它不是群成员永久事实源，也不是客户端 ACK 记录。
-3. 没有。Logic 仍同步查询完整 active 成员并把 recipients 放进一条 Kafka job，成本仍随 N 增长；Kafka 解耦的是逐成员投递。
+3. 数据库会话成员表已经不再在每条群消息上逐成员 upsert，但 Logic 仍同步查询完整 active 成员并把 recipients 放进 Kafka job，成员解析和 Kafka payload 仍随 N 增长；Kafka 解耦的是逐成员投递，不是消灭所有 O(N)。
 4. 先提交再处理时，进程崩溃会跳过未完成任务；处理或成功转存 retry/DLQ 后再提交，重启可以从未提交位置继续，代价是可能重复。
 5. retry 接收暂时失败、仍可自动再处理的完整 job；DLQ 隔离坏格式或超过上限的任务，等待人工检查。当前没有完善的 DLQ 修复回放工具。
 6. 永久 processing 会让 owner 崩溃后的任务永远卡住；lease 给其他 Worker 在到期后接管机会。
@@ -420,3 +420,7 @@ retry 时 B 读到 done 直接跳过；C 重新 claim、投递并完成；D 第�
 9. 消息正文可能已在 MySQL，Kafka job 没有成功。Gateway 会尝试返回可重试拒绝；客户端用同一 `client_msg_id` 重试时 Logic 从数据库标准记录恢复并再发 Kafka。当前缺事务 Outbox 自动补投。
 
 下一步：[13 好友、群组与会话](13_RELATIONSHIPS_AND_CONVERSATIONS.md)
+
+## 本轮改造后的边界
+
+普通小群仍使用“单条消息 + Kafka recipients 快照 + Transfer fan-out”的写扩散模型，优点是在线推送简单；超级大群的生产化方向仍是“共享消息流 + 用户 `acked_seq/read_seq` + 在线 Push、缺口 Pull”的混合模型。本仓库没有实现百万成员共享日志，也没有把未来方案冒充当前功能。当前新增的群组创建流程会初始化 `conversation_members`，发送群消息只更新 `conversations` 摘要，不再对全部成员重复 upsert。

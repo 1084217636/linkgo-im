@@ -322,7 +322,7 @@ go test ./internal/server -run 'TestClientManagerRemoveOnlyMatchingSession|TestP
 1. Redis 与本机 Go map 有什么区别？
 2. TTL 为什么适合在线路由？
 3. Set 和 ZSet 的差异是什么？
-4. `pending_ack` 与 `ack_idx` 分别保存什么？
+4. `pending_ack`、`ack_idx`、`user:conversation:acked:<uid>` 与 `user:conversation:read:<uid>` 分别保存什么？
 5. 当前 `ack_idx` 是否只是 message_id 指针？
 6. Pub/Sub 为什么不能做最终消息存储？
 7. `PUBLISH` 返回订阅者数量能证明用户收到吗？
@@ -343,7 +343,7 @@ go test ./internal/server -run 'TestClientManagerRemoveOnlyMatchingSession|TestP
 1. map 只在一个 Go 进程内；Redis 是独立网络服务，多实例可共享，但访问会有网络故障和外部依赖成本。
 2. Gateway 可能突然宕机而无法清理。TTL 让旧路由最终自动失效，但不能保证过期前每一刻都准确。
 3. Set 成员无序且不重复；ZSet 还给成员一个 score，可按时间或 seq 排序、范围查询。
-4. `pending_ack` 用 ZSet 保存待确认 message_id 和投递时间；`ack_idx` 用 Hash 保存 message_id 对应的 Base64 完整 payload。
+4. `pending_ack` 用 ZSet 保存待确认 message_id 和投递时间；`ack_idx` 用 Hash 保存 message_id 对应的 Base64 完整 payload；`user:conversation:acked:<uid>` 保存客户端 ACK 游标；`user:conversation:read:<uid>` 只应由真正的已读动作推进。
 5. 不是。当前它保存 payload 副本，不只是指向共享 `message_payload` 的 ID。
 6. 订阅断线期间事件不会保留或重放，也没有永久查询模型；消息事实必须在 MySQL，短期补偿另靠 pending/timeline。
 7. 不能。它只报告订阅 Redis channel 的客户端数量。
@@ -352,3 +352,7 @@ go test ./internal/server -run 'TestClientManagerRemoveOnlyMatchingSession|TestP
 10. 不支持。当前是单地址 `redis.Client`，没有 `NewFailoverClient`、`ClusterClient`，多 Key Lua 也未设计 Cluster 同槽规则。
 
 下一步：[10 跨 Gateway 单聊](10_MULTI_GATEWAY_CHAT.md)
+
+## 本轮可靠性升级
+
+Redis timeline 是快速补偿缓存，不是长期事实源。重连现在先尝试 `session_timeline`，然后用 `messages WHERE session_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?` 从 MySQL 分批兜底，最多保护性回放 1000 条。查询允许 seq 有空洞，不会等待不存在的序号。面试时必须说明：Redis 能证明短期低延迟，但 MySQL 才是消息正文的长期事实源。

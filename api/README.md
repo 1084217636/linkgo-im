@@ -13,7 +13,7 @@
 - `WireMessage`：客户端和服务端在 WebSocket 上使用的 Protobuf 二进制帧。
 - `PushMessage`：Gateway 把客户端上行二进制帧转交 Logic。
 - `Login`：登录鉴权，返回 JWT 与用户 ID。
-- `GetHistory`：按会话维度拉取历史消息。
+- `GetHistory`：按会话维度拉取历史消息，使用 `before_seq` 游标和服务端限制的 `limit`，返回 `next_before_seq/has_more`。
 
 ## 重新生成代码
 

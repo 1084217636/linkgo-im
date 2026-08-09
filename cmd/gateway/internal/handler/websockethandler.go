@@ -75,8 +75,9 @@ func WebSocketHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		defer metrics.WSConnections.Dec()
 
 		ctx := context.Background()
-		if err := server.RefreshRoute(ctx, svcCtx.Rdb, userID, routeValue, svcCtx.RouteTTL); err != nil {
+		if err := server.ClaimRoute(ctx, svcCtx.Rdb, userID, routeValue, svcCtx.RouteTTL); err != nil {
 			logx.Errorf("set route failed user=%s: %v", userID, err)
+			return
 		}
 		defer func() {
 			if err := server.ClearRouteIfMatch(ctx, svcCtx.Rdb, userID, routeValue); err != nil {
@@ -85,14 +86,18 @@ func WebSocketHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		}()
 
 		lastSeq := parseLastSeq(r.URL.Query().Get("last_seq"))
-		server.SyncOfflineMessages(ctx, svcCtx.Rdb, userID, clientConn, sessionID, lastSeq)
+		if err := server.SyncOfflineMessagesWithDB(ctx, svcCtx.Rdb, svcCtx.DB, userID, clientConn, sessionID, lastSeq); err != nil {
+			logx.Errorf("sync offline messages failed user=%s: %v", userID, err)
+			return
+		}
 		ctx = zrpc.SetHashKey(ctx, userID)
-		server.StartClientLoop(
+		server.StartClientLoopWithDB(
 			ctx,
 			userID,
 			clientConn,
 			client,
 			svcCtx.Rdb,
+			svcCtx.DB,
 			routeValue,
 			svcCtx.RouteTTL,
 			func(authCtx context.Context, uid, requestedSessionID string) error {

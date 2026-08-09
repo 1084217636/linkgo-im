@@ -14,7 +14,7 @@
 2. 单聊和群聊发送前分别检查什么权限？
 3. `conversation`、`session_id` 和一条 `message` 有什么区别？
 4. 登录时最近会话从哪里读取？
-5. `last_seq`、`read_seq`、`unread_count` 怎样计算？
+5. `last_seq`、`read_seq`、`acked_seq`、`unread_count` 怎样计算？
 6. 关系数据库不可用时，为什么发送、群扩散和成员列表都要拒绝？
 7. 当前会话与群组功能还有哪些一致性和权限边界？
 
@@ -302,18 +302,18 @@ user:conversation:read:<uid>            HASH
 
 异步步骤可能乱序完成，因此 Redis 更新不是无条件覆盖：`updateConversationLastScript` 只接受不小于当前 `last_seq` 的消息，`user:conversations` 使用 `ZADD GT` 只在新 score 更大时推进。MySQL 的 upsert 也使用 `GREATEST(last_seq, VALUES(last_seq))`。这些保护避免旧消息晚完成时把会话摘要倒退，但不能把异步会话元信息变成与 messages 同事务的强一致结果。
 
-发送者发送一条消息后，Redis 中其 `read_seq` 会推进到该消息 seq。
+发送者发送一条消息后，Redis 中其会话摘要会推进；ACK 到达时，接收方 `acked_seq` 才推进。发送并不等于接收方已读。
 
 ### MySQL 持久状态
 
-Logic 启动一个带 3 秒超时的 goroutine，异步执行：
+Logic 启动一个带 3 秒超时的 goroutine，异步执行会话摘要更新；群消息只更新 `conversations`，不再执行全体成员 upsert。成员关系由建群和成员变更流程初始化。
 
 ```text
 upsert conversations
-upsert conversation_members
+（单聊必要时 upsert 两个固定成员）
 ```
 
-发送者的 MySQL `read_seq` 推进到新 seq，接收者初始为 0。
+会话成员初始化时双方游标默认 0；当前发送方的会话摘要会推进，接收方通过 ACK 推进 `acked_seq`，`read_seq` 只有显式已读动作才应推进。
 
 这里不是和 `messages INSERT` 同一个事务。进程在消息写入后、会话元信息更新前崩溃时，MySQL 可能出现“消息已存在，但最近会话摘要尚未更新”。当前没有对账修复任务。
 
@@ -339,6 +339,7 @@ title
 last_msg
 last_seq
 read_seq
+acked_seq
 unread_count
 updated_at
 ```
@@ -353,21 +354,21 @@ max(last_seq - read_seq, 0)
 
 ## 13. 当前 read_seq 的重要边界
 
-接收方对消息 ACK 时，`AckMessage` 会把新的 read seq 写入 Redis：
+接收方对消息 ACK 时，`AckMessageWithDB` 会把新的 acked seq 写入 Redis，并用 `GREATEST` 尝试回写 MySQL：
 
 ```text
-user:conversation:read:<uid>
+user:conversation:acked:<uid>
 ```
 
 但是当前 ACK 路径没有把接收方 `read_seq` 回写 MySQL `conversation_members`。
 
 因此：
 
-- Redis 仍在时，最近会话未读数可以使用较新的游标；
-- Redis 过期或丢失并回源 MySQL 时，接收方 `read_seq` 可能还是旧值；
-- 不能声称已实现持久、跨设备一致的已读状态。
+- Redis 仍在时，最近会话可以使用较新的 `acked_seq`；
+- Redis 过期或丢失时，MySQL 保存的是最近一次成功回写的 `acked_seq`；
+- 当前没有显式已读 API、跨设备合并或 per-device 游标，不能声称已实现商业级已读状态。
 
-而且第 11 章已经说明：当前 ACK 是客户端收件确认，代码只是借它推进简化 read seq，不等于用户肉眼已读。
+而且第 11 章已经说明：ACK 是客户端收件确认，代码推进的是 `acked_seq`，不等于用户肉眼已读；`read_seq` 需要后续显式已读动作。
 
 ## 14. 历史查询怎样工作
 
@@ -379,19 +380,18 @@ GET /api/v1/history?target_id=...
 
 单聊根据当前 JWT uid 与 target 构造 `c2c` 会话；群聊根据 group ID 构造 `group:` 会话并校验当前成员身份。
 
-MySQL 查询最近 50 条：
+MySQL 默认查询最新 50 条，客户端带 `before_seq` 时向前翻页，最大 limit 为 100：
 
 ```sql
-WHERE session_id = ?
+WHERE session_id = ? AND seq < ?
 ORDER BY seq DESC
-LIMIT 50
+LIMIT ?
 ```
 
 服务端反转后返回旧到新。
 
-当前没有：
+当前仍没有：
 
-- 上拉更多的游标分页；
 - 按时间范围搜索；
 - 全文检索；
 - 消息撤回、编辑、删除；
@@ -472,8 +472,8 @@ Transfer 管群扩散
 1. A 申请时写入或把 `friend_requests(A,B)` 更新为 pending。
 2. B 接受时在一个事务中把这条申请改为 accepted，并写入 `friend_relations(A,B,normal)` 与 `friend_relations(B,A,normal)`。
 3. 三类变化是申请流程行、A 指向 B 的关系行、B 指向 A 的关系行。
-4. A 发第一条消息后，`messages` 有正文、ID、seq 和会话 ID；`conversations` 异步保存该会话的 last_seq/updated_at；`conversation_members` 异步保存 A、B 参与关系，发送方 A 的 read_seq 可推进，B 初始为 0。
-5. B ACK 会推进 Redis `user:conversation:read:B`，当前不会把 B 的接收进度写回 MySQL `conversation_members`。
+4. A 发第一条消息后，`messages` 有正文、ID、seq 和会话 ID；`conversations` 异步保存该会话的 last_seq/updated_at；成员关系在建立时初始化，消息发送不会对群成员重复 upsert。
+5. B ACK 会推进 Redis `user:conversation:acked:B`，并尝试用单调更新写回 MySQL `conversation_members.acked_seq`；这仍不等于肉眼已读。
 
 G100 图中 `im_groups` 只有一行，保存名称、owner 和群状态；每个 owner/admin/member 各有一条 `group_members(group_id,user_id)` 行，保存角色、禁言和成员状态。
 
@@ -485,8 +485,12 @@ G100 图中 `im_groups` 只有一行，保存名称、owner 和群状态；每�
 4. 对两个 uid 排序后，A 到 B 与 B 到 A 得到同一个 `c2c:min:max`，消息能归入同一会话和 seq 空间。
 5. conversations 是会话摘要和 last_seq；messages 是每条具体消息正文与服务端 ID。
 6. 先查 Redis `user:conversations:<uid>`；为空时查询 MySQL 会话、成员和最新消息，再尽力回填 Redis。
-7. 接收方 ACK 只更新 Redis，刷新或 Redis 丢失会回源旧 MySQL read_seq；当前还是单值路由，也没有 per-device 游标，ACK 本身也不是肉眼已读。
+7. 接收方 ACK 同时推进 Redis 快速 `acked_seq` 并尝试回写 MySQL；当前仍是单值路由、没有 per-device 游标，ACK 本身也不是肉眼已读。
 8. 当前不会验证请求中每个成员账号存在，没有完整邀请、退群、踢人和角色 RBAC；MySQL commit 后 Redis 缓存失败只记录日志且无重建任务。重复 group_id 会拒绝，非 active 成员不能列成员。
 9. 好友、建群、成员列表、红包和 AI 等 Gateway REST Logic 直接持有并访问 MySQL；只有消息主链路的登录、历史和 WebSocket Push 通过独立 Logic。
 
 下一步：[14 红包并发一致性](14_RED_PACKET.md)
+
+## 可靠性升级后的会话成员边界
+
+`conversation_members` 描述“谁属于哪个会话以及自己的游标”，不是每条消息的 fan-out 临时表。群创建或成员变更时初始化关系；群消息只更新 `conversations.last_seq/updated_at`，不再对全部群成员执行 MySQL upsert。`read_seq` 和 `acked_seq` 也必须分开：前者是用户已读位置，后者是客户端 ACK 位置。需要继续追问时，回到 `internal/logic/conversation.go` 的 `persistConversationState` 和 `sql/20260809_reliability_cursors.sql`。

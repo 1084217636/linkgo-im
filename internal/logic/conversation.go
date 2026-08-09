@@ -10,12 +10,38 @@ import (
 	"github.com/1084217636/linkgo-im/internal/server"
 	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logx"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
 	defaultConversationLimit = 50
 	conversationCacheTTL     = 30 * 24 * time.Hour
 )
+
+var updateConversationLastScript = redis.NewScript(`
+local current_seq = tonumber(redis.call("HGET", KEYS[1], "last_seq") or "-1")
+local incoming_seq = tonumber(ARGV[1])
+if current_seq > incoming_seq then
+  redis.call("EXPIRE", KEYS[1], ARGV[8])
+  return 0
+end
+local current_updated_at = tonumber(redis.call("HGET", KEYS[1], "updated_at") or "0")
+local incoming_updated_at = tonumber(ARGV[6])
+if current_updated_at > incoming_updated_at then
+  incoming_updated_at = current_updated_at
+end
+redis.call("HSET", KEYS[1],
+  "conversation_id", ARGV[2],
+  "type", ARGV[3],
+  "title", ARGV[4],
+  "last_msg", ARGV[5],
+  "last_seq", ARGV[1],
+  "last_msg_time", incoming_updated_at,
+  "updated_at", incoming_updated_at,
+  "sender_id", ARGV[7])
+redis.call("EXPIRE", KEYS[1], ARGV[8])
+return 1
+`)
 
 func (h *LogicHandler) listConversations(ctx context.Context, uid string, limit int64) ([]*api.Conversation, error) {
 	if limit <= 0 {
@@ -55,6 +81,7 @@ func (h *LogicHandler) loadConversationsFromRedis(ctx context.Context, uid strin
 			return nil, err
 		}
 		readSeq := h.readConversationSeq(ctx, uid, conversationID)
+		ackedSeq := h.ackedConversationSeq(ctx, uid, conversationID)
 		lastSeq := parseInt64(fields["last_seq"])
 		updatedAt := parseInt64(fields["updated_at"])
 		if updatedAt == 0 {
@@ -69,6 +96,7 @@ func (h *LogicHandler) loadConversationsFromRedis(ctx context.Context, uid strin
 			LastMsg:        fields["last_msg"],
 			LastSeq:        lastSeq,
 			ReadSeq:        readSeq,
+			AckedSeq:       ackedSeq,
 			UnreadCount:    unreadCount(lastSeq, readSeq),
 			UpdatedAt:      updatedAt,
 		})
@@ -82,6 +110,18 @@ func (h *LogicHandler) loadConversationsFromDB(ctx context.Context, uid string, 
 	}
 
 	rows, err := h.DB.QueryContext(ctx, `
+SELECT c.id, c.type, c.updated_at, c.last_seq, cm.read_seq, cm.acked_seq, COALESCE(m.content, '')
+FROM conversation_members cm
+JOIN conversations c ON c.id = cm.conversation_id
+LEFT JOIN messages m ON m.session_id = c.id AND m.seq = c.last_seq
+WHERE cm.user_id = ?
+ORDER BY c.updated_at DESC
+LIMIT ?
+`, uid, limit)
+	legacyAcked := false
+	if isUnknownColumn(err, "acked_seq") {
+		legacyAcked = true
+		rows, err = h.DB.QueryContext(ctx, `
 SELECT c.id, c.type, c.updated_at, c.last_seq, cm.read_seq, COALESCE(m.content, '')
 FROM conversation_members cm
 JOIN conversations c ON c.id = cm.conversation_id
@@ -90,6 +130,7 @@ WHERE cm.user_id = ?
 ORDER BY c.updated_at DESC
 LIMIT ?
 `, uid, limit)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -98,15 +139,30 @@ LIMIT ?
 	conversations := make([]*api.Conversation, 0, limit)
 	for rows.Next() {
 		var conv api.Conversation
-		if err := rows.Scan(
-			&conv.ConversationId,
-			&conv.Type,
-			&conv.UpdatedAt,
-			&conv.LastSeq,
-			&conv.ReadSeq,
-			&conv.LastMsg,
-		); err != nil {
-			return nil, err
+		var scanErr error
+		if legacyAcked {
+			scanErr = rows.Scan(
+				&conv.ConversationId,
+				&conv.Type,
+				&conv.UpdatedAt,
+				&conv.LastSeq,
+				&conv.ReadSeq,
+				&conv.LastMsg,
+			)
+			conv.AckedSeq = conv.ReadSeq
+		} else {
+			scanErr = rows.Scan(
+				&conv.ConversationId,
+				&conv.Type,
+				&conv.UpdatedAt,
+				&conv.LastSeq,
+				&conv.ReadSeq,
+				&conv.AckedSeq,
+				&conv.LastMsg,
+			)
+		}
+		if scanErr != nil {
+			return nil, scanErr
 		}
 		conv.Title = conversationTitleForUser(uid, conv.ConversationId, conv.Type, "")
 		conv.UnreadCount = unreadCount(conv.LastSeq, conv.ReadSeq)
@@ -134,10 +190,12 @@ func (h *LogicHandler) cacheConversationList(ctx context.Context, uid string, co
 			"updated_at":      conv.UpdatedAt,
 		})
 		pipe.HSet(ctx, server.UserConversationReadKey(uid), conv.ConversationId, conv.ReadSeq)
+		pipe.HSet(ctx, server.UserConversationAckedKey(uid), conv.ConversationId, conv.AckedSeq)
 		pipe.Expire(ctx, server.ConversationLastKey(conv.ConversationId), conversationCacheTTL)
 	}
 	pipe.Expire(ctx, server.UserConversationsKey(uid), conversationCacheTTL)
 	pipe.Expire(ctx, server.UserConversationReadKey(uid), conversationCacheTTL)
+	pipe.Expire(ctx, server.UserConversationAckedKey(uid), conversationCacheTTL)
 	if _, err := pipe.Exec(ctx); err != nil {
 		logx.Errorw("cache conversation list failed",
 			logx.Field("target_id", uid),
@@ -164,12 +222,15 @@ func (h *LogicHandler) updateConversationState(ctx context.Context, frame *api.W
 		}
 	}
 	if h.DB != nil {
-		frameCopy := *frame
+		frameCopy, ok := proto.Clone(frame).(*api.WireMessage)
+		if !ok {
+			return
+		}
 		membersCopy := append([]string(nil), members...)
 		go func() {
 			dbCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			h.persistConversationState(dbCtx, &frameCopy, membersCopy)
+			h.persistConversationState(dbCtx, frameCopy, membersCopy)
 		}()
 	}
 }
@@ -184,28 +245,40 @@ func (h *LogicHandler) cacheConversationState(ctx context.Context, frame *api.Wi
 		pipe.SAdd(ctx, server.ConversationMembersKey(frame.SessionId), memberArgs...)
 		pipe.Expire(ctx, server.ConversationMembersKey(frame.SessionId), conversationCacheTTL)
 	}
-
-	pipe.HSet(ctx, server.ConversationLastKey(frame.SessionId), map[string]any{
-		"conversation_id": frame.SessionId,
-		"type":            frame.ToType,
-		"title":           conversationTitle(frame.From, frame.SessionId, frame.ToType),
-		"last_msg":        frame.Body,
-		"last_seq":        frame.Seq,
-		"last_msg_time":   frame.SentAt,
-		"updated_at":      frame.SentAt,
-		"sender_id":       frame.From,
-	})
-	pipe.Expire(ctx, server.ConversationLastKey(frame.SessionId), conversationCacheTTL)
-
-	for _, member := range members {
-		pipe.ZAdd(ctx, server.UserConversationsKey(member), redis.Z{
-			Score:  float64(frame.SentAt),
-			Member: frame.SessionId,
-		})
-		pipe.Expire(ctx, server.UserConversationsKey(member), conversationCacheTTL)
-	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		return err
+	}
+
+	applied, err := updateConversationLastScript.Run(ctx, h.Rdb, []string{
+		server.ConversationLastKey(frame.SessionId),
+	},
+		frame.Seq,
+		frame.SessionId,
+		frame.ToType,
+		conversationTitle(frame.From, frame.SessionId, frame.ToType),
+		frame.Body,
+		frame.SentAt,
+		frame.From,
+		int64(conversationCacheTTL.Seconds()),
+	).Int64()
+	if err != nil {
+		return err
+	}
+	if applied == 1 {
+		indexPipe := h.Rdb.TxPipeline()
+		for _, member := range members {
+			indexPipe.ZAddArgs(ctx, server.UserConversationsKey(member), redis.ZAddArgs{
+				GT: true,
+				Members: []redis.Z{{
+					Score:  float64(frame.SentAt),
+					Member: frame.SessionId,
+				}},
+			})
+			indexPipe.Expire(ctx, server.UserConversationsKey(member), conversationCacheTTL)
+		}
+		if _, err := indexPipe.Exec(ctx); err != nil {
+			return err
+		}
 	}
 	return server.MarkConversationRead(ctx, h.Rdb, frame.From, frame.SessionId, frame.Seq)
 }
@@ -229,6 +302,12 @@ ON DUPLICATE KEY UPDATE
 		return
 	}
 
+	// Group membership is initialized by group create/join/leave flows. A
+	// message must not rewrite every member on the hot path. A one-to-one
+	// conversation has a constant two-user cardinality and remains safe here.
+	if frame.ToType == "group" {
+		return
+	}
 	for _, member := range members {
 		readSeq := int64(0)
 		if member == frame.From {
@@ -253,6 +332,14 @@ ON DUPLICATE KEY UPDATE
 
 func (h *LogicHandler) readConversationSeq(ctx context.Context, uid, conversationID string) int64 {
 	value, err := h.Rdb.HGet(ctx, server.UserConversationReadKey(uid), conversationID).Result()
+	if err != nil {
+		return 0
+	}
+	return parseInt64(value)
+}
+
+func (h *LogicHandler) ackedConversationSeq(ctx context.Context, uid, conversationID string) int64 {
+	value, err := h.Rdb.HGet(ctx, server.UserConversationAckedKey(uid), conversationID).Result()
 	if err != nil {
 		return 0
 	}

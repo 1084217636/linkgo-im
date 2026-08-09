@@ -39,12 +39,18 @@ func (l *HistoryLogic) GetHistory(req *types.HistoryReq) (*types.HistoryResp, er
 
 	ctx := zrpc.SetHashKey(l.ctx, userID)
 	reply, err := cli.GetHistory(ctx, &api.GetHistoryReq{
-		UserId:   userID,
-		TargetId: req.TargetID,
+		UserId:    userID,
+		TargetId:  req.TargetID,
+		BeforeSeq: req.BeforeSeq,
+		Limit:     int32(req.Limit),
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	return &types.HistoryResp{Data: reply.Messages}, nil
+	return &types.HistoryResp{
+		Data:          reply.Messages,
+		NextBeforeSeq: reply.NextBeforeSeq,
+		HasMore:       reply.HasMore,
+	}, nil
 }

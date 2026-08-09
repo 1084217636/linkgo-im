@@ -45,6 +45,32 @@ var (
 		Help: "Total ack operations by result.",
 	}, []string{"result"})
 
+	MessageSeqAllocated = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "linkgo_message_seq_allocated_total",
+		Help: "Message session sequence values allocated by Redis.",
+	})
+
+	MessagePersisted = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "linkgo_message_persist_total",
+		Help: "Message persistence attempts by result.",
+	}, []string{"result"})
+
+	HistoryQueries = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "linkgo_history_queries_total",
+		Help: "History queries by source and result.",
+	}, []string{"source", "result"})
+
+	ReconnectReplay = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "linkgo_reconnect_replay_total",
+		Help: "Reconnect replay messages by source.",
+	}, []string{"source"})
+
+	GroupDispatchMembers = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "linkgo_group_dispatch_member_count",
+		Help:    "Number of recipients in a group dispatch.",
+		Buckets: []float64{1, 10, 50, 100, 500, 1000, 5000, 10000},
+	})
+
 	KafkaOperations = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "linkgo_kafka_operations_total",
 		Help: "Kafka operations by stage and result.",
@@ -81,27 +107,6 @@ var (
 		Help:    "AI provider call latency in seconds by provider and result.",
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30},
 	}, []string{"provider", "result"})
-
-	GameOpsOperations = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "linkgo_gameops_operations_total",
-		Help: "Game operations control-plane requests by operation and result.",
-	}, []string{"operation", "result"})
-
-	GameOpsOperationLatencySeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "linkgo_gameops_operation_latency_seconds",
-		Help:    "Game operations control-plane request latency by operation.",
-		Buckets: prometheus.DefBuckets,
-	}, []string{"operation"})
-
-	GameOpsGrantedItems = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "linkgo_gameops_granted_items_total",
-		Help: "Item grant entries handled by result; retries do not increment success.",
-	}, []string{"result"})
-
-	GameOpsCacheSync = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "linkgo_gameops_cache_sync_total",
-		Help: "Activity cache synchronization attempts by result.",
-	}, []string{"result"})
 )
 
 func Handler() http.Handler {

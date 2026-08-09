@@ -9,6 +9,7 @@ import (
 	gwmiddleware "github.com/1084217636/linkgo-im/cmd/gateway/internal/middleware"
 	"github.com/1084217636/linkgo-im/cmd/gateway/internal/svc"
 	"github.com/1084217636/linkgo-im/cmd/gateway/internal/types"
+	"github.com/go-sql-driver/mysql"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
@@ -31,10 +32,13 @@ func (l *GroupCreateLogic) Create(req *types.GroupCreateReq) (*types.GroupCreate
 		return nil, errors.New("group_id and members are required")
 	}
 	if l.svcCtx.DB == nil {
-		return l.createRedisOnly(req)
+		return nil, errors.New("group store is unavailable")
 	}
 
 	creatorID := gwmiddleware.UserIDFromContext(l.ctx)
+	if creatorID == "" {
+		return nil, errors.New("authenticated creator is required")
+	}
 	memberSet := map[string]struct{}{creatorID: {}}
 	for _, member := range req.Members {
 		member = strings.TrimSpace(member)
@@ -56,11 +60,11 @@ func (l *GroupCreateLogic) Create(req *types.GroupCreateReq) (*types.GroupCreate
 	if _, err := tx.ExecContext(l.ctx, `
 INSERT INTO im_groups (group_id, name, owner_id, status, created_at, updated_at)
 VALUES (?, ?, ?, 'active', ?, ?)
-ON DUPLICATE KEY UPDATE
-  name = VALUES(name),
-  status = 'active',
-  updated_at = VALUES(updated_at)
 `, req.GroupID, groupName, creatorID, now, now); err != nil {
+		var mysqlErr *mysql.MySQLError
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+			return nil, errors.New("group already exists")
+		}
 		return nil, err
 	}
 
@@ -79,44 +83,34 @@ ON DUPLICATE KEY UPDATE
 			return nil, err
 		}
 	}
+	for member := range memberSet {
+		if _, err := tx.ExecContext(l.ctx, `
+INSERT INTO conversation_members (conversation_id, user_id, read_seq, acked_seq, joined_at)
+VALUES (?, ?, 0, 0, ?)
+ON DUPLICATE KEY UPDATE joined_at = LEAST(joined_at, VALUES(joined_at))
+`, "group:"+req.GroupID, member, now); err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 
-	for member := range memberSet {
-		if err := l.svcCtx.Rdb.SAdd(l.ctx, "group_members:"+req.GroupID, member).Err(); err != nil {
-			return nil, err
+	if l.svcCtx.Rdb != nil {
+		pipe := l.svcCtx.Rdb.TxPipeline()
+		for member := range memberSet {
+			pipe.SAdd(l.ctx, "group_members:"+req.GroupID, member)
+			pipe.SAdd(l.ctx, "user_groups:"+member, req.GroupID)
 		}
-		if err := l.svcCtx.Rdb.SAdd(l.ctx, "user_groups:"+member, req.GroupID).Err(); err != nil {
-			return nil, err
-		}
-	}
-
-	return &types.GroupCreateResp{
-		GroupID: req.GroupID,
-		Members: len(memberSet),
-		Msg:     "group created",
-	}, nil
-}
-
-func (l *GroupCreateLogic) createRedisOnly(req *types.GroupCreateReq) (*types.GroupCreateResp, error) {
-	creatorID := gwmiddleware.UserIDFromContext(l.ctx)
-	memberSet := map[string]struct{}{creatorID: {}}
-	for _, member := range req.Members {
-		member = strings.TrimSpace(member)
-		if member != "" {
-			memberSet[member] = struct{}{}
+		if _, err := pipe.Exec(l.ctx); err != nil {
+			logx.Errorw("cache committed group membership failed",
+				logx.Field("group_id", req.GroupID),
+				logx.Field("creator_id", creatorID),
+				logx.Field("error", err.Error()),
+			)
 		}
 	}
 
-	for member := range memberSet {
-		if err := l.svcCtx.Rdb.SAdd(l.ctx, "group_members:"+req.GroupID, member).Err(); err != nil {
-			return nil, err
-		}
-		if err := l.svcCtx.Rdb.SAdd(l.ctx, "user_groups:"+member, req.GroupID).Err(); err != nil {
-			return nil, err
-		}
-	}
 	return &types.GroupCreateResp{
 		GroupID: req.GroupID,
 		Members: len(memberSet),

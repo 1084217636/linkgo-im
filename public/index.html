@@ -592,6 +592,9 @@
         userId: "",
         ws: null,
         heartbeatTimer: null,
+        reconnectTimer: null,
+        reconnectAttempt: 0,
+        intentionalClose: false,
         lastPongAt: 0,
         currentTarget: "",
         currentType: "user",
@@ -601,6 +604,9 @@
         requests: [],
         renderedMessageIds: new Set(),
         lastSeqBySession: new Map(),
+        lastAckedSeqBySession: new Map(),
+        historyCursorBySession: new Map(),
+        historyHasMoreBySession: new Map(),
         lastWire: null,
         pendingMessages: new Map()
     };
@@ -848,6 +854,9 @@
     function setCurrent(target, type) {
         state.currentTarget = target;
         state.currentType = type || (String(target).startsWith("G") ? "group" : "user");
+        const sessionID = buildSessionId(target, state.currentType);
+        state.historyCursorBySession.delete(sessionID);
+        state.historyHasMoreBySession.delete(sessionID);
         $("target-id").value = target;
         $("target-type").value = state.currentType;
         const name = state.currentType === "group" ? target : displayName(target);
@@ -1020,6 +1029,7 @@
         const isSelf = msg.from === state.userId;
         const isAI = isAIUser(msg.from);
         row.className = `msg ${isSelf ? "self" : "other"}`;
+        if (msg.client_msg_id) row.dataset.clientMsgId = msg.client_msg_id;
         const meta = [
             msg.from || state.userId || "-",
             msg.seq ? `seq:${msg.seq}` : "",
@@ -1053,6 +1063,9 @@
             state.userId = payload.user_id;
             state.conversations.clear();
             state.lastSeqBySession.clear();
+            state.lastAckedSeqBySession.clear();
+            state.historyCursorBySession.clear();
+            state.historyHasMoreBySession.clear();
             state.friendMeta.clear();
             for (const conv of payload.conversations || []) {
                 const target = targetFromConversation(conv);
@@ -1061,9 +1074,11 @@
                         title: conv.title || target,
                         last_msg: conv.last_msg,
                         last_seq: conv.last_seq,
+                        acked_seq: conv.acked_seq,
                         updated_at: conv.updated_at
                     });
                     state.lastSeqBySession.set(conv.conversation_id, conv.last_seq || 0);
+                    state.lastAckedSeqBySession.set(conv.conversation_id, conv.acked_seq || 0);
                 }
             }
             setStatus("warn", `已登录 ${state.userId}`);
@@ -1088,11 +1103,16 @@
             log("warn", "缺少 token，无法连接 WebSocket");
             return;
         }
+        state.intentionalClose = true;
+        if (state.reconnectTimer) {
+            clearTimeout(state.reconnectTimer);
+            state.reconnectTimer = null;
+        }
         if (state.ws) state.ws.close();
         if (state.heartbeatTimer) clearInterval(state.heartbeatTimer);
 
         const sessionID = buildSessionId(state.currentTarget, state.currentType);
-        const lastSeq = state.lastSeqBySession.get(sessionID);
+        const lastSeq = state.lastAckedSeqBySession.get(sessionID);
         const query = new URLSearchParams({ token: state.token });
         if (sessionID) {
             query.set("session_id", sessionID);
@@ -1105,6 +1125,8 @@
         setStatus("warn", "连接中");
 
         ws.onopen = () => {
+            state.reconnectAttempt = 0;
+            state.intentionalClose = false;
             state.lastPongAt = Date.now();
             setStatus("ok", `在线 ${state.userId}`);
             log("ok", "WebSocket 已连接");
@@ -1114,11 +1136,33 @@
         ws.onerror = () => log("error", "WebSocket 错误");
         ws.onclose = () => {
             if (state.ws === ws) {
+                state.ws = null;
                 setStatus("error", state.token ? "已断开" : "离线");
                 log("warn", "WebSocket 已断开");
+                if (state.token && !state.intentionalClose) scheduleReconnect();
             }
         };
     }
+
+    function scheduleReconnect() {
+        if (!state.token || state.reconnectTimer) return;
+        const attempt = state.reconnectAttempt++;
+        const base = Math.min(30000, 1000 * (2 ** Math.min(attempt, 5)));
+        const delay = Math.round(base * (0.8 + Math.random() * 0.4));
+        setStatus("warn", `断线重连中 ${Math.round(delay / 1000)}s`);
+        log("warn", "安排 WebSocket 重连", { attempt: attempt + 1, delay_ms: delay });
+        state.reconnectTimer = window.setTimeout(() => {
+            state.reconnectTimer = null;
+            if (state.token) connectWebSocket();
+        }, delay);
+    }
+
+    window.addEventListener("online", () => {
+        if (state.token && !state.ws) {
+            state.reconnectAttempt = 0;
+            scheduleReconnect();
+        }
+    });
 
     function startHeartbeat() {
         if (state.heartbeatTimer) clearInterval(state.heartbeatTimer);
@@ -1134,7 +1178,7 @@
             ws.send(encodeWireMessage({
                 msg_type: 1,
                 session_id: sessionID,
-                last_seq: state.lastSeqBySession.get(sessionID) || 0,
+                last_seq: state.lastAckedSeqBySession.get(sessionID) || 0,
                 sent_at: Date.now(),
                 trace_id: newId("hb")
             }));
@@ -1190,10 +1234,19 @@
         } catch {
             return false;
         }
+        const clientMsgID = msg.client_msg_id || "";
+        if (detail.type === "result" && detail.code === "MESSAGE_ACCEPTED") {
+            clearPendingMessage(clientMsgID);
+            markPendingMessageState(clientMsgID, "accepted");
+            log("ok", "消息已被 Logic 接受", { client_msg_id: clientMsgID });
+            return true;
+        }
         if (detail.type !== "error") return false;
 
-        const clientMsgID = msg.client_msg_id || "";
-        log(detail.retryable ? "warn" : "error", `消息被服务端拒绝: ${detail.code || "UNKNOWN"}`, {
+        const rejectionLabel = detail.code === "MESSAGE_REJECTED"
+            ? "消息未被 Logic 接受"
+            : "消息被网关拒绝";
+        log(detail.retryable ? "warn" : "error", `${rejectionLabel}: ${detail.code || "UNKNOWN"}`, {
             client_msg_id: clientMsgID,
             retryable: Boolean(detail.retryable),
             message: detail.message || ""
@@ -1202,6 +1255,7 @@
             scheduleMessageRetry(clientMsgID, Number(detail.retry_after_ms) || 0);
         } else {
             clearPendingMessage(clientMsgID);
+            markPendingMessageState(clientMsgID, "rejected");
         }
         return true;
     }
@@ -1243,6 +1297,20 @@
         state.pendingMessages.delete(clientMsgID);
     }
 
+    function markPendingMessageState(clientMsgID, nextState) {
+        if (!clientMsgID) return;
+        for (const row of document.querySelectorAll(".msg[data-client-msg-id]")) {
+            if (row.dataset.clientMsgId !== clientMsgID) continue;
+            const meta = row.querySelector(".meta");
+            if (!meta) continue;
+            const tokens = meta.textContent.split(/\s+/).filter((token) =>
+                token && token !== "pending" && token !== "accepted" && token !== "rejected"
+            );
+            if (nextState) tokens.push(nextState);
+            meta.textContent = tokens.join(" ");
+        }
+    }
+
     function ackMessage(msg) {
         if (!msg.message_id || msg.from === state.userId) return;
         const ws = state.ws;
@@ -1253,15 +1321,35 @@
             sent_at: Date.now(),
             trace_id: newId("ack")
         }));
+        const sessionID = sessionOfMessage(msg);
+        const current = state.lastAckedSeqBySession.get(sessionID) || 0;
+        if (msg.seq > current) state.lastAckedSeqBySession.set(sessionID, msg.seq);
     }
 
-    async function loadHistory() {
+    async function loadHistory(options = {}) {
         if (!state.token || !state.currentTarget) return;
+        const sessionID = buildSessionId(state.currentTarget, state.currentType);
+        const beforeSeq = options.beforeSeq || state.historyCursorBySession.get(sessionID) || 0;
+        const params = new URLSearchParams({ target_id: state.currentTarget });
+        if (beforeSeq > 0) params.set("before_seq", String(beforeSeq));
+        params.set("limit", "50");
         try {
-            const payload = await apiFetch(`/api/v1/history?target_id=${encodeURIComponent(state.currentTarget)}`);
+            const payload = await apiFetch(`/api/v1/history?${params.toString()}`);
             const data = Array.isArray(payload.data) ? payload.data : [];
+            if (!beforeSeq) {
+                state.renderedMessageIds.clear();
+                $("messages").innerHTML = "";
+            }
             renderMessages(data);
-            log("ok", "历史加载完成", { target_id: state.currentTarget, count: data.length });
+            state.historyHasMoreBySession.set(sessionID, Boolean(payload.has_more));
+            if (payload.has_more && payload.next_before_seq) {
+                state.historyCursorBySession.set(sessionID, payload.next_before_seq);
+            }
+            log("ok", beforeSeq ? "历史上一页加载完成" : "历史加载完成", {
+                target_id: state.currentTarget,
+                count: data.length,
+                has_more: Boolean(payload.has_more)
+            });
         } catch (err) {
             log("error", "历史加载失败", err.message);
         }

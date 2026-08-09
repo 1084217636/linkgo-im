@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS `conversation_members` (
     `conversation_id` VARCHAR(128) NOT NULL COMMENT '会话ID',
     `user_id` VARCHAR(64) NOT NULL COMMENT '成员用户ID',
     `read_seq` BIGINT NOT NULL DEFAULT 0 COMMENT '该用户在该会话已确认/已读到的 seq',
+    `acked_seq` BIGINT NOT NULL DEFAULT 0 COMMENT '该用户客户端可靠收到并 ACK 到的 seq',
     `joined_at` BIGINT NOT NULL COMMENT '加入会话时间',
     PRIMARY KEY (`conversation_id`, `user_id`),
     INDEX `idx_user_conversation` (`user_id`, `conversation_id`)
@@ -211,130 +212,7 @@ CREATE TABLE IF NOT EXISTS `ai_qa_records` (
     INDEX `idx_ai_qa_status_time` (`status`, `created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI知识问答记录表';
 
--- 11. 游戏运营控制面角色与审计
-CREATE TABLE IF NOT EXISTS `platform_user_roles` (
-    `user_id` VARCHAR(64) NOT NULL,
-    `role` VARCHAR(32) NOT NULL COMMENT 'operator/reviewer/admin',
-    `status` VARCHAR(16) NOT NULL DEFAULT 'active',
-    `created_at` BIGINT NOT NULL,
-    `updated_at` BIGINT NOT NULL,
-    PRIMARY KEY (`user_id`),
-    INDEX `idx_platform_role_status` (`role`, `status`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='游戏运营控制面用户角色';
-
-CREATE TABLE IF NOT EXISTS `operation_audit_logs` (
-    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    `audit_id` VARCHAR(64) NOT NULL,
-    `operator_id` VARCHAR(64) NOT NULL,
-    `operator_role` VARCHAR(32) NOT NULL,
-    `operation` VARCHAR(64) NOT NULL,
-    `resource_type` VARCHAR(32) NOT NULL,
-    `resource_id` VARCHAR(128) NOT NULL,
-    `request_id` VARCHAR(128) NOT NULL DEFAULT '',
-    `result` VARCHAR(16) NOT NULL,
-    `detail_json` JSON NOT NULL,
-    `trace_id` VARCHAR(64) NOT NULL DEFAULT '',
-    `client_ip` VARCHAR(64) NOT NULL DEFAULT '',
-    `created_at` BIGINT NOT NULL,
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_operation_audit_id` (`audit_id`),
-    INDEX `idx_operation_audit_operator_time` (`operator_id`, `created_at`),
-    INDEX `idx_operation_audit_resource_time` (`resource_type`, `resource_id`, `created_at`),
-    INDEX `idx_operation_audit_operation_time` (`operation`, `created_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='运营管理操作审计日志';
-
-CREATE TABLE IF NOT EXISTS `game_activities` (
-    `activity_id` VARCHAR(64) NOT NULL,
-    `name` VARCHAR(128) NOT NULL,
-    `status` VARCHAR(24) NOT NULL,
-    `current_version` INT NOT NULL DEFAULT 0,
-    `published_version` INT NOT NULL DEFAULT 0,
-    `rollout_percent` INT NOT NULL DEFAULT 0,
-    `created_by` VARCHAR(64) NOT NULL,
-    `created_at` BIGINT NOT NULL,
-    `updated_at` BIGINT NOT NULL,
-    PRIMARY KEY (`activity_id`),
-    INDEX `idx_game_activity_status_time` (`status`, `updated_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='游戏运营活动主记录';
-
-CREATE TABLE IF NOT EXISTS `game_activity_versions` (
-    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    `activity_id` VARCHAR(64) NOT NULL,
-    `version` INT NOT NULL,
-    `status` VARCHAR(24) NOT NULL,
-    `config_json` JSON NOT NULL,
-    `rollout_percent` INT NOT NULL,
-    `created_by` VARCHAR(64) NOT NULL,
-    `approved_by` VARCHAR(64) NOT NULL DEFAULT '',
-    `created_at` BIGINT NOT NULL,
-    `updated_at` BIGINT NOT NULL,
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_game_activity_version` (`activity_id`, `version`),
-    INDEX `idx_game_activity_version_status` (`activity_id`, `status`, `version`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='活动配置版本';
-
-CREATE TABLE IF NOT EXISTS `gameops_outbox` (
-    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    `event_id` VARCHAR(64) NOT NULL,
-    `event_type` VARCHAR(32) NOT NULL,
-    `aggregate_id` VARCHAR(64) NOT NULL,
-    `payload_json` JSON NOT NULL,
-    `status` VARCHAR(16) NOT NULL DEFAULT 'pending',
-    `created_at` BIGINT NOT NULL,
-    `updated_at` BIGINT NOT NULL,
-    `processed_at` BIGINT NOT NULL DEFAULT 0,
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_gameops_outbox_event` (`event_id`),
-    INDEX `idx_gameops_outbox_status` (`event_type`, `status`, `id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='运营配置缓存同步 Outbox';
-
-CREATE TABLE IF NOT EXISTS `game_item_grant_requests` (
-    `grant_request_id` VARCHAR(128) NOT NULL,
-    `operator_id` VARCHAR(64) NOT NULL,
-    `status` VARCHAR(16) NOT NULL,
-    `item_count` INT NOT NULL,
-    `created_at` BIGINT NOT NULL,
-    `updated_at` BIGINT NOT NULL,
-    PRIMARY KEY (`grant_request_id`),
-    INDEX `idx_grant_request_operator_time` (`operator_id`, `created_at`),
-    INDEX `idx_grant_request_status_time` (`status`, `updated_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='道具批量发放请求';
-
-CREATE TABLE IF NOT EXISTS `game_item_grants` (
-    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    `grant_request_id` VARCHAR(128) NOT NULL,
-    `user_id` VARCHAR(128) NOT NULL,
-    `item_id` VARCHAR(128) NOT NULL,
-    `quantity` BIGINT NOT NULL,
-    `status` VARCHAR(16) NOT NULL,
-    `operator_id` VARCHAR(64) NOT NULL,
-    `created_at` BIGINT NOT NULL,
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_item_grant_idempotency` (`grant_request_id`, `user_id`, `item_id`),
-    INDEX `idx_item_grant_user_time` (`user_id`, `created_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='道具发放明细';
-
-CREATE TABLE IF NOT EXISTS `player_items` (
-    `user_id` VARCHAR(128) NOT NULL,
-    `item_id` VARCHAR(128) NOT NULL,
-    `quantity` BIGINT NOT NULL DEFAULT 0,
-    `updated_at` BIGINT NOT NULL,
-    PRIMARY KEY (`user_id`, `item_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='玩家道具余额';
-
-CREATE TABLE IF NOT EXISTS `game_item_grant_failures` (
-    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    `failure_id` VARCHAR(64) NOT NULL,
-    `grant_request_id` VARCHAR(128) NOT NULL,
-    `operator_id` VARCHAR(64) NOT NULL,
-    `error_message` VARCHAR(512) NOT NULL,
-    `created_at` BIGINT NOT NULL,
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_item_grant_failure` (`failure_id`),
-    INDEX `idx_item_grant_failure_request` (`grant_request_id`, `created_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='道具发放失败记录';
-
--- 12. 预置实验账号（create_time 随便填的当前毫秒值）
+-- 11. 预置实验账号（create_time 随便填的当前毫秒值）
 INSERT INTO `users` (`user_id`, `username`, `password`, `created_at`, `updated_at`) VALUES 
 ('1001', 'userA', '$2b$10$msHwvw.T/fpIilP9oGc3GuIkXKv1m1HtGzWkU.UHzFaEoj.r83SvK', 1710100000000, 1710100000000),
 ('1002', 'userB', '$2b$10$msHwvw.T/fpIilP9oGc3GuIkXKv1m1HtGzWkU.UHzFaEoj.r83SvK', 1710100000000, 1710100000000),
@@ -344,15 +222,6 @@ ON DUPLICATE KEY UPDATE
   username = VALUES(username),
   password = VALUES(password),
   updated_at = VALUES(updated_at);
-
-INSERT INTO `platform_user_roles` (`user_id`, `role`, `status`, `created_at`, `updated_at`) VALUES
-('1001', 'operator', 'active', 1710100000000, 1710100000000),
-('1002', 'reviewer', 'active', 1710100000000, 1710100000000),
-('1003', 'admin', 'active', 1710100000000, 1710100000000)
-ON DUPLICATE KEY UPDATE
-  `role` = VALUES(`role`),
-  `status` = VALUES(`status`),
-  `updated_at` = VALUES(`updated_at`);
 
 INSERT INTO `friend_relations` (`user_id`, `friend_id`, `status`, `created_at`, `updated_at`) VALUES
 ('1001', '1002', 'normal', 1710100000000, 1710100000000),

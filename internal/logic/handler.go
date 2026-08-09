@@ -30,11 +30,15 @@ redis.call("PEXPIRE", KEYS[1], ARGV[1])
 return nextSeq
 `)
 
+var ErrClientMessageInFlight = errors.New("client message is still processing")
+
 const (
 	clientMessageIDTTL      = 7 * 24 * time.Hour
 	clientMessagePendingTTL = 5 * time.Minute
 	clientMessagePending    = "__PENDING__"
 	sequenceTTL             = 7 * 24 * time.Hour
+	defaultHistoryLimit     = 50
+	maxHistoryLimit         = 100
 )
 
 type GroupDispatcher interface {
@@ -101,19 +105,27 @@ func (h *LogicHandler) PushMessage(ctx context.Context, req *api.PushMsgReq) (*a
 		return &api.PushMsgReply{}, nil
 	}
 
-	frame.SessionId = buildSessionID(frame.From, frame.To, frame.ToType)
+	if frame.SessionId == "" {
+		frame.SessionId = buildSessionID(frame.From, frame.To, frame.ToType)
+	}
 	if err := h.validateSendPermission(ctx, &frame); err != nil {
 		h.releaseClientMessage(ctx, &frame)
 		return nil, err
 	}
-	seq, err := h.nextSequence(ctx, frame.SessionId)
-	if err != nil {
-		h.releaseClientMessage(ctx, &frame)
-		return nil, err
+	if frame.Seq <= 0 {
+		seq, err := h.nextSequence(ctx, frame.SessionId)
+		if err != nil {
+			h.releaseClientMessage(ctx, &frame)
+			return nil, err
+		}
+		frame.Seq = seq
+		metrics.MessageSeqAllocated.Inc()
 	}
-	frame.Seq = seq
 	frame.SentAt = time.Now().UnixMilli()
-	frame.MessageId = fmt.Sprintf("%s-%d", frame.SessionId, frame.Seq)
+	if frame.MessageId == "" {
+		frame.MessageId = fmt.Sprintf("%s-%d", frame.SessionId, frame.Seq)
+	}
+	h.commitClientMessageReservation(ctx, &frame)
 
 	persisted, err := h.saveMessage(ctx, &frame)
 	if err != nil {
@@ -156,6 +168,9 @@ func (h *LogicHandler) deliverPersistedMessage(ctx context.Context, frame *api.W
 	if err != nil {
 		return err
 	}
+	if frame.ToType == "group" {
+		metrics.GroupDispatchMembers.Observe(float64(len(recipients)))
+	}
 	payload, err := proto.Marshal(frame)
 	if err != nil {
 		return err
@@ -191,22 +206,44 @@ func (h *LogicHandler) GetHistory(ctx context.Context, req *api.GetHistoryReq) (
 		}
 	}
 	sessionID := buildSessionID(req.UserId, targetID, toType)
-	rows, err := h.DB.QueryContext(ctx, `
+	limit := int(req.Limit)
+	if limit <= 0 {
+		limit = defaultHistoryLimit
+	}
+	if limit > maxHistoryLimit {
+		limit = maxHistoryLimit
+	}
+	queryLimit := limit + 1
+	var rows *sql.Rows
+	var err error
+	if req.BeforeSeq > 0 {
+		rows, err = h.DB.QueryContext(ctx, `
+SELECT message_id, client_msg_id, session_id, seq, from_uid, to_id, to_type, content, create_time
+FROM messages
+WHERE session_id = ? AND seq < ?
+ORDER BY seq DESC
+LIMIT ?
+`, sessionID, req.BeforeSeq, queryLimit)
+	} else {
+		rows, err = h.DB.QueryContext(ctx, `
 SELECT message_id, client_msg_id, session_id, seq, from_uid, to_id, to_type, content, create_time
 FROM messages
 WHERE session_id = ?
 ORDER BY seq DESC
-LIMIT 50
-`, sessionID)
+	LIMIT ?
+`, sessionID, queryLimit)
+	}
 	if isUnknownColumn(err, "client_msg_id") {
-		return h.getHistoryLegacy(ctx, sessionID)
+		metrics.HistoryQueries.WithLabelValues("mysql_legacy", "success").Inc()
+		return h.getHistoryLegacy(ctx, sessionID, req.BeforeSeq, limit)
 	}
 	if err != nil {
+		metrics.HistoryQueries.WithLabelValues("mysql", "error").Inc()
 		return nil, err
 	}
 	defer rows.Close()
 
-	res := make([]*api.WireMessage, 0, 50)
+	res := make([]*api.WireMessage, 0, queryLimit)
 	for rows.Next() {
 		var msg api.WireMessage
 		var body string
@@ -227,27 +264,49 @@ LIMIT 50
 		msg.MsgType = api.MsgType_NORMAL
 		res = append(res, &msg)
 	}
+	hasMore := len(res) > limit
+	if hasMore {
+		res = res[:limit]
+	}
 
 	for i, j := 0, len(res)-1; i < j; i, j = i+1, j-1 {
 		res[i], res[j] = res[j], res[i]
 	}
-	return &api.GetHistoryReply{Messages: res}, nil
+	reply := &api.GetHistoryReply{Messages: res, HasMore: hasMore}
+	if len(res) > 0 && hasMore {
+		reply.NextBeforeSeq = res[0].Seq
+	}
+	metrics.HistoryQueries.WithLabelValues("mysql", "success").Inc()
+	return reply, nil
 }
 
-func (h *LogicHandler) getHistoryLegacy(ctx context.Context, sessionID string) (*api.GetHistoryReply, error) {
-	rows, err := h.DB.QueryContext(ctx, `
+func (h *LogicHandler) getHistoryLegacy(ctx context.Context, sessionID string, beforeSeq int64, limit int) (*api.GetHistoryReply, error) {
+	queryLimit := limit + 1
+	var rows *sql.Rows
+	var err error
+	if beforeSeq > 0 {
+		rows, err = h.DB.QueryContext(ctx, `
+SELECT message_id, session_id, seq, from_uid, to_id, to_type, content, create_time
+FROM messages
+WHERE session_id = ? AND seq < ?
+ORDER BY seq DESC
+	LIMIT ?
+`, sessionID, beforeSeq, queryLimit)
+	} else {
+		rows, err = h.DB.QueryContext(ctx, `
 SELECT message_id, session_id, seq, from_uid, to_id, to_type, content, create_time
 FROM messages
 WHERE session_id = ?
 ORDER BY seq DESC
-LIMIT 50
-`, sessionID)
+LIMIT ?
+`, sessionID, queryLimit)
+	}
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	res := make([]*api.WireMessage, 0, 50)
+	res := make([]*api.WireMessage, 0, queryLimit)
 	for rows.Next() {
 		var msg api.WireMessage
 		var body string
@@ -267,11 +326,19 @@ LIMIT 50
 		msg.MsgType = api.MsgType_NORMAL
 		res = append(res, &msg)
 	}
+	hasMore := len(res) > limit
+	if hasMore {
+		res = res[:limit]
+	}
 
 	for i, j := 0, len(res)-1; i < j; i, j = i+1, j-1 {
 		res[i], res[j] = res[j], res[i]
 	}
-	return &api.GetHistoryReply{Messages: res}, nil
+	reply := &api.GetHistoryReply{Messages: res, HasMore: hasMore}
+	if len(res) > 0 && hasMore {
+		reply.NextBeforeSeq = res[0].Seq
+	}
+	return reply, nil
 }
 
 func (h *LogicHandler) Login(ctx context.Context, req *api.LoginReq) (*api.LoginReply, error) {
@@ -367,27 +434,12 @@ func (h *LogicHandler) resolveRecipients(ctx context.Context, frame *api.WireMes
 		return []string{frame.To}, nil
 	}
 
-	if h.DB != nil {
-		recipients, err := h.loadGroupRecipientsFromDB(ctx, frame.To, frame.From)
-		if err == nil {
-			return recipients, nil
-		}
-		if !isMissingRelationTable(err) {
-			return nil, err
-		}
+	if h.DB == nil {
+		return nil, errors.New("group membership store is unavailable")
 	}
-
-	members, err := h.Rdb.SMembers(ctx, "group_members:"+frame.To).Result()
+	recipients, err := h.loadGroupRecipientsFromDB(ctx, frame.To, frame.From)
 	if err != nil {
 		return nil, err
-	}
-
-	recipients := make([]string, 0, len(members))
-	for _, member := range members {
-		if member == "" || member == frame.From {
-			continue
-		}
-		recipients = append(recipients, member)
 	}
 	return recipients, nil
 }
@@ -461,6 +513,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		frame.Body,
 		frame.SentAt,
 	); err != nil {
+		metrics.MessagePersisted.WithLabelValues("failure").Inc()
 		if isUnknownColumn(err, "client_msg_id") {
 			return h.saveMessageWithoutClientID(ctx, frame)
 		}
@@ -473,7 +526,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				return false, loadErr
 			}
 			if ok {
-				*frame = *existing
+				proto.Reset(frame)
+				proto.Merge(frame, existing)
 				return false, nil
 			}
 		}
@@ -485,6 +539,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		)
 		return false, err
 	}
+	metrics.MessagePersisted.WithLabelValues("success").Inc()
 	return true, nil
 }
 
@@ -627,6 +682,7 @@ type clientMessageRecord struct {
 	SessionID   string `json:"session_id"`
 	Seq         int64  `json:"seq"`
 	TraceID     string `json:"trace_id"`
+	Status      string `json:"status"`
 }
 
 func (h *LogicHandler) reserveClientMessage(ctx context.Context, frame *api.WireMessage) (bool, error) {
@@ -639,13 +695,25 @@ func (h *LogicHandler) reserveClientMessage(ctx context.Context, frame *api.Wire
 	key := clientMessageKey(frame.From, frame.ClientMsgId)
 	value, err := h.Rdb.Get(ctx, key).Result()
 	if err == nil {
-		if value != clientMessagePending {
-			logx.Infow("duplicate client message ignored",
-				logx.Field("trace_id", frame.TraceId),
-				logx.Field("client_msg_id", frame.ClientMsgId),
-				logx.Field("sender_id", frame.From),
-			)
+		if value == clientMessagePending {
+			return false, ErrClientMessageInFlight
 		}
+		var record clientMessageRecord
+		if json.Unmarshal([]byte(value), &record) == nil && record.Status == "pending" && record.Seq > 0 {
+			if record.SessionID != "" && frame.To != "" && record.SessionID != buildSessionID(frame.From, frame.To, frame.ToType) {
+				return false, fmt.Errorf("client_msg_id is already reserved for another conversation")
+			}
+			frame.SessionId = record.SessionID
+			frame.Seq = record.Seq
+			frame.MessageId = record.MessageID
+			frame.TraceId = valueOrDefault(frame.TraceId, record.TraceID)
+			return false, nil
+		}
+		logx.Infow("duplicate client message ignored",
+			logx.Field("trace_id", frame.TraceId),
+			logx.Field("client_msg_id", frame.ClientMsgId),
+			logx.Field("sender_id", frame.From),
+		)
 		return true, nil
 	}
 	if err != redis.Nil {
@@ -655,7 +723,10 @@ func (h *LogicHandler) reserveClientMessage(ctx context.Context, frame *api.Wire
 	if err != nil {
 		return false, err
 	}
-	return !ok, nil
+	if !ok {
+		return false, ErrClientMessageInFlight
+	}
+	return false, nil
 }
 
 func (h *LogicHandler) commitClientMessage(ctx context.Context, frame *api.WireMessage) {
@@ -671,11 +742,30 @@ func (h *LogicHandler) commitClientMessage(ctx context.Context, frame *api.WireM
 		SessionID:   frame.SessionId,
 		Seq:         frame.Seq,
 		TraceID:     frame.TraceId,
+		Status:      "committed",
 	})
 	if err != nil {
 		return
 	}
 	_ = h.Rdb.Set(ctx, clientMessageKey(frame.From, frame.ClientMsgId), record, clientMessageIDTTL).Err()
+}
+
+func (h *LogicHandler) commitClientMessageReservation(ctx context.Context, frame *api.WireMessage) {
+	if frame == nil || frame.ClientMsgId == "" || h.Rdb == nil || frame.Seq <= 0 {
+		return
+	}
+	record, err := json.Marshal(clientMessageRecord{
+		MessageID:   frame.MessageId,
+		ClientMsgID: frame.ClientMsgId,
+		SessionID:   frame.SessionId,
+		Seq:         frame.Seq,
+		TraceID:     frame.TraceId,
+		Status:      "pending",
+	})
+	if err != nil {
+		return
+	}
+	_ = h.Rdb.SetXX(ctx, clientMessageKey(frame.From, frame.ClientMsgId), record, clientMessagePendingTTL).Err()
 }
 
 func (h *LogicHandler) releaseClientMessage(ctx context.Context, frame *api.WireMessage) {
@@ -687,8 +777,15 @@ func (h *LogicHandler) releaseClientMessage(ctx context.Context, frame *api.Wire
 	}
 	key := clientMessageKey(frame.From, frame.ClientMsgId)
 	value, err := h.Rdb.Get(ctx, key).Result()
-	if err == nil && value == clientMessagePending {
-		_ = h.Rdb.Del(ctx, key).Err()
+	if err == nil {
+		pending := value == clientMessagePending
+		if !pending {
+			var record clientMessageRecord
+			pending = json.Unmarshal([]byte(value), &record) == nil && record.Status == "pending"
+		}
+		if pending {
+			_ = h.Rdb.Del(ctx, key).Err()
+		}
 	}
 }
 

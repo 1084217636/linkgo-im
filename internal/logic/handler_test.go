@@ -3,6 +3,7 @@ package logic
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -80,7 +81,7 @@ func TestLoginUpgradesLegacyPlaintextPassword(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("SELECT c.id, c.type").
 		WithArgs("1001", defaultConversationLimit).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "type", "updated_at", "last_seq", "read_seq", "content"}))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "type", "updated_at", "last_seq", "read_seq", "acked_seq", "content"}))
 
 	h := &LogicHandler{DB: db}
 	reply, err := h.Login(context.Background(), &api.LoginReq{Username: "userA", Password: "123456"})
@@ -137,18 +138,62 @@ func TestGetHistoryAllowsActiveGroupMember(t *testing.T) {
 		WithArgs("G100", "1001").
 		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("active"))
 	mock.ExpectQuery("SELECT message_id, client_msg_id").
-		WithArgs("group:G100").
+		WithArgs("group:G100", 51).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"message_id", "client_msg_id", "session_id", "seq", "from_uid", "to_id", "to_type", "content", "create_time",
-		}))
+		}).AddRow("group:G100-7", "client-7", "group:G100", int64(7), "1002", "G100", "group", "hello", int64(1710100000000)))
 
 	h := &LogicHandler{DB: db}
 	reply, err := h.GetHistory(context.Background(), &api.GetHistoryReq{UserId: "1001", TargetId: "group:G100"})
 	if err != nil {
 		t.Fatalf("GetHistory error = %v", err)
 	}
-	if len(reply.Messages) != 0 {
+	if len(reply.Messages) != 1 {
 		t.Fatalf("GetHistory messages = %#v", reply.Messages)
+	}
+	message := reply.Messages[0]
+	if message.MessageId != "group:G100-7" || message.Body != "hello" || message.ToType != "group" || message.Seq != 7 {
+		t.Fatalf("GetHistory message = %#v", message)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestGetHistoryUsesBeforeSeqCursorAndHasMore(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New error = %v", err)
+	}
+	defer db.Close()
+	mock.ExpectQuery("SELECT message_id, client_msg_id").
+		WithArgs("c2c:1001:1002", 3).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"message_id", "client_msg_id", "session_id", "seq", "from_uid", "to_id", "to_type", "content", "create_time",
+		}).AddRow("m-5", "c-5", "c2c:1001:1002", int64(5), "1001", "1002", "user", "five", int64(5)).
+			AddRow("m-4", "c-4", "c2c:1001:1002", int64(4), "1002", "1001", "user", "four", int64(4)).
+			AddRow("m-3", "c-3", "c2c:1001:1002", int64(3), "1001", "1002", "user", "three", int64(3)))
+
+	h := &LogicHandler{DB: db}
+	reply, err := h.GetHistory(context.Background(), &api.GetHistoryReq{UserId: "1001", TargetId: "1002", Limit: 2})
+	if err != nil {
+		t.Fatalf("GetHistory error = %v", err)
+	}
+	if len(reply.Messages) != 2 || reply.Messages[0].Seq != 4 || reply.Messages[1].Seq != 5 {
+		t.Fatalf("messages = %#v, want seq [4 5]", reply.Messages)
+	}
+	if !reply.HasMore || reply.NextBeforeSeq != 4 {
+		t.Fatalf("cursor = has_more:%v next:%d, want true/4", reply.HasMore, reply.NextBeforeSeq)
+	}
+	mock.ExpectQuery("SELECT message_id, client_msg_id").
+		WithArgs("c2c:1001:1002", int64(4), 3).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"message_id", "client_msg_id", "session_id", "seq", "from_uid", "to_id", "to_type", "content", "create_time",
+		}).AddRow("m-3", "c-3", "c2c:1001:1002", int64(3), "1001", "1002", "user", "three", int64(3)).
+			AddRow("m-2", "c-2", "c2c:1001:1002", int64(2), "1002", "1001", "user", "two", int64(2)))
+	reply, err = h.GetHistory(context.Background(), &api.GetHistoryReq{UserId: "1001", TargetId: "1002", BeforeSeq: reply.NextBeforeSeq, Limit: 2})
+	if err != nil || len(reply.Messages) != 2 || reply.Messages[0].Seq != 2 || reply.Messages[1].Seq != 3 || reply.HasMore {
+		t.Fatalf("second page = reply:%#v err:%v, want seq [2 3] and no more", reply, err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("sql expectations: %v", err)
@@ -172,11 +217,11 @@ func TestReserveClientMessageUsesShortPendingTTL(t *testing.T) {
 	}
 
 	duplicate, err = h.reserveClientMessage(ctx, frame)
-	if err != nil {
-		t.Fatalf("reserveClientMessage second error = %v", err)
+	if !errors.Is(err, ErrClientMessageInFlight) {
+		t.Fatalf("reserveClientMessage second error = %v, want ErrClientMessageInFlight", err)
 	}
-	if !duplicate {
-		t.Fatal("second reservation did not report duplicate")
+	if duplicate {
+		t.Fatal("in-flight reservation was reported as completed duplicate")
 	}
 
 	cleanup.fastForward(clientMessagePendingTTL + time.Second)
@@ -186,6 +231,31 @@ func TestReserveClientMessageUsesShortPendingTTL(t *testing.T) {
 	}
 	if duplicate {
 		t.Fatal("reservation stayed blocked after pending ttl")
+	}
+}
+
+func TestPendingClientMessageReservationReusesSequence(t *testing.T) {
+	ctx := context.Background()
+	rdb, cleanup := newTestRedis(t)
+	defer cleanup.Close()
+	h := &LogicHandler{Rdb: rdb}
+	first := &api.WireMessage{From: "1001", To: "1002", ToType: "user", ClientMsgId: "client-reserved"}
+	duplicate, err := h.reserveClientMessage(ctx, first)
+	if err != nil || duplicate {
+		t.Fatalf("initial reserve = duplicate:%v err:%v", duplicate, err)
+	}
+	first.SessionId = "c2c:1001:1002"
+	first.Seq = 41
+	first.MessageId = "c2c:1001:1002-41"
+	h.commitClientMessageReservation(ctx, first)
+
+	retry := &api.WireMessage{From: "1001", To: "1002", ToType: "user", ClientMsgId: "client-reserved"}
+	duplicate, err = h.reserveClientMessage(ctx, retry)
+	if err != nil || duplicate {
+		t.Fatalf("retry reserve = duplicate:%v err:%v", duplicate, err)
+	}
+	if retry.Seq != 41 || retry.MessageId != first.MessageId || retry.SessionId != first.SessionId {
+		t.Fatalf("retry reservation = %#v, want seq/message/session reused", retry)
 	}
 }
 
@@ -359,6 +429,34 @@ func TestValidateSendPermissionRequiresNormalFriend(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestValidateSendPermissionFailsClosedWithoutRelationshipStore(t *testing.T) {
+	h := &LogicHandler{}
+	frame := &api.WireMessage{From: "1001", To: "1002", ToType: "user"}
+	if err := h.validateSendPermission(context.Background(), frame); err == nil || !strings.Contains(err.Error(), "unavailable") {
+		t.Fatalf("validateSendPermission error = %v, want unavailable relationship store", err)
+	}
+}
+
+func TestValidateSendPermissionFailsClosedWhenRelationTableIsMissing(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New error = %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("SELECT status").
+		WithArgs("1001", "1002").
+		WillReturnError(&mysql.MySQLError{Number: 1146, Message: "table friend_relations does not exist"})
+	h := &LogicHandler{DB: db}
+	frame := &api.WireMessage{From: "1001", To: "1002", ToType: "user"}
+	if err := h.validateSendPermission(context.Background(), frame); err == nil {
+		t.Fatal("validateSendPermission allowed send with missing relation table")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
 	}
 }
 
@@ -587,6 +685,14 @@ func TestLoadGroupRecipientsFromDBSkipsSender(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestResolveGroupRecipientsFailsClosedWithoutDatabase(t *testing.T) {
+	h := &LogicHandler{}
+	frame := &api.WireMessage{From: "1001", To: "G1", ToType: "group"}
+	if _, err := h.resolveRecipients(context.Background(), frame); err == nil || !strings.Contains(err.Error(), "unavailable") {
+		t.Fatalf("resolveRecipients error = %v, want unavailable group membership store", err)
 	}
 }
 
