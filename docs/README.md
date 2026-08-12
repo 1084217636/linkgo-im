@@ -31,6 +31,7 @@ docs/
 
 - [按步骤启动本地演示并核对预期结果](runbooks/LOCAL_DEMO.md)：学完相关章节后执行，不用它学习概念。
 - [执行 Docker、CI、Kubernetes 命令并判断输出](runbooks/DEVOPS.md)：学完第 17、18 章后作为操作手册。
+- [故障先行演练与恢复](runbooks/FAULT_HANDLING.md)：学完第 16、18 章后，按故障矩阵验证摘流量、替换、扩容和业务恢复。
 
 ### evidence
 

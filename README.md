@@ -37,6 +37,7 @@ Client B -> LB -> Gateway-3 <- Redis Pub/Sub <-----'
 
 - 提供 HTTP 和 `/ws` WebSocket 入口。
 - 校验 JWT、Origin，维护本机连接、心跳、ACK 和 UID 分片有界推送队列。
+- `/healthz` 只表示进程存活，`/readyz` 检查 Logic gRPC、Redis、MySQL；Logic 的 gRPC Health Check 还会检查 Redis、MySQL、Kafka，避免依赖故障时继续接收新流量。
 - 通过 Etcd 发现 Logic 实例，使用 go-zero zRPC `p2c_ewma`。
 - 当前好友、群、红包和部分 AI HTTP 接口也在 Gateway 进程直接访问 MySQL，因此不能笼统描述成“Gateway 完全不碰数据库”。
 
@@ -72,6 +73,7 @@ make build
 make frontend-static-check
 make compose-config
 make k8s-check
+make fault-check
 ```
 
 ### 启动本地完整环境
@@ -106,6 +108,7 @@ Etcd           2379
 ```
 
 详细操作见 [本地演示手册](docs/runbooks/LOCAL_DEMO.md) 和 [DevOps 参考](docs/runbooks/DEVOPS.md)。
+故障停止、替换、扩容和恢复演练见 [故障先行手册](docs/runbooks/FAULT_HANDLING.md)。
 
 ## 目录
 
@@ -136,5 +139,6 @@ docs/knowledge/  AI 问答运行时语料
 - AI 默认使用 mock；FAQ 是轻量文本召回，AI 回复任务是非持久 goroutine，不是可靠任务队列。
 - `deploy/k8s/production` 是应用工作负载的可渲染示例，没有 Ingress/TLS、前端部署或真实生产集群证据。
 - 当前应用使用 Redis 稳定单入口和 MySQL 单 DSN，不原生实现 Redis Cluster/Sentinel 客户端或 MySQL 应用层读写分离。
+- 完整 Compose 故障演练已验证单实例 Redis、MySQL、Kafka、Logic、Transfer 故障和 Gateway 替换；这不等于已经验证 Redis Cluster、MySQL 主从或 Kafka 多副本 HA。
 
 以上边界是面试时必须主动说明的当前事实；演进方案不能写成已经上线。

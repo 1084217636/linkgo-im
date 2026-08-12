@@ -8,20 +8,18 @@ import (
 	"time"
 
 	"github.com/1084217636/linkgo-im/api"
-	"github.com/go-sql-driver/mysql"
-	"github.com/redis/go-redis/v9"
 )
 
 func (h *LogicHandler) validateSendPermission(ctx context.Context, frame *api.WireMessage) error {
-	if frame == nil || h.DB == nil {
-		return nil
+	if frame == nil {
+		return errors.New("message is required")
+	}
+	if h.DB == nil {
+		return errors.New("relationship store is unavailable")
 	}
 	if frame.ToType == "group" {
 		ok, err := h.isActiveGroupMember(ctx, frame.To, frame.From)
 		if err != nil {
-			if isMissingRelationTable(err) {
-				return h.validateGroupPermissionFromRedis(ctx, frame)
-			}
 			return err
 		}
 		if !ok {
@@ -32,9 +30,6 @@ func (h *LogicHandler) validateSendPermission(ctx context.Context, frame *api.Wi
 
 	ok, err := h.isNormalFriend(ctx, frame.From, frame.To)
 	if err != nil {
-		if isMissingRelationTable(err) {
-			return nil
-		}
 		return err
 	}
 	if !ok {
@@ -98,20 +93,6 @@ LIMIT 1
 	return false, err
 }
 
-func (h *LogicHandler) validateGroupPermissionFromRedis(ctx context.Context, frame *api.WireMessage) error {
-	if h.Rdb == nil || frame == nil {
-		return nil
-	}
-	ok, err := h.Rdb.SIsMember(ctx, "group_members:"+frame.To, frame.From).Result()
-	if err != nil && err != redis.Nil {
-		return err
-	}
-	if !ok {
-		return fmt.Errorf("sender is not a group member")
-	}
-	return nil
-}
-
 func (h *LogicHandler) loadGroupRecipientsFromDB(ctx context.Context, groupID, senderID string) ([]string, error) {
 	rows, err := h.DB.QueryContext(ctx, `
 SELECT user_id
@@ -135,15 +116,4 @@ ORDER BY joined_at ASC
 		}
 	}
 	return recipients, rows.Err()
-}
-
-func isMissingRelationTable(err error) bool {
-	if err == nil {
-		return false
-	}
-	var mysqlErr *mysql.MySQLError
-	if errors.As(err, &mysqlErr) {
-		return mysqlErr.Number == 1146
-	}
-	return false
 }

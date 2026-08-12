@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/1084217636/linkgo-im/cmd/logic/internal/config"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
 func TestOverrideConfigFromEnv(t *testing.T) {
@@ -43,5 +46,32 @@ func TestOverrideConfigFromEnv(t *testing.T) {
 	}
 	if c.CpuThreshold != 900 {
 		t.Fatalf("CpuThreshold = %d, want 900", c.CpuThreshold)
+	}
+}
+
+func TestLogicHealthServerSeparatesLivenessAndReadiness(t *testing.T) {
+	server := newLogicHealthServer(nil, nil, ":0")
+
+	live := httptest.NewRecorder()
+	server.Handler.ServeHTTP(live, httptest.NewRequest("GET", "/healthz", nil))
+	if live.Code != 200 {
+		t.Fatalf("healthz status = %d, want 200", live.Code)
+	}
+
+	ready := httptest.NewRecorder()
+	server.Handler.ServeHTTP(ready, httptest.NewRequest("GET", "/readyz", nil))
+	if ready.Code != 503 {
+		t.Fatalf("readyz status = %d, want 503 when dependencies are unavailable", ready.Code)
+	}
+}
+
+func TestLogicGRPCHealthFailsClosedWithoutDependencies(t *testing.T) {
+	service := newLogicGRPCHealthService(nil, nil)
+	response, err := service.Check(context.Background(), &healthpb.HealthCheckRequest{})
+	if err == nil {
+		t.Fatal("Check() error = nil, want dependency failure")
+	}
+	if response.GetStatus() != healthpb.HealthCheckResponse_NOT_SERVING {
+		t.Fatalf("health status = %s, want NOT_SERVING", response.GetStatus())
 	}
 }

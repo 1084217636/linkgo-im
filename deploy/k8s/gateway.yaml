@@ -54,6 +54,10 @@ spec:
           image: linkgo-im:local
           imagePullPolicy: IfNotPresent
           command: ["./gateway"]
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
           ports:
             - name: http
               containerPort: 8090
@@ -93,6 +97,9 @@ spec:
               cpu: 1000m
               memory: 512Mi
           securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]

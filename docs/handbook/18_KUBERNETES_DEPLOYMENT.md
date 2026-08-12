@@ -75,7 +75,7 @@ Service selector: app=gateway
 
 还要区分内部 Service 与外部入口：Service 通常先解决集群内稳定访问；云负载均衡或 Ingress（按域名、路径把外部流量转给 Service 的入口规则）再承接公网请求。TLS 是在网络传输中加密并校验服务身份的协议。当前 production overlay 没有创建云负载均衡、Ingress 或 TLS，因此只是一组应用工作负载清单。
 
-Logic 的项目主路径不是只依赖一个 Service 长连接做负载均衡，而是让各 Logic 实例注册 Etcd，Gateway 获得实例列表后进行客户端选择。
+Logic 的项目主路径不是只依赖一个 Service 长连接做负载均衡，而是让各 Logic 实例注册 Etcd，Gateway 获得实例列表后进行客户端选择。Gateway 的 `/readyz` 还会在 gRPC 连接建立后调用 Logic 的标准 Health Check，避免“端口能连上但 Redis/MySQL/Kafka 已坏”的 Logic 继续被视为可用。
 
 ### ConfigMap
 
@@ -95,9 +95,9 @@ Secret 也通过环境变量注入当前容器，但应由部署平台或秘密�
 
 K8s 周期请求健康接口：readiness 决定是否接收新流量，liveness 判断是否需要重启容器。
 
-如果没有 readiness，新 Pod 进程刚启动、依赖尚未准备好时就可能收到请求；选择 readiness 后，失败 Pod 会从 Service 的可用端点中移除。代价是检查条件过严会把仍能提供部分能力的 Pod 摘掉。
+如果没有 readiness，新 Pod 进程刚启动、依赖尚未准备好时就可能收到请求；选择 readiness 后，失败 Pod 会从 Service 的可用端点中移除。代价是检查条件过严会把仍能提供部分能力的 Pod 摘掉。LinkGo 的 Gateway 和 Transfer 使用 HTTP 依赖检查，Logic 也在 `9002` 提供 `/readyz`，检查 Redis、MySQL、Kafka。
 
-如果没有 liveness，已经卡死但进程未退出的容器可能一直占着资源；选择 liveness 后，连续失败会触发重启。代价是把短暂 Redis 抖动写进 liveness 可能造成重启风暴，所以依赖检查通常放 readiness。当前 Logic 使用 `tcpSocket` 探针，只能证明 gRPC 端口能建立 TCP 连接，不等于每条业务链路和依赖都健康。
+如果没有 liveness，已经卡死但进程未退出的容器可能一直占着资源；选择 liveness 后，连续失败会触发重启。代价是把短暂 Redis 抖动写进 liveness 可能造成重启风暴，所以依赖检查通常放 readiness。Logic 的 gRPC 端口是 `9001`，健康 HTTP 端口是 `9002`。当前 Logic 的 liveness 只检查进程健康，readiness 检查 Redis、MySQL、Kafka；这仍不等于每条业务链路都已经成功，发布后必须执行真实消息 smoke。
 
 三个应用容器的 `securityContext` 都要求 `runAsNonRoot: true`，使用 UID/GID 10001，禁止权限提升并 drop 全部 capabilities。这与 Dockerfile 的 `USER 10001:10001` 对应。它降低容器进程默认权限，但仍要依靠 NetworkPolicy、Secret 权限和宿主机/集群安全共同限制攻击面。
 
@@ -149,7 +149,7 @@ readiness 失败，停止新连接
 → 根据现有 Redis 状态补偿，并可主动查询 MySQL 历史
 ```
 
-这是目标流程，不是当前完整实现。仓库有 readiness probe 和滚动策略，但没有显式 `preStop`（容器终止前执行的钩子）来完成 draining、服务端重连提示，也没有网页自动重连循环；Pod 终止时连接会断开，需要用户手动重连。因此不能把完整优雅迁移说成已经实现的产品体验。
+这是目标流程的一部分。仓库有 readiness probe、滚动策略和 5 秒 `preStop`（容器终止前执行的钩子）排空窗口；它不会迁移已经建立的 WebSocket。网页客户端检测到连接断开后按指数退避自动重连，因此恢复的是会话和未确认消息，不是原 TCP 连接本身。
 
 ## HPA 是什么
 

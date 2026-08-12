@@ -12,6 +12,7 @@ import (
 	"github.com/zeromicro/go-zero/zrpc"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
 type LogicRouterPool struct {
@@ -53,7 +54,17 @@ func (p *LogicRouterPool) Ready(ctx context.Context) error {
 		return errors.New("logic connection unavailable")
 	}
 	conn := p.zrpcClient.Conn()
-	return waitForLogicReady(ctx, conn)
+	if err := waitForLogicReady(ctx, conn); err != nil {
+		return err
+	}
+	response, err := healthpb.NewHealthClient(conn).Check(ctx, &healthpb.HealthCheckRequest{})
+	if err != nil {
+		return fmt.Errorf("logic dependency health check failed: %w", err)
+	}
+	if response.GetStatus() != healthpb.HealthCheckResponse_SERVING {
+		return fmt.Errorf("logic dependency health status is %s", response.GetStatus().String())
+	}
+	return nil
 }
 
 type logicConnectionState interface {

@@ -125,7 +125,10 @@ spec:
               mountPath: /docker-entrypoint-initdb.d
           readinessProbe:
             exec:
-              command: ["mysqladmin", "ping", "-h", "127.0.0.1", "-proot"]
+              command:
+                - sh
+                - -ec
+                - mysqladmin ping -h 127.0.0.1 -p"$MYSQL_ROOT_PASSWORD"
             initialDelaySeconds: 15
             periodSeconds: 10
             timeoutSeconds: 5

@@ -63,6 +63,8 @@ services:
         RUNTIME_IMAGE: ${RUNTIME_IMAGE:-alpine:3.22}
     container_name: linkgo-logic
     command: ./logic
+    ports:
+      - "9002:9002"
     depends_on:
       mysql:
         condition: service_healthy
@@ -79,6 +81,7 @@ services:
       - DB_MAX_OPEN_CONNS=100
       - DB_MAX_IDLE_CONNS=20
       - SERVICE_ADDR=logic:9001
+      - LOGIC_HEALTH_PORT=9002
       - ETCD_ENDPOINTS=etcd:2379
       - KAFKA_BROKERS=kafka:9092
       - KAFKA_GROUP_TOPIC=group_message_dispatch
@@ -90,6 +93,11 @@ services:
       - AI_TIMEOUT_SECONDS=${AI_TIMEOUT_SECONDS:-10}
       - AI_FALLBACK_TO_MOCK=${AI_FALLBACK_TO_MOCK:-true}
       - AI_BOT_USER_ID=${AI_BOT_USER_ID:-9001}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9002/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   transfer:
     build:

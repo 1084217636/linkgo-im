@@ -19,10 +19,13 @@ type ClientManager struct {
 	UserConns sync.Map
 }
 
+const defaultWebSocketWriteTimeout = 5 * time.Second
+
 type ClientConn struct {
-	Conn      *websocket.Conn
-	SessionID string
-	writeMu   sync.Mutex
+	Conn         *websocket.Conn
+	SessionID    string
+	WriteTimeout time.Duration
+	writeMu      sync.Mutex
 }
 
 type PushEnvelope struct {
@@ -45,8 +48,9 @@ func ChannelForGateway(gatewayID string) string {
 
 func NewClientConn(conn *websocket.Conn, sessionID string) *ClientConn {
 	return &ClientConn{
-		Conn:      conn,
-		SessionID: sessionID,
+		Conn:         conn,
+		SessionID:    sessionID,
+		WriteTimeout: defaultWebSocketWriteTimeout,
 	}
 }
 
@@ -57,6 +61,13 @@ func (c *ClientConn) WriteBinary(payload []byte) error {
 
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+	timeout := c.WriteTimeout
+	if timeout <= 0 {
+		timeout = defaultWebSocketWriteTimeout
+	}
+	if err := c.Conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
+		return err
+	}
 
 	return c.Conn.WriteMessage(websocket.BinaryMessage, payload)
 }
@@ -116,6 +127,22 @@ func (m *ClientManager) SubscribeRedis(ctx context.Context, rdb *redis.Client, g
 			)
 			continue
 		}
+		if envelope.RouteValue != "" && !RouteMatchesConnection(envelope.RouteValue, gatewayID, conn.SessionID) {
+			MarkOffline(ctx, rdb, envelope.TargetID, envelope.MessageID, envelope.SentAt)
+			_ = conn.Close()
+			m.Remove(envelope.TargetID, conn)
+			metrics.OutboundMessages.WithLabelValues("gateway", "stale_route").Inc()
+			logx.Infow("drop push for stale local websocket",
+				logx.Field("trace_id", envelope.TraceID),
+				logx.Field("message_id", envelope.MessageID),
+				logx.Field("seq", envelope.Seq),
+				logx.Field("gateway_id", gatewayID),
+				logx.Field("target_id", envelope.TargetID),
+				logx.Field("route_value", envelope.RouteValue),
+				logx.Field("session_id", conn.SessionID),
+			)
+			continue
+		}
 
 		payload, err := base64.StdEncoding.DecodeString(envelope.PayloadB64)
 		if err != nil {
@@ -156,6 +183,14 @@ func (m *ClientManager) SubscribeRedis(ctx context.Context, rdb *redis.Client, g
 			logx.Field("target_id", envelope.TargetID),
 		)
 	}
+}
+
+func RouteMatchesConnection(routeValue, gatewayID, sessionID string) bool {
+	routeGatewayID, routeSessionID := ParseRoute(routeValue)
+	if routeGatewayID == "" || routeGatewayID != gatewayID {
+		return false
+	}
+	return routeSessionID == "" || routeSessionID == sessionID
 }
 
 func MarkOffline(ctx context.Context, rdb *redis.Client, uid, messageID string, sentAt int64) {

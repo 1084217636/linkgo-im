@@ -15,9 +15,17 @@ import (
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/zrpc"
 	"google.golang.org/grpc"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
 var configFile = flag.String("f", "cmd/logic/etc/logic.yaml", "the config file")
+
+func getEnv(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
 
 func main() {
 	flag.Parse()
@@ -29,9 +37,15 @@ func main() {
 
 	ctx := svc.NewServiceContext(c)
 	defer ctx.Close()
+	stopHealth := startLogicHealthServer(ctx, c.Kafka.Brokers, getEnv("LOGIC_HEALTH_PORT", defaultLogicHealthPort))
+	defer stopHealth()
+	// go-zero enables its process-level health service by default. Disable it
+	// here because Logic registers a dependency-aware implementation below.
+	c.Health = false
 
 	server := zrpc.MustNewServer(c.RpcServerConf, func(grpcServer *grpc.Server) {
 		api.RegisterLogicServer(grpcServer, logicserver.NewLogicServer(ctx))
+		healthpb.RegisterHealthServer(grpcServer, newLogicGRPCHealthService(ctx, c.Kafka.Brokers))
 	})
 	defer server.Stop()
 

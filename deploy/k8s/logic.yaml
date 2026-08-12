@@ -12,6 +12,9 @@ spec:
     - name: grpc
       port: 9001
       targetPort: grpc
+    - name: health
+      port: 9002
+      targetPort: health
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -50,12 +53,20 @@ spec:
           image: linkgo-im:local
           imagePullPolicy: IfNotPresent
           command: ["./logic"]
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
           ports:
             - name: grpc
               containerPort: 9001
+            - name: health
+              containerPort: 9002
           env:
             - name: RPC_PORT
               value: "9001"
+            - name: LOGIC_HEALTH_PORT
+              value: "9002"
             - name: POD_IP
               valueFrom:
                 fieldRef:
@@ -66,15 +77,17 @@ spec:
             - secretRef:
                 name: linkgo-im-secret
           readinessProbe:
-            tcpSocket:
-              port: grpc
+            httpGet:
+              path: /readyz
+              port: health
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
           livenessProbe:
-            tcpSocket:
-              port: grpc
+            httpGet:
+              path: /healthz
+              port: health
             initialDelaySeconds: 20
             periodSeconds: 20
             timeoutSeconds: 3
@@ -87,6 +100,9 @@ spec:
               cpu: 1500m
               memory: 1Gi
           securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]

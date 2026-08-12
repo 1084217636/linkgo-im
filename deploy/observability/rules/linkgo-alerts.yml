@@ -2,7 +2,7 @@ groups:
   - name: linkgo-availability
     rules:
       - alert: LinkGoTargetDown
-        expr: up{job=~"linkgo-gateway|linkgo-transfer"} == 0
+        expr: up{job=~"linkgo-gateway|linkgo-logic|linkgo-transfer"} == 0
         for: 1m
         labels:
           severity: critical

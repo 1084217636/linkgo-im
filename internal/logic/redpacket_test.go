@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/go-sql-driver/mysql"
 )
 
 func TestNextEqualClaimAmountDistributesRemainder(t *testing.T) {
@@ -141,6 +142,121 @@ func TestRedPacketClaimAlreadyClaimedReturnsExistingClaim(t *testing.T) {
 	}
 	if claim == nil || claim.Amount != 88 {
 		t.Fatalf("claim = %#v", claim)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestRedPacketConcurrentDuplicateReturnsExistingClaim(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New error = %v", err)
+	}
+	defer db.Close()
+
+	now := time.UnixMilli(1710100000000)
+	svc := &RedPacketService{DB: db, Now: func() time.Time { return now }}
+	mock.ExpectQuery("SELECT red_packet_id, user_id, amount, created_at").
+		WithArgs("rp-1", "1002").
+		WillReturnRows(sqlmock.NewRows([]string{"red_packet_id", "user_id", "amount", "created_at"}))
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT id, sender_id, conversation_id").
+		WithArgs("rp-1").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "sender_id", "conversation_id", "to_type", "total_amount", "total_count",
+			"remaining_amount", "remaining_count", "greeting", "status", "created_at", "expires_at", "updated_at",
+		}).AddRow("rp-1", "1001", "c2c:1001:1002", "user", int64(100), 2, int64(50), 1, "hi", "active", int64(1), now.Add(time.Hour).UnixMilli(), int64(1)))
+	mock.ExpectExec("INSERT INTO red_packet_claims").
+		WithArgs("rp-1", "1002", int64(50), now.UnixMilli()).
+		WillReturnError(&mysql.MySQLError{Number: 1062, Message: "duplicate entry"})
+	mock.ExpectRollback()
+	mock.ExpectQuery("SELECT red_packet_id, user_id, amount, created_at").
+		WithArgs("rp-1", "1002").
+		WillReturnRows(sqlmock.NewRows([]string{"red_packet_id", "user_id", "amount", "created_at"}).
+			AddRow("rp-1", "1002", int64(50), now.Add(-time.Second).UnixMilli()))
+
+	claim, err := svc.Claim(ctx, "rp-1", "1002")
+	if !errors.Is(err, ErrRedPacketAlreadyClaimed) {
+		t.Fatalf("Claim error = %v, want ErrRedPacketAlreadyClaimed", err)
+	}
+	if claim == nil || claim.Amount != 50 || claim.UserID != "1002" {
+		t.Fatalf("claim = %#v", claim)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestRedPacketExpiredStatusIsCommitted(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New error = %v", err)
+	}
+	defer db.Close()
+
+	now := time.UnixMilli(1710100000000)
+	svc := &RedPacketService{DB: db, Now: func() time.Time { return now }}
+	mock.ExpectQuery("SELECT red_packet_id, user_id, amount, created_at").
+		WithArgs("rp-1", "1002").
+		WillReturnRows(sqlmock.NewRows([]string{"red_packet_id", "user_id", "amount", "created_at"}))
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT id, sender_id, conversation_id").
+		WithArgs("rp-1").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "sender_id", "conversation_id", "to_type", "total_amount", "total_count",
+			"remaining_amount", "remaining_count", "greeting", "status", "created_at", "expires_at", "updated_at",
+		}).AddRow("rp-1", "1001", "c2c:1001:1002", "user", int64(100), 2, int64(100), 2, "hi", "active", int64(1), now.Add(-time.Second).UnixMilli(), int64(1)))
+	mock.ExpectExec("UPDATE red_packets SET status = 'expired'").
+		WithArgs(now.UnixMilli(), "rp-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	claim, err := svc.Claim(ctx, "rp-1", "1002")
+	if !errors.Is(err, ErrRedPacketExpired) {
+		t.Fatalf("Claim error = %v, want ErrRedPacketExpired", err)
+	}
+	if claim != nil {
+		t.Fatalf("claim = %#v, want nil", claim)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestRedPacketFinishedStatusIsCommitted(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New error = %v", err)
+	}
+	defer db.Close()
+
+	now := time.UnixMilli(1710100000000)
+	svc := &RedPacketService{DB: db, Now: func() time.Time { return now }}
+	mock.ExpectQuery("SELECT red_packet_id, user_id, amount, created_at").
+		WithArgs("rp-1", "1002").
+		WillReturnRows(sqlmock.NewRows([]string{"red_packet_id", "user_id", "amount", "created_at"}))
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT id, sender_id, conversation_id").
+		WithArgs("rp-1").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "sender_id", "conversation_id", "to_type", "total_amount", "total_count",
+			"remaining_amount", "remaining_count", "greeting", "status", "created_at", "expires_at", "updated_at",
+		}).AddRow("rp-1", "1001", "c2c:1001:1002", "user", int64(100), 2, int64(0), 0, "hi", "active", int64(1), now.Add(time.Hour).UnixMilli(), int64(1)))
+	mock.ExpectExec("UPDATE red_packets SET status = 'finished'").
+		WithArgs(now.UnixMilli(), "rp-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	claim, err := svc.Claim(ctx, "rp-1", "1002")
+	if !errors.Is(err, ErrRedPacketFinished) {
+		t.Fatalf("Claim error = %v, want ErrRedPacketFinished", err)
+	}
+	if claim != nil {
+		t.Fatalf("claim = %#v, want nil", claim)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("sql expectations: %v", err)

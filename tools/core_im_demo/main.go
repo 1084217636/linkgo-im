@@ -255,7 +255,12 @@ func connectWS(base, token string) (*websocket.Conn, error) {
 	q := u.Query()
 	q.Set("token", token)
 	u.RawQuery = q.Encode()
-	conn, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
+	// Match the browser client origin allow-list used by the Gateway. A raw
+	// WebSocket client does not send Origin automatically, so the black-box
+	// demo must set it explicitly to test the same security boundary.
+	conn, _, err := websocket.DefaultDialer.Dial(u.String(), http.Header{
+		"Origin": []string{"http://127.0.0.1:8088"},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("websocket dial: %w", err)
 	}

@@ -23,6 +23,11 @@ metadata:
 spec:
   replicas: 2
   revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: transfer
@@ -49,6 +54,10 @@ spec:
           image: linkgo-im:local
           imagePullPolicy: IfNotPresent
           command: ["./transfer"]
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
           ports:
             - name: metrics
               containerPort: 9102
@@ -81,6 +90,20 @@ spec:
               cpu: 1000m
               memory: 512Mi
           securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: transfer
+  namespace: linkgo-im
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: transfer

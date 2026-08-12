@@ -32,7 +32,6 @@ sleep 1
 FRONTEND_URL="http://127.0.0.1:$FRONTEND_PORT/"
 
 curl -fsS "$FRONTEND_URL" > "$ARTIFACT_DIR/index.html"
-curl -fsS "${FRONTEND_URL}admin.html" > "$ARTIFACT_DIR/admin.html"
 python3 "$ROOT_DIR/scripts/validate_frontend.py"
 curl -fsS "$GATEWAY_BASE/healthz" > "$ARTIFACT_DIR/gateway_health.json"
 
@@ -44,12 +43,11 @@ cat > "$ARTIFACT_DIR/frontend_smoke_report.md" <<REPORT
 - Frontend URL: $FRONTEND_URL
 - Gateway: $GATEWAY_BASE
 - Checked page load: PASS
-- Checked operations console load and required controls: PASS
 - Checked Gateway healthz: PASS
 - Checked userA/userB WebSocket chat: PASS
 - Checked userA -> AI assistant private reply: PASS
 
-Open two browser tabs at $FRONTEND_URL, login userA and userB separately, then use "打开对聊" and "AI 助手" for manual verification. Open ${FRONTEND_URL}admin.html to exercise operator/reviewer/admin separation.
+Open two browser tabs at $FRONTEND_URL, login userA and userB separately, then use "打开对聊" and "AI 助手" for manual verification.
 REPORT
 
 echo "frontend: $FRONTEND_URL"

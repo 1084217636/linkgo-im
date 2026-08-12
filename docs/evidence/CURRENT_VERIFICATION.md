@@ -28,10 +28,11 @@
 | Prometheus | `make prometheus-check` | Prometheus 配置与告警规则可被 promtool 解析 | 告警一定会在真实故障中触发 |
 | Docker 镜像 | `make docker-build` | 三个服务可进入同一运行镜像 | 服务依赖已联调和持续稳定 |
 | K8s 静态检查 | `make k8s-check` | 关键清单和发布脚本满足项目约束 | 已部署到真实集群 |
+| 故障处理契约 | `make fault-check` | 故障矩阵脚本、依赖探针、替换钩子、观测目标和 runbook 保持一致 | 已停止真实容器并完成全部恢复演练 |
 
 ## 3. 当前待发布版本的本地结果
 
-2026-08-04 在本次待提交工作树执行：
+2026-08-12 在本次待提交工作树执行：
 
 ```bash
 make fmt-check
@@ -39,6 +40,7 @@ make vet
 make test
 make build
 make docs-check
+make fault-check
 make frontend-static-check
 make compose-config
 make compose-cn-config
@@ -57,7 +59,20 @@ git diff --check
 
 本地结果：以上检查全部通过。K8s 校验确认 demo/production 两套清单可渲染，并检查 Logic 发现、Secret 边界、非 root 容器和不可变镜像标签；Promtool 确认一份配置文件和三条告警规则有效；Docker 镜像构建成功，镜像默认用户实测为 `10001:10001`。Compose 只完成配置渲染，本轮没有凭这一步声称所有容器已经启动。最终远程结果仍以本文件所在 commit 的 GitHub Actions 页面为准。
 
-本轮没有执行需要真实运行栈的浏览器 E2E、故障注入和重新压测，这些项目保持“未验证”，不能沿用旧版本截图。
+本轮没有执行需要真实运行栈的浏览器 E2E 和重新压测。2026-08-12 已在完整 Compose 上执行：
+
+```bash
+FAULT_INJECTION_CONFIRM=1 \
+COMPOSE_FILE_PATH=docker-compose.yml \
+COMPOSE_ENV_FILE=.env.docker-cn \
+WAIT_SECONDS=45 SMOKE_TIMEOUT=60 \
+ARTIFACT_DIR=artifacts/fault-injection-final \
+bash scripts/fault_injection.sh
+```
+
+结果为通过：Redis、Logic、Kafka、Transfer、MySQL 依赖故障，Gateway-a 替换为 Gateway-b，所有场景均观察到 readyz 摘流量、恢复后 readyz 成功，并重新完成单聊、离线回放、ACK、AI、群聊和指标 smoke。报告位于本地 `artifacts/fault-injection-final/fault_injection_report.md`；`artifacts/` 被 Git 忽略，不能把未提交的本地报告当成远程证据。脚本仍不证明 Redis Cluster、MySQL 主从或 Kafka 多副本 HA。
+
+另外在同一完整栈上直接停止 Kafka 验证了 Gateway、Logic、Transfer 的 `/readyz` 均返回 HTTP 503，恢复 Kafka 后三者均恢复 HTTP 200。这一条额外验证来自 Gateway 调用 Logic gRPC Health Check 的依赖感知实现。
 
 本机没有 C 编译器且 `CGO_ENABLED=0`，所以没有在本地把 `go test -race` 记为通过。GitHub Actions 的 Ubuntu runner 会单独执行 `make test-race`；远程检查结束前不能声称本 commit 的 race 检测已通过。
 
@@ -74,6 +89,7 @@ internal/ai/*_test.go                   Provider、检索、审计和脱敏
 scripts/validate_frontend.py            浏览器调试页静态契约
 scripts/validate_docs.py                文档结构与旧路径拦截
 scripts/validate_k8s.sh                 Kubernetes 清单约束
+scripts/validate_fault_handling.py      故障演练脚本、依赖探针和 runbook 静态契约
 ```
 
 ## 5. 当前最重要的未覆盖边界

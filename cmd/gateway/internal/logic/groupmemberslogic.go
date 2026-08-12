@@ -2,9 +2,11 @@ package logic
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 
+	gwmiddleware "github.com/1084217636/linkgo-im/cmd/gateway/internal/middleware"
 	"github.com/1084217636/linkgo-im/cmd/gateway/internal/svc"
 	"github.com/1084217636/linkgo-im/cmd/gateway/internal/types"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -30,15 +32,25 @@ func (l *GroupMembersLogic) List(req *types.GroupMembersReq) (*types.GroupMember
 		return nil, errors.New("group_id is required")
 	}
 	if l.svcCtx.DB == nil {
-		members, err := l.svcCtx.Rdb.SMembers(l.ctx, "group_members:"+groupID).Result()
-		if err != nil {
-			return nil, err
-		}
-		resp := &types.GroupMembersResp{GroupID: groupID, Members: make([]types.GroupMemberInfo, 0, len(members))}
-		for _, member := range members {
-			resp.Members = append(resp.Members, types.GroupMemberInfo{UserID: member, Role: "member", Status: "active"})
-		}
-		return resp, nil
+		return nil, errors.New("group membership store is unavailable")
+	}
+
+	requesterID := gwmiddleware.UserIDFromContext(l.ctx)
+	if requesterID == "" {
+		return nil, errors.New("authenticated user is required")
+	}
+	var requesterStatus string
+	err := l.svcCtx.DB.QueryRowContext(l.ctx, `
+SELECT status
+FROM group_members
+WHERE group_id = ? AND user_id = ?
+LIMIT 1
+`, groupID, requesterID).Scan(&requesterStatus)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && requesterStatus != "active") {
+		return nil, errors.New("requester is not an active group member")
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	rows, err := l.svcCtx.DB.QueryContext(l.ctx, `

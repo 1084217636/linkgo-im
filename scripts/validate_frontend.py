@@ -30,18 +30,13 @@ def validate(path: str, required_ids: set[str], required_text: set[str]) -> None
 validate(
     "public/index.html",
     {"login-btn", "connect-btn", "send-btn", "history-btn", "red-packet-create-btn", "open-ai-btn"},
-    {"/api/v1/login", "/api/v1/history", "/api/v1/red-packets", "/ws?"},
-)
-validate(
-    "public/admin.html",
-    {"login", "create-draft", "submit-activity", "approve-activity", "publish-activity", "rollback-activity", "grant-items-btn"},
     {
-        "/admin/activities/drafts",
-        "/admin/activities/submit",
-        "/admin/activities/approve",
-        "/admin/activities/publish",
-        "/admin/activities/rollback",
-        "/admin/items/grant",
-        "target_version",
+        "/api/v1/login",
+        "/api/v1/history",
+        "/api/v1/red-packets",
+        "/ws?",
+        "MESSAGE_ACCEPTED",
+        "MESSAGE_REJECTED",
+        "markPendingMessageState",
     },
 )

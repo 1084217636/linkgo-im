@@ -22,12 +22,15 @@ func (h *LogicHandler) triggerBotResponse(incoming *api.WireMessage) {
 	if h == nil || h.BotResponder == nil || incoming == nil {
 		return
 	}
-	incomingCopy := *incoming
+	incomingCopy, ok := proto.Clone(incoming).(*api.WireMessage)
+	if !ok {
+		return
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), botResponseTimeout)
 		defer cancel()
 
-		reply, err := h.BotResponder.BuildReply(ctx, &incomingCopy)
+		reply, err := h.BotResponder.BuildReply(ctx, incomingCopy)
 		if err != nil {
 			logx.Errorw("build ai bot reply failed",
 				logx.Field("trace_id", incomingCopy.TraceId),

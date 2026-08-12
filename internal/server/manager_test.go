@@ -1,6 +1,13 @@
 package server
 
-import "testing"
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+)
 
 func TestClientManagerRemoveOnlyMatchingSession(t *testing.T) {
 	manager := &ClientManager{}
@@ -49,6 +56,66 @@ func TestParseRoute(t *testing.T) {
 	gatewayID, sessionID = ParseRoute("gateway-b")
 	if gatewayID != "gateway-b" || sessionID != "" {
 		t.Fatalf("legacy ParseRoute = (%q, %q), want (gateway-b, empty)", gatewayID, sessionID)
+	}
+}
+
+func TestRouteMatchesConnectionUsesSessionFence(t *testing.T) {
+	if !RouteMatchesConnection("gateway-a|session-new", "gateway-a", "session-new") {
+		t.Fatal("matching route was rejected")
+	}
+	if RouteMatchesConnection("gateway-a|session-old", "gateway-a", "session-new") {
+		t.Fatal("stale session route was accepted")
+	}
+	if RouteMatchesConnection("gateway-b|session-new", "gateway-a", "session-new") {
+		t.Fatal("route for another gateway was accepted")
+	}
+	if !RouteMatchesConnection("gateway-a", "gateway-a", "session-new") {
+		t.Fatal("legacy gateway-only route should remain compatible")
+	}
+}
+
+func TestStaleConnectionCannotRefreshNewerRoute(t *testing.T) {
+	redisServer, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis.Run error = %v", err)
+	}
+	defer redisServer.Close()
+
+	ctx := context.Background()
+	rdb := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	defer rdb.Close()
+
+	const uid = "1001"
+	oldRoute := BuildRouteValue("gateway-a", "session-old")
+	newRoute := BuildRouteValue("gateway-b", "session-new")
+	if err := ClaimRoute(ctx, rdb, uid, oldRoute, time.Minute); err != nil {
+		t.Fatalf("ClaimRoute(old) error = %v", err)
+	}
+	if err := ClaimRoute(ctx, rdb, uid, newRoute, time.Minute); err != nil {
+		t.Fatalf("ClaimRoute(new) error = %v", err)
+	}
+
+	owned, err := RefreshRouteIfMatch(ctx, rdb, uid, oldRoute, time.Minute)
+	if err != nil {
+		t.Fatalf("RefreshRouteIfMatch(old) error = %v", err)
+	}
+	if owned {
+		t.Fatal("stale route unexpectedly retained ownership")
+	}
+	got, err := rdb.Get(ctx, RouteKey(uid)).Result()
+	if err != nil {
+		t.Fatalf("read route error = %v", err)
+	}
+	if got != newRoute {
+		t.Fatalf("route = %q, want %q", got, newRoute)
+	}
+
+	owned, err = RefreshRouteIfMatch(ctx, rdb, uid, newRoute, time.Minute)
+	if err != nil {
+		t.Fatalf("RefreshRouteIfMatch(new) error = %v", err)
+	}
+	if !owned {
+		t.Fatal("current route failed to refresh")
 	}
 }
 

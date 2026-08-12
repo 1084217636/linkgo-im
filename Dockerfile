@@ -12,15 +12,16 @@ RUN go build -o logic ./cmd/logic
 RUN go build -o transfer ./cmd/transfer
 
 FROM ${RUNTIME_IMAGE}
-WORKDIR /root/
-# 安装基础库
-RUN apk add --no-cache ca-certificates libc6-compat
-COPY --from=builder /app/gateway .
-COPY --from=builder /app/logic .
-COPY --from=builder /app/transfer .
-COPY --from=builder /app/cmd/gateway/etc /root/cmd/gateway/etc
-COPY --from=builder /app/cmd/logic/etc /root/cmd/logic/etc
-COPY --from=builder /app/README.md /root/README.md
-COPY --from=builder /app/docs /root/docs
-# 给执行权限
-RUN chmod +x /root/gateway /root/logic /root/transfer
+RUN apk add --no-cache ca-certificates libc6-compat \
+    && addgroup -S -g 10001 linkgo \
+    && adduser -S -D -H -u 10001 -G linkgo linkgo
+WORKDIR /app
+COPY --from=builder --chown=10001:10001 /app/gateway .
+COPY --from=builder --chown=10001:10001 /app/logic .
+COPY --from=builder --chown=10001:10001 /app/transfer .
+COPY --from=builder --chown=10001:10001 /app/cmd/gateway/etc /app/cmd/gateway/etc
+COPY --from=builder --chown=10001:10001 /app/cmd/logic/etc /app/cmd/logic/etc
+COPY --from=builder --chown=10001:10001 /app/README.md /app/README.md
+COPY --from=builder --chown=10001:10001 /app/docs /app/docs
+RUN chmod 0555 /app/gateway /app/logic /app/transfer
+USER 10001:10001

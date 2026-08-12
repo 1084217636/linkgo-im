@@ -152,11 +152,11 @@ func startGateway(ctx context.Context, port int, gatewayID string, rdb *redis.Cl
 		server.Manager.Add(claims.UserID, clientConn)
 		defer server.Manager.Remove(claims.UserID, clientConn)
 		defer clientConn.Close()
-		_ = server.RefreshRoute(ctx, rdb, claims.UserID, routeValue, 45*time.Second)
+		_ = server.ClaimRoute(ctx, rdb, claims.UserID, routeValue, 45*time.Second)
 		defer server.ClearRouteIfMatch(ctx, rdb, claims.UserID, routeValue)
 		// The local benchmark has no membership database, so it only replays the
 		// uid-scoped pending ACK queue. Session timeline replay must fail closed.
-		server.SyncOfflineMessages(ctx, rdb, claims.UserID, clientConn, "", -1)
+		_ = server.SyncOfflineMessages(ctx, rdb, claims.UserID, clientConn, "", -1)
 		server.StartClientLoop(ctx, claims.UserID, clientConn, logicClient, rdb, routeValue, 45*time.Second, nil)
 	})
 

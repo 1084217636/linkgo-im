@@ -1,9 +1,15 @@
 APP_NAME := linkgo-im
 
-.PHONY: test fmt-check build docker-build compose-config compose-cn-config compose-light-config compose-light-cn-config observability-config observability-cn-config prometheus-check observability-up observability-cn-up observability-down observability-cn-down docker-up docker-cn-up docker-cn-reset docker-light-up docker-light-cn-up docker-down docker-cn-down docker-light-down docker-light-cn-down k8s-render k8s-check k8s-dry-run k8s-apply k8s-release k8s-delete ci-local bench ops-smoke fault-injection frontend-static-check docs-check core-im-demo frontend-smoke group-transfer-demo ai-config-check ai-test-suggest ai-quality-summary ai-demo ai-ask-demo im-ai-final-demo
+.PHONY: test test-race vet fmt-check build docker-build compose-config compose-cn-config compose-light-config compose-light-cn-config observability-config observability-cn-config prometheus-check observability-up observability-cn-up observability-down observability-cn-down docker-up docker-cn-up docker-cn-reset docker-light-up docker-light-cn-up docker-down docker-cn-down docker-light-down docker-light-cn-down k8s-render k8s-check k8s-dry-run k8s-apply k8s-release k8s-delete ci-local bench ops-smoke fault-injection fault-check frontend-static-check docs-check core-im-demo frontend-smoke group-transfer-demo ai-demo ai-ask-demo im-ai-final-demo
 
 test:
 	go test ./...
+
+test-race:
+	CGO_ENABLED=1 go test -race -count=1 ./...
+
+vet:
+	go vet ./...
 
 fmt-check:
 	test -z "$$(gofmt -l $$(find . -name '*.go' -not -path './vendor/*'))"
@@ -96,7 +102,7 @@ k8s-release:
 k8s-delete:
 	kubectl kustomize deploy/k8s --load-restrictor LoadRestrictionsNone | kubectl delete -f -
 
-ci-local: fmt-check test build docs-check compose-config compose-cn-config compose-light-config compose-light-cn-config observability-config observability-cn-config docker-build
+ci-local: fmt-check vet test build docs-check fault-check compose-config compose-cn-config compose-light-config compose-light-cn-config observability-config observability-cn-config docker-build
 
 bench:
 	bash benchmark/run_bench.sh
@@ -106,6 +112,9 @@ ops-smoke:
 
 fault-injection:
 	FAULT_INJECTION_CONFIRM=1 bash scripts/fault_injection.sh
+
+fault-check:
+	python3 scripts/validate_fault_handling.py
 
 core-im-demo:
 	bash scripts/demo_core_im.sh
@@ -121,15 +130,6 @@ docs-check:
 
 group-transfer-demo:
 	bash scripts/demo_group_transfer.sh
-
-ai-config-check:
-	python3 tools/ai_agent_workflow/config_check.py --config-dir examples/game_config --output artifacts/config_check_report.json
-
-ai-test-suggest:
-	python3 tools/ai_agent_workflow/test_suggest.py --root . --output artifacts/test_suggestions.json
-
-ai-quality-summary:
-	python3 tools/ai_agent_workflow/quality_summary.py --task-type local_validation --validation-command "GOCACHE=/tmp/go-build go test ./..." --output artifacts/quality_summary.json
 
 ai-demo:
 	bash scripts/ai_demo.sh

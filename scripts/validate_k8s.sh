@@ -22,6 +22,7 @@ require_count 'readinessProbe:' 3 "readiness probes"
 require_count 'livenessProbe:' 3 "liveness probes"
 require_count 'maxUnavailable: 0' 2 "zero-downtime rolling strategies"
 require_count 'secretRef:' 3 "application secret injection"
+require_count 'runAsNonRoot: true' 3 "non-root application containers"
 
 if grep -q 'DB_DSN:' deploy/k8s/configmap.yaml; then
   echo "Kubernetes validation failed: DB_DSN must not be stored in ConfigMap" >&2
@@ -33,6 +34,10 @@ if grep -qE '^  LOGIC_ADDR:' deploy/k8s/configmap.yaml; then
   exit 1
 fi
 grep -q 'fieldPath: status.podIP' deploy/k8s/logic.yaml
+if grep -q -- '-proot' deploy/k8s/dependencies.yaml; then
+  echo "Kubernetes validation failed: MySQL probe must read its password from Secret-backed environment" >&2
+  exit 1
+fi
 
 production_rendered="$(mktemp)"
 trap 'rm -f "$rendered" "$production_rendered"' EXIT
@@ -51,4 +56,4 @@ else
   test "$?" -eq 2
 fi
 
-echo "PASS Kubernetes demo/production renders, discovery, secret boundary, and immutable release guard"
+echo "PASS Kubernetes demo/production renders, discovery, secret boundary, non-root containers, and immutable release guard"

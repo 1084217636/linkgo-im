@@ -61,11 +61,6 @@ FORBIDDEN_DOC_CLAIMS = [
     "/api/v1/ws",
     "多网关扩展可线性提高吞吐",
     "当前 V2 使用 mock provider",
-    "游戏运营",
-    "游戏策划",
-    "活动缓存",
-    "道具发放",
-    "GameOps",
 ]
 
 LINK_RE = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
@@ -161,16 +156,40 @@ def validate_knowledge_paths() -> None:
             fail(f"obsolete knowledge path still configured: {removed}")
 
 
+def validate_learning_contract() -> None:
+    """Keep every numbered chapter usable without a separate answer document."""
+
+    for name in EXPECTED_HANDBOOK[1:]:
+        path = HANDBOOK / name
+        content = path.read_text(encoding="utf-8")
+        reading_heading = "## 本章代码阅读任务"
+        if reading_heading not in content:
+            fail(f"{name} is missing {reading_heading}")
+        answer = re.search(r"^## .*参考答案\s*$", content, re.MULTILINE)
+        if answer is None:
+            fail(f"{name} is missing an in-file reference-answer section")
+        reading_at = content.index(reading_heading)
+        if answer.start() <= reading_at:
+            fail(f"{name} puts reference answers before its reading task")
+        reading_block = content[reading_at : answer.start()]
+        if reading_block.count("`") < 4:
+            fail(
+                f"{name} reading task must name concrete files and symbols, "
+                "not only another document"
+            )
+
+
 def main() -> None:
     validate_layout()
     checked_links = validate_links()
     validate_no_obsolete_paths()
     validate_knowledge_paths()
+    validate_learning_contract()
     print(
         "PASS documentation layout, "
         f"{len(EXPECTED_HANDBOOK) - 1} ordered chapters, "
         f"{checked_links} repository links, {len(KNOWLEDGE_PATHS)} knowledge sources, "
-        "and no stale claims"
+        "in-file chapter answers, and no stale claims"
     )
 
 

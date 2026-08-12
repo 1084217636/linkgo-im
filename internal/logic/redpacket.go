@@ -165,11 +165,21 @@ func (s *RedPacketService) Claim(ctx context.Context, redPacketID, userID string
 		return nil, ErrRedPacketFinished
 	}
 	if packet.ExpiresAt > 0 && packet.ExpiresAt <= now {
-		_ = markRedPacketExpired(ctx, tx, packet.ID, now)
+		if err := markRedPacketExpired(ctx, tx, packet.ID, now); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
 		return nil, ErrRedPacketExpired
 	}
 	if packet.RemainingCount <= 0 || packet.RemainingAmount <= 0 {
-		_ = markRedPacketFinished(ctx, tx, packet.ID, now)
+		if err := markRedPacketFinished(ctx, tx, packet.ID, now); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
 		return nil, ErrRedPacketFinished
 	}
 
@@ -184,6 +194,16 @@ VALUES (?, ?, ?, ?)
 `, packet.ID, userID, amount, now)
 	if err != nil {
 		if isDuplicateKey(err) {
+			if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+				return nil, rollbackErr
+			}
+			claim, ok, loadErr := s.loadClaim(ctx, redPacketID, userID)
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			if ok {
+				return claim, ErrRedPacketAlreadyClaimed
+			}
 			return nil, ErrRedPacketAlreadyClaimed
 		}
 		return nil, err

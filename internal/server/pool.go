@@ -23,12 +23,13 @@ const (
 )
 
 type pushTask struct {
-	ctx       context.Context
-	uid       string
-	data      []byte
-	logic     api.LogicClient
-	frame     *api.WireMessage
-	gatewayID string
+	ctx        context.Context
+	uid        string
+	data       []byte
+	logic      api.LogicClient
+	frame      *api.WireMessage
+	gatewayID  string
+	onComplete func(error)
 }
 
 type pushTaskHandler func(pushTask) error
@@ -83,6 +84,18 @@ func (p *PushWorkerPool) Submit(
 	frame *api.WireMessage,
 	gatewayID string,
 ) SubmitResult {
+	return p.SubmitWithResult(ctx, uid, logic, data, frame, gatewayID, nil)
+}
+
+func (p *PushWorkerPool) SubmitWithResult(
+	ctx context.Context,
+	uid string,
+	logic api.LogicClient,
+	data []byte,
+	frame *api.WireMessage,
+	gatewayID string,
+	onComplete func(error),
+) SubmitResult {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -98,7 +111,15 @@ func (p *PushWorkerPool) Submit(
 
 	shard := pushShardIndex(uid, len(p.shards))
 	queue := p.shards[shard]
-	task := pushTask{ctx: ctx, uid: uid, logic: logic, data: data, frame: frame, gatewayID: gatewayID}
+	task := pushTask{
+		ctx:        ctx,
+		uid:        uid,
+		logic:      logic,
+		data:       append([]byte(nil), data...),
+		frame:      frame,
+		gatewayID:  gatewayID,
+		onComplete: onComplete,
+	}
 	select {
 	case queue <- task:
 		metrics.PushQueueDepth.WithLabelValues(strconv.Itoa(shard)).Set(float64(len(queue)))
@@ -139,11 +160,15 @@ func (p *PushWorkerPool) runShard(shard int, queue <-chan pushTask) {
 		startedAt := time.Now()
 		if task.ctx != nil && task.ctx.Err() != nil {
 			metrics.PushProcessingLatencySeconds.WithLabelValues(string(SubmitContextCanceled)).Observe(time.Since(startedAt).Seconds())
+			if task.onComplete != nil {
+				task.onComplete(task.ctx.Err())
+			}
 			continue
 		}
 
 		result := "success"
-		if err := p.handler(task); err != nil {
+		err := p.handler(task)
+		if err != nil {
 			result = "failure"
 			logx.Errorw("push message to logic failed",
 				logx.Field("trace_id", traceID(task.frame)),
@@ -156,6 +181,9 @@ func (p *PushWorkerPool) runShard(shard int, queue <-chan pushTask) {
 			)
 		}
 		metrics.PushProcessingLatencySeconds.WithLabelValues(result).Observe(time.Since(startedAt).Seconds())
+		if task.onComplete != nil {
+			task.onComplete(err)
+		}
 	}
 	metrics.PushQueueDepth.WithLabelValues(shardLabel).Set(0)
 }

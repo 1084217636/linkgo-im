@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/1084217636/linkgo-im/api"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -81,6 +83,44 @@ func TestWritePushRejectionPropagatesWriteError(t *testing.T) {
 	writer := &recordingBinaryWriter{err: want}
 	if err := writePushRejection(writer, &api.WireMessage{}, SubmitQueueFull); !errors.Is(err, want) {
 		t.Fatalf("writePushRejection() error = %v, want %v", err, want)
+	}
+}
+
+func TestWritePushResultAccepted(t *testing.T) {
+	writer := &recordingBinaryWriter{}
+	request := &api.WireMessage{ClientMsgId: "cmid-accepted", TraceId: "trace-accepted"}
+	if err := writePushResult(writer, request, nil); err != nil {
+		t.Fatalf("writePushResult() error = %v", err)
+	}
+
+	var frame api.WireMessage
+	if err := proto.Unmarshal(writer.payload, &frame); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if frame.ClientMsgId != request.ClientMsgId || frame.TraceId != request.TraceId {
+		t.Fatalf("correlation fields = (%q, %q)", frame.ClientMsgId, frame.TraceId)
+	}
+	var detail clientErrorDetail
+	if err := json.Unmarshal([]byte(frame.Body), &detail); err != nil {
+		t.Fatalf("unmarshal result detail: %v", err)
+	}
+	if detail.Type != clientResultType || detail.Code != clientResultAccepted || detail.Retryable {
+		t.Fatalf("accepted detail = %#v", detail)
+	}
+}
+
+func TestPushProcessingDetailClassifiesRetryableFailure(t *testing.T) {
+	detail := pushProcessingDetail(status.Error(codes.Unavailable, "logic unavailable"))
+	if detail.Type != clientErrorType || detail.Code != clientResultRejected {
+		t.Fatalf("rejected detail = %#v", detail)
+	}
+	if !detail.Retryable || detail.RetryAfterMS <= 0 {
+		t.Fatalf("retryable rejection = %#v", detail)
+	}
+
+	detail = pushProcessingDetail(errors.New("sender is not an active group member"))
+	if detail.Retryable || detail.RetryAfterMS != 0 {
+		t.Fatalf("permanent rejection = %#v", detail)
 	}
 }
 

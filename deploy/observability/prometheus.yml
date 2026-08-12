@@ -23,3 +23,11 @@ scrape_configs:
           - transfer:9102
         labels:
           component: transfer
+
+  - job_name: linkgo-logic
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - logic:9002
+        labels:
+          component: logic

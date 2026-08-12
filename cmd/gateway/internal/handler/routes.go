@@ -47,46 +47,6 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 		},
 	)
 
-	// Game operations control plane. Platform roles are independent from IM group roles.
-	server.AddRoutes(
-		rest.WithMiddlewares(
-			[]rest.Middleware{
-				gwmiddleware.NewAuthMiddleware().Handle,
-				gwmiddleware.NewRoleMiddleware(serverCtx.DB, "operator").Handle,
-				gwmiddleware.NewRateLimitMiddleware(serverCtx.RestLimiter).Handle,
-			},
-			rest.Route{Method: http.MethodPost, Path: "/activities/drafts", Handler: ActivityDraftHandler(serverCtx)},
-			rest.Route{Method: http.MethodPost, Path: "/activities/submit", Handler: ActivitySubmitHandler(serverCtx)},
-			rest.Route{Method: http.MethodPost, Path: "/items/grant", Handler: ItemGrantHandler(serverCtx)},
-			rest.Route{Method: http.MethodGet, Path: "/items/grants", Handler: ItemGrantResultHandler(serverCtx)},
-		),
-		rest.WithPrefix("/api/v1/admin"),
-	)
-	server.AddRoutes(
-		rest.WithMiddlewares(
-			[]rest.Middleware{
-				gwmiddleware.NewAuthMiddleware().Handle,
-				gwmiddleware.NewRoleMiddleware(serverCtx.DB, "reviewer").Handle,
-				gwmiddleware.NewRateLimitMiddleware(serverCtx.RestLimiter).Handle,
-			},
-			rest.Route{Method: http.MethodPost, Path: "/activities/approve", Handler: ActivityApproveHandler(serverCtx)},
-			rest.Route{Method: http.MethodGet, Path: "/audits", Handler: AuditListHandler(serverCtx)},
-		),
-		rest.WithPrefix("/api/v1/admin"),
-	)
-	server.AddRoutes(
-		rest.WithMiddlewares(
-			[]rest.Middleware{
-				gwmiddleware.NewAuthMiddleware().Handle,
-				gwmiddleware.NewRoleMiddleware(serverCtx.DB, "admin").Handle,
-				gwmiddleware.NewRateLimitMiddleware(serverCtx.RestLimiter).Handle,
-			},
-			rest.Route{Method: http.MethodPost, Path: "/activities/rollback", Handler: ActivityRollbackHandler(serverCtx)},
-			rest.Route{Method: http.MethodPost, Path: "/activities/publish", Handler: ActivityPublishHandler(serverCtx)},
-		),
-		rest.WithPrefix("/api/v1/admin"),
-	)
-
 	// Public endpoints (JWT is optional — only rate limit applies).
 	server.AddRoutes(
 		rest.WithMiddlewares(

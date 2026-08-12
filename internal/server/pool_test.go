@@ -157,6 +157,36 @@ func TestPushWorkerPoolCloseHonorsContextTimeout(t *testing.T) {
 	}
 }
 
+func TestPushWorkerPoolReportsFinalProcessingResult(t *testing.T) {
+	want := errors.New("logic failed")
+	results := make(chan error, 1)
+	pool := newPushWorkerPool(1, 1, func(pushTask) error {
+		return want
+	})
+	if result := pool.SubmitWithResult(
+		context.Background(),
+		"user-a",
+		nil,
+		[]byte("payload"),
+		nil,
+		"gateway-test",
+		func(err error) { results <- err },
+	); result != SubmitAccepted {
+		t.Fatalf("SubmitWithResult() = %s, want %s", result, SubmitAccepted)
+	}
+	if err := pool.Close(context.Background()); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	select {
+	case got := <-results:
+		if !errors.Is(got, want) {
+			t.Fatalf("completion error = %v, want %v", got, want)
+		}
+	default:
+		t.Fatal("completion callback was not invoked")
+	}
+}
+
 func uidOnDifferentShard(base string, shardCount int) string {
 	baseShard := pushShardIndex(base, shardCount)
 	for i := 0; ; i++ {

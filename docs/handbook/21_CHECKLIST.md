@@ -80,6 +80,7 @@
 - [ ] 能解释 Pod、Deployment、Service、ConfigMap、Secret 和 Probe。
 - [ ] 能画 production overlay 的应用/中间件边界。
 - [ ] 能解释新增 Gateway 为什么不迁移旧 WebSocket。
+- [ ] 能按 `docs/runbooks/FAULT_HANDLING.md` 解释 Logic、Gateway、Redis、MySQL、Kafka、Transfer 故障的发现、摘流量、替换和业务验收。
 
 验收：从一次 push 讲到 GitHub Actions，再讲镜像如何滚动发布和失败回滚。
 
@@ -145,6 +146,7 @@
 - [ ] 能指出群消息当前仍有“同步读取完整 recipients”的 O(N) 成本，以及超级大群为什么需要共享消息流。
 - [ ] 能解释为什么 `conversation_members` 不应在每条群消息发送时更新全部成员。
 - [ ] 能说明浏览器重连的指数退避、jitter、最大等待时间和避免重复定时器的方法。
+- [ ] 能执行 `make fault-check`，并知道破坏性脚本必须在完整 Compose 中显式设置 `FAULT_INJECTION_CONFIRM=1`。
 
 ## 阶段验收与最终验收题参考答案
 

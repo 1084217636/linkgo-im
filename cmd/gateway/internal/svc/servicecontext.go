@@ -6,7 +6,6 @@ import (
 
 	"github.com/1084217636/linkgo-im/cmd/gateway/internal/config"
 	"github.com/1084217636/linkgo-im/internal/ai"
-	"github.com/1084217636/linkgo-im/internal/gameops"
 	authutil "github.com/1084217636/linkgo-im/internal/middleware"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/redis/go-redis/v9"
@@ -28,8 +27,6 @@ type ServiceContext struct {
 	AIProvider  ai.Provider
 	AISummary   *ai.SummaryService
 	AIAsk       *ai.AskService
-	ActivityOps *gameops.ActivityService
-	GrantOps    *gameops.GrantService
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
@@ -121,8 +118,6 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		AIProvider:  aiProvider,
 		AISummary:   ai.NewSummaryService(db, aiProvider, c.AI.MaxMessages),
 		AIAsk:       ai.NewAskService(db, aiProvider, knowledgeBase, c.AI.KnowledgeTopK),
-		ActivityOps: gameops.NewActivityService(db, rdb),
-		GrantOps:    gameops.NewGrantService(db),
 	}
 }
 
