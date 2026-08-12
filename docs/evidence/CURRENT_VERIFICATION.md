@@ -74,7 +74,18 @@ bash scripts/fault_injection.sh
 
 另外在同一完整栈上直接停止 Kafka 验证了 Gateway、Logic、Transfer 的 `/readyz` 均返回 HTTP 503，恢复 Kafka 后三者均恢复 HTTP 200。这一条额外验证来自 Gateway 调用 Logic gRPC Health Check 的依赖感知实现。
 
-本机没有 C 编译器且 `CGO_ENABLED=0`，所以没有在本地把 `go test -race` 记为通过。GitHub Actions 的 Ubuntu runner 会单独执行 `make test-race`；远程检查结束前不能声称本 commit 的 race 检测已通过。
+主机 WSL 没有 gcc，且 sudo 安装需要交互密码；因此没有把主机直接执行的 `make test-race` 记为通过。已使用带 GCC 的 Go Docker 工具链完成等价验证：
+
+```bash
+docker run --rm --network host \
+  -v "$PWD:/src" \
+  -v /home/xiaobin/go/pkg/mod:/go/pkg/mod:ro \
+  -v /home/xiaobin/.cache/go-build:/root/.cache/go-build \
+  -w /src docker.m.daocloud.io/library/golang:1.25-alpine \
+  sh -lc 'export PATH=/usr/local/go/bin:$PATH; apk add --no-cache gcc musl-dev; CGO_ENABLED=1 go test -race -count=1 ./...'
+```
+
+该命令已通过全部 Go 包的 race 检测。主机永久安装 gcc 仍需用户在 WSL 终端执行带 sudo 的安装命令；GitHub Actions 也会继续执行 `make test-race`。
 
 ## 4. 关键自动化用例位置
 
