@@ -109,6 +109,7 @@ Etcd           2379
 
 详细操作见 [本地演示手册](docs/runbooks/LOCAL_DEMO.md) 和 [DevOps 参考](docs/runbooks/DEVOPS.md)。
 故障停止、替换、扩容和恢复演练见 [故障先行手册](docs/runbooks/FAULT_HANDLING.md)。
+面试准备见 [LinkGo IM 30 分钟面试讲稿](docs/interview/LINKGO_IM_30_MINUTE_TALK.md)。
 
 ## 目录
 

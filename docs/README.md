@@ -33,6 +33,10 @@ docs/
 - [执行 Docker、CI、Kubernetes 命令并判断输出](runbooks/DEVOPS.md)：学完第 17、18 章后作为操作手册。
 - [故障先行演练与恢复](runbooks/FAULT_HANDLING.md)：学完第 16、18 章后，按故障矩阵验证摘流量、替换、扩容和业务恢复。
 
+### 面试讲稿
+
+- [LinkGo IM 30 分钟面试讲稿](interview/LINKGO_IM_30_MINUTE_TALK.md)：只讲 IM 项目，包含完整主线、思维导图、代码定位、故障和测试证据，以及面试官追问答案。AI 项目暂不放入本稿。
+
 ### evidence
 
 - [核对当前验证命令、结果与它们不能证明的内容](evidence/CURRENT_VERIFICATION.md)：发布或写简历前检查证据边界。
