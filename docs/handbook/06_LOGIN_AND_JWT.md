@@ -199,7 +199,7 @@ Secret 不能写入公开 Git 仓库中的生产配置。公司环境通常通�
 | 1 | `public/index.html` 的 `login()` | 找到请求路径、`username/password` 请求体和页面保存 `token/user_id` 的位置 |
 | 2 | `cmd/gateway/internal/handler/routes.go` 的登录 Route，再看 `cmd/gateway/internal/handler/loginhandler.go` 的 `LoginHandler` | 确认 `/api/v1/login` 怎样进入 Gateway Logic |
 | 3 | `cmd/gateway/internal/logic/loginlogic.go` 的 `Login` | 找到 `LogicRouter.GetClient` 和生成的 gRPC `Login` 调用，画出第一个进程边界 |
-| 4 | `api/protocol.proto` 的 `LoginReq`、`LoginReply`、`rpc Login` | 只读手写协议字段，不读整个生成文件 |
+| 4 | `api/protocol.proto` 第 56 行附近的 `service Logic`，先看其中的 `rpc Login (LoginReq) returns (LoginReply);`，再向下看 `message LoginReq` 和 `message LoginReply` | 分清三件事：`rpc Login` 是 Logic 服务的方法声明，`LoginReq` 是请求消息，`LoginReply` 是响应消息。它们不在同一个代码块里；这次不读生成的 `.pb.go` |
 | 5 | `cmd/logic/internal/server/logicserver.go` 与 `cmd/logic/internal/logic/loginlogic.go` 的 `Login` | 看 gRPC 请求怎样进入核心 `LogicHandler` |
 | 6 | `internal/logic/handler.go` 的 `Login`、`verifyPassword`、`upgradeLegacyPassword` | 找到 users 查询、统一错误、bcrypt 校验、旧明文迁移和会话列表降级 |
 | 7 | `internal/middleware/auth.go` 的 `GenerateToken`、`ParseToken`，再看 `cmd/gateway/internal/middleware/authmiddleware.go` 的 `Handle` | 确认签发字段、签名校验和 `user_id` 写入 Context 的位置 |
