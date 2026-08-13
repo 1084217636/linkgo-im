@@ -35,7 +35,7 @@ docs/
 
 ### 面试讲稿
 
-- [LinkGo IM 30 分钟面试讲稿](interview/LINKGO_IM_30_MINUTE_TALK.md)：只讲 IM 项目，包含完整主线、思维导图、代码定位、故障和测试证据，以及面试官追问答案。AI 项目暂不放入本稿。
+- [LinkGo IM 45 分钟逐字讲稿](interview/LINKGO_IM_30_MINUTE_TALK.md)：只讲 IM 项目，正文可以直接开口练习，包含跨节点单聊、可靠性、故障和测试证据，以及面试官打断追问。架构图另附可复制的 Mermaid 源文件。AI 项目暂不放入本稿。
 
 ### evidence
 

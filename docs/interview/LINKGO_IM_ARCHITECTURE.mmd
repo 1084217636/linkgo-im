@@ -1,0 +1,21 @@
+flowchart LR
+    A[客户端 A] -->|HTTP 登录和 WebSocket| G1[Gateway 1]
+    B[客户端 B] -->|HTTP 登录和 WebSocket| G2[Gateway 3]
+
+    G1 -->|gRPC PushMessage| L[Logic 集群]
+    G2 -->|gRPC 业务请求| L
+
+    L -->|消息、关系、会话事实| M[(MySQL)]
+    L -->|route、seq、pending、timeline| R[(Redis)]
+    L -->|群聊 dispatch job| K[(Kafka)]
+
+    R -->|定向 Pub/Sub| G2
+    G2 -->|WebSocket 下行| B
+    B -->|ACK| G2
+    G2 -->|Lua 清理 pending| R
+
+    K -->|FetchMessage| T[Transfer 集群]
+    T -->|逐成员投递| R
+    T -->|retry 或 DLQ 后提交 offset| K
+
+    M -->|Redis 热数据不足时按 cursor 回放| G2
