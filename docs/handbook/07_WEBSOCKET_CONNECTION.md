@@ -63,17 +63,19 @@ encodeVarint
 
 ## 4. 握手前经过哪些检查
 
-`/ws` 路由依次经过：
+`/ws` 的主流程可以先记成六步：
 
 ```text
 AuthMiddleware
 → WebSocket 专用限流中间件
 → WebSocketHandler
-→ Origin 检查
 → 可选的会话回放权限检查
 → 获取 Logic 客户端
-→ Upgrade
+→ Upgrade（在这里执行一次 Origin 检查）
+→ 登记连接并启动读循环
 ```
+
+面试时先讲 JWT、Upgrade、连接登记、消息循环和断线清理。限流、Origin 和回放权限各用一句话说明即可，不需要背 Gorilla 握手实现或 Origin 解析细节。
 
 ### JWT 检查
 
@@ -87,9 +89,11 @@ Origin 表示浏览器页面来自哪个 scheme、host 和 port，例如：
 http://127.0.0.1:8088
 ```
 
-如果任意网页都能利用用户 Token 发起跨站 WebSocket，可能产生安全问题。项目把 Origin 标准化后与白名单精确匹配，不使用模糊字符串包含。
+如果任意网页都能利用用户 Token 发起跨站 WebSocket，可能产生安全问题。项目通过 Gorilla Upgrader 的 `CheckOrigin` 做一次白名单检查，不再在 Handler 中重复检查。
 
 默认情况下，缺少 Origin 也会被拒绝。受信任的非浏览器客户端只有在显式配置 `WS_ALLOW_MISSING_ORIGIN=true` 后才能省略 Origin，并且仍然需要 JWT。
+
+Origin 是浏览器带来的来源信息，不是 App 用户身份。当前演示客户端是网页，所以保留这层检查；以后改成原生 App 时，可以只允许受信任客户端缺少 Origin，JWT 认证仍然不能省。你只需要理解它是浏览器侧的补充防护，不需要把它当作本项目的主技术点。
 
 ### 会话回放权限检查
 
@@ -108,13 +112,13 @@ http://127.0.0.1:8088
 ```go
 type ClientConn struct {
     Conn         *websocket.Conn
-    SessionID    string
+    ConnectionID string
     WriteTimeout time.Duration
     writeMu      sync.Mutex
 }
 ```
 
-这里的 `SessionID` 实际是一次 WebSocket 连接的随机身份，名称容易与聊天 `session_id` 混淆。它用于区分旧连接和新连接，不是会话 ID。
+`ConnectionID` 是一次 WebSocket 连接的随机身份，用来区分同一用户的旧连接和新连接。聊天 `session_id` 表示一段单聊或群聊，两者不是同一个概念。
 
 `ClientManager` 使用 `sync.Map` 保存：
 
@@ -195,7 +199,19 @@ Handler 使用 defer 注册清理动作：
 
 当前网页把登录会话列表中的 `conversation.last_seq` 放入内存 `lastSeqBySession`，收到消息后再更新。初始 `last_seq` 是服务端会话最新序号，不等于这台浏览器已经收到或 ACK 的可靠设备游标；刷新页面后这份内存状态也会丢失。因此它只能支持演示性的单会话近期补偿，不能当作商业级 per-device 同步进度。
 
-## 11. 当前是否支持同一账号多设备同时在线
+## 11. 本项目保留什么，哪些只了解
+
+当前实现保留 JWT 认证、建连限流、一次 Origin 检查、可选回放权限、Logic 客户端、Upgrade、本机连接登记、共享路由、消息循环和条件清理。这些共同构成一条能运行且不会明显越权或误删连接的主链路。
+
+下面三项不继续落地，只在面试追问扩展方案时说明：
+
+- 短期 WebSocket ticket：可以避免长期 JWT 出现在 URL。测试时应验证 ticket 过期、重复使用和错误用户都被拒绝。
+- 原生 App 专用接入：原生客户端通常没有浏览器 Origin。以后可以按客户端类型调整 `AllowMissingOrigin`，但仍需 JWT 或短期 ticket。
+- Playwright 浏览器自动化：可以启动两个独立浏览器上下文，分别登录 A、B，验证发送、ACK、断网和重连后的页面状态。当前仓库不实现这套测试。
+
+你必须掌握的是 JWT 与回放授权的区别、HTTP Upgrade 的边界、连接为什么需要唯一 ID、旧连接为什么不能删新连接，以及心跳、ACK、普通消息三个分支。Origin 标准化细节、Gorilla 内部源码和 WebSocket 帧 RFC 只需知道用途。
+
+## 12. 当前是否支持同一账号多设备同时在线
 
 不支持完整多端同时在线。
 
@@ -215,23 +231,23 @@ user_id → 多个 device_id/connection_id → 各自 Gateway
 | --- | --- | --- |
 | 1 | `cmd/gateway/internal/handler/routes.go` 中注册 `/ws` 的 Route | 写下中间件顺序，确认认证和限流发生在 Handler 前 |
 | 2 | `cmd/gateway/internal/middleware/authmiddleware.go` 的 `Handle` | 找到查询参数 Token 解析和 uid 写入 Context 的位置 |
-| 3 | `cmd/gateway/internal/handler/websockethandler.go` 的 `WebSocketHandler`、`webSocketOriginAllowed`、`authorizeReplaySession` | 按源码顺序看 Origin、回放授权、Logic 客户端、Upgrade、`ClientConn`、`ClaimRoute` 和 defer 清理 |
-| 4 | `internal/server/manager.go` 的 `ClientConn`、`ClientManager`、`NewClientConn`、`Add`、`Remove`、`WriteBinary` | 圈出 `SessionID`、`writeMu`、写 deadline 和 `CompareAndDelete` |
+| 3 | `cmd/gateway/internal/handler/websockethandler.go` 的 `WebSocketHandler`、Upgrader 的 `CheckOrigin`、`authorizeReplaySession` | 按源码顺序看回放授权、Logic 客户端、唯一一次 Origin 检查、Upgrade、`ClientConn`、`ClaimRoute` 和 defer 清理 |
+| 4 | `internal/server/manager.go` 的 `ClientConn`、`ClientManager`、`NewClientConn`、`Add`、`Remove`、`WriteBinary` | 圈出 `ConnectionID`、`writeMu`、写 deadline 和 `CompareAndDelete` |
 | 5 | `internal/server/client.go` 的 `StartClientLoop` | 只区分 ACK、HEARTBEAT 和普通消息三个分支，并找到 64 KiB 读取限制 |
 | 6 | `public/index.html` 的 `connectWebSocket()`、`startHeartbeat()`、`encodeWireMessage()` | 对照浏览器建连、20 秒心跳和二进制编码 |
 
-看到这个程度就停：你能从 `/ws?token=...` 讲到本机 `ClientManager` 登记，再讲到读循环退出后的条件清理；也能解释 `ClientConn.SessionID` 是连接身份。暂时不必读 WebSocket 帧协议 RFC、gorilla/websocket 内部实现和完整 Protobuf 编码算法。
+看到这个程度就停：你能从 `/ws?token=...` 讲到本机 `ClientManager` 登记，再讲到读循环退出后的条件清理；也能解释 `ClientConn.ConnectionID` 与聊天 `session_id` 的区别。暂时不必读 WebSocket 帧协议 RFC、Gorilla WebSocket 内部实现和完整 Protobuf 编码算法。
 
 ## 动手练习
 
 ### 练习一：按顺序写握手检查
 
-不看文档写出：JWT、限流、Origin、可选会话回放授权、Logic 客户端、Upgrade。再说明其中哪些发生在 WebSocket 建立之前。
+不看文档写出：JWT、限流、可选会话回放授权、Logic 客户端、Upgrade。再说明 Origin 检查发生在 Upgrade 的哪个位置。
 
 ### 练习二：验证旧连接不能删新连接
 
 ```bash
-go test ./internal/server -run TestClientManagerRemoveOnlyMatchingSession -v
+go test ./internal/server -run TestClientManagerRemoveOnlyMatchingConnection -v
 ```
 
 阅读测试中的两个连接对象，解释为什么普通 `Delete(uid)` 会出错。
@@ -239,7 +255,7 @@ go test ./internal/server -run TestClientManagerRemoveOnlyMatchingSession -v
 ### 练习三：验证 Origin
 
 ```bash
-go test ./cmd/gateway/internal/handler -run 'TestWebSocketOriginAllowed|TestRejectInvalidWebSocketOrigin' -v
+go test ./cmd/gateway/internal/handler -run TestWebSocketOriginAllowed -v
 ```
 
 列出允许、拒绝和缺失 Origin 三类输入。
@@ -249,7 +265,7 @@ go test ./cmd/gateway/internal/handler -run 'TestWebSocketOriginAllowed|TestReje
 1. 登录成功为什么不等于已有实时连接？轮询、SSE 和 WebSocket 的取舍是什么？
 2. HTTP Upgrade 前做了哪些检查？JWT 与会话回放授权分别证明什么？
 3. Origin 白名单解决什么问题？
-4. `ClientConn.SessionID` 是聊天会话 ID 吗？
+4. `ClientConn.ConnectionID` 是聊天会话 ID 吗？
 5. ClientManager 保存在哪里，其他 Gateway 能直接读取吗？
 6. 为什么 `WriteBinary` 需要 mutex？
 7. 当前心跳间隔和网页 PONG 超时各是多少？
@@ -261,7 +277,7 @@ go test ./cmd/gateway/internal/handler -run 'TestWebSocketOriginAllowed|TestReje
 
 ### 动手练习答案
 
-1. 顺序是 JWT 中间件、WebSocket 限流、Handler 内 Origin、可选会话回放授权、取得 Logic 客户端、Upgrade。列出的检查都在 Upgrade 前完成；Upgrade 后才登记连接和启动读循环。
+1. 顺序是 JWT 中间件、WebSocket 限流、Handler 内可选回放授权、取得 Logic 客户端、Upgrade。Upgrader 在真正切换协议前调用 `CheckOrigin`；成功后才登记连接和启动读循环。
 2. 测试先把 `old` 加入 uid，再用 `new` 替换，最后让旧连接执行 `Remove`。普通 `Delete(uid)` 会把新连接一起删掉；`CompareAndDelete(uid, old)` 发现当前值已是 `new`，因此保留新连接。
 3. 配置白名单中的 scheme、host、port 精确匹配时允许；未列出的、相似恶意域名、scheme 或 port 不同、格式错误时拒绝。缺少 Origin 默认拒绝，只有 `allowMissingOrigin=true` 才允许受信任非浏览器客户端继续认证。
 
@@ -275,7 +291,7 @@ go test ./cmd/gateway/internal/handler -run 'TestWebSocketOriginAllowed|TestReje
 6. 心跳回复、实时投递和结果帧可能由不同 goroutine 写同一 socket；mutex 把写操作串行化，写 deadline 则避免慢连接长期占锁。
 7. 网页每 20 秒发送心跳，45 秒未收到 PONG 会主动关闭。
 8. uid 可能已经由新连接占用。旧连接只能在当前 map 值仍是自己时删除，否则会误伤新连接。
-9. 没有。当前只有手动“重连 WS”，`onclose` 不执行指数退避自动重连。
+9. 有演示级自动重连。非主动断开后，网页按指数退避和随机抖动重试，最长等待 30 秒；网络恢复事件也会安排重连。但 Token 和游标只存在页面内存中，刷新页面后仍需重新登录。
 10. 不支持。uid 在本机连接表和 Redis route 中都是单值，新连接替换旧位置。
 
 下一步：[08 先看单台 Gateway 的单聊](08_SINGLE_GATEWAY_CHAT.md)

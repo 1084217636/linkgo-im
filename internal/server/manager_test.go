@@ -9,10 +9,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func TestClientManagerRemoveOnlyMatchingSession(t *testing.T) {
+func TestClientManagerRemoveOnlyMatchingConnection(t *testing.T) {
 	manager := &ClientManager{}
-	first := &ClientConn{SessionID: "old"}
-	second := &ClientConn{SessionID: "new"}
+	first := &ClientConn{ConnectionID: "old"}
+	second := &ClientConn{ConnectionID: "new"}
 
 	manager.Add("1001", first)
 	manager.Add("1001", second)

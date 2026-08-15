@@ -88,7 +88,7 @@ func StartClientLoopWithDB(
 					logx.Field("trace_id", frame.TraceId),
 					logx.Field("gateway_id", gatewayID),
 					logx.Field("target_id", uid),
-					logx.Field("session_id", conn.SessionID),
+					logx.Field("connection_id", conn.ConnectionID),
 				)
 				return
 			}

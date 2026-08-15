@@ -148,7 +148,7 @@ func startGateway(ctx context.Context, port int, gatewayID string, rdb *redis.Cl
 			return
 		}
 		clientConn := server.NewClientConn(conn, fmt.Sprintf("%d-%d", port, time.Now().UnixNano()))
-		routeValue := server.BuildRouteValue(gatewayID, clientConn.SessionID)
+		routeValue := server.BuildRouteValue(gatewayID, clientConn.ConnectionID)
 		server.Manager.Add(claims.UserID, clientConn)
 		defer server.Manager.Remove(claims.UserID, clientConn)
 		defer clientConn.Close()

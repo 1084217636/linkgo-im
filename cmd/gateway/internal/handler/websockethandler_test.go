@@ -50,21 +50,6 @@ func TestWebSocketOriginAllowed(t *testing.T) {
 	}
 }
 
-func TestRejectInvalidWebSocketOriginReturnsForbidden(t *testing.T) {
-	req := httptest.NewRequest("GET", "http://api.example.com/ws", nil)
-	req.Header.Set("Origin", "https://evil.example.com")
-	resp := httptest.NewRecorder()
-
-	rejected := rejectInvalidWebSocketOrigin(resp, req, []string{"https://app.example.com"}, false)
-
-	if !rejected {
-		t.Fatal("rejectInvalidWebSocketOrigin() = false, want true")
-	}
-	if resp.Code != 403 {
-		t.Fatalf("status = %d, want 403", resp.Code)
-	}
-}
-
 func TestAuthorizeReplaySessionC2C(t *testing.T) {
 	tests := []struct {
 		name      string

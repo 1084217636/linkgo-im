@@ -222,7 +222,7 @@ trackPendingAck
 ```text
 解析 PushEnvelope
 → Manager.GetConn(target_id)
-→ 比较 envelope.route_value 与本机 conn.SessionID
+→ 比较 envelope.route_value 与本机 conn.ConnectionID
 → Base64 解码 payload
 → conn.WriteBinary（默认 5 秒写超时）
 ```

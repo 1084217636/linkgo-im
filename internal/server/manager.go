@@ -23,7 +23,7 @@ const defaultWebSocketWriteTimeout = 5 * time.Second
 
 type ClientConn struct {
 	Conn         *websocket.Conn
-	SessionID    string
+	ConnectionID string
 	WriteTimeout time.Duration
 	writeMu      sync.Mutex
 }
@@ -46,10 +46,10 @@ func ChannelForGateway(gatewayID string) string {
 	return fmt.Sprintf("im_message_push:%s", gatewayID)
 }
 
-func NewClientConn(conn *websocket.Conn, sessionID string) *ClientConn {
+func NewClientConn(conn *websocket.Conn, connectionID string) *ClientConn {
 	return &ClientConn{
 		Conn:         conn,
-		SessionID:    sessionID,
+		ConnectionID: connectionID,
 		WriteTimeout: defaultWebSocketWriteTimeout,
 	}
 }
@@ -127,7 +127,7 @@ func (m *ClientManager) SubscribeRedis(ctx context.Context, rdb *redis.Client, g
 			)
 			continue
 		}
-		if envelope.RouteValue != "" && !RouteMatchesConnection(envelope.RouteValue, gatewayID, conn.SessionID) {
+		if envelope.RouteValue != "" && !RouteMatchesConnection(envelope.RouteValue, gatewayID, conn.ConnectionID) {
 			MarkOffline(ctx, rdb, envelope.TargetID, envelope.MessageID, envelope.SentAt)
 			_ = conn.Close()
 			m.Remove(envelope.TargetID, conn)
@@ -139,7 +139,7 @@ func (m *ClientManager) SubscribeRedis(ctx context.Context, rdb *redis.Client, g
 				logx.Field("gateway_id", gatewayID),
 				logx.Field("target_id", envelope.TargetID),
 				logx.Field("route_value", envelope.RouteValue),
-				logx.Field("session_id", conn.SessionID),
+				logx.Field("connection_id", conn.ConnectionID),
 			)
 			continue
 		}

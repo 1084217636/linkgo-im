@@ -357,6 +357,21 @@ Transfer 无法 claim recipient，也无法记录 pending 或查在线路由，�
 
 ## 15. 面试时怎样准确回答
 
+### `core_im_demo` 为什么两个用户也能测群聊
+
+演示程序先让 A、B 分别登录并建立 WebSocket。创建群时，A 的请求只把 B 放进 `members`：
+
+```text
+A 调用创建群接口，members = [B]
+→ GroupCreateLogic 从 JWT Context 得到 creator = A
+→ memberSet 先放入 A，再合并请求中的 B
+→ 数据库最终写入 A(owner) 和 B(member)
+```
+
+所以这是一个有两个成员的真实群，不是把单聊伪装成群聊。A 向 `group:<group_id>` 发送后，Logic 查询 active 成员并排除发送者 A，Kafka job 的 recipients 只剩 B。Transfer 消费任务，B 的 WebSocket 收到消息并发送 ACK。
+
+这个测试能证明创建群、发送权限、群消息落库、Kafka 生产消费、单个收件人投递和 ACK 串在一起能运行。它不能证明多个接收者的扇出、某个成员失败后其他成员怎样处理、大群吞吐或多 partition 扩容。当前项目把它明确称为“两个成员的最小群聊测试”，不再把它写成大群压力验证。若以后要扩展，最直接的做法是增加 C，并故意让 B 离线，再同时检查 C 实时收到、B 重连补偿；这个方案写在这里，不继续增加现有演示复杂度。
+
 可以这样说：
 
 > 单聊只有一个接收者，群聊会产生 fan-out。我的 Logic 先校验群成员、分配会话 seq，并在 MySQL 只保存一行群消息；会话摘要事件通过同事务 Outbox 保证可恢复，然后查询当前 active 成员，把 WireMessage 和 recipients 快照写入 Kafka。Transfer 使用 consumer group 异步逐成员调用与单聊相同的 RedisDelivery。消费采用 FetchMessage 加手动 Commit，只有全部处理成功，或者 retry/DLQ 写成功后才提交。为处理投递完成但 offset 未提交导致的重复消费，我用 message_id + recipient 的 Redis Lua 状态实现 processing owner、lease 和 done。当前仍会在 Logic 同步加载完整成员列表，MySQL 到 Kafka 仍缺投递 Outbox，也没有超大群分片，所以我会说它完成了可靠异步扩散原型，而不是已经解决百万群生产问题。

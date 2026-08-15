@@ -192,7 +192,7 @@ Logic 崩溃会丢失尚未完成的 goroutine 任务。当前不是 Kafka/数�
 ```text
 谁创建      WebSocket Handler 在 Upgrade 成功后调用 NewClientConn
 谁持有      本机 ClientManager.UserConns，以 uid 为 key
-关键字段    Conn、SessionID、writeMu
+关键字段    Conn、ConnectionID、writeMu
 主要方法    WriteBinary、Close
 失败路径    WriteBinary 失败后标记离线、比较清理 route、关闭并移除连接
 ```

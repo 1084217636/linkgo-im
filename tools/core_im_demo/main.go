@@ -191,11 +191,11 @@ func run(cfg demoConfig) error {
 			return err
 		}
 		clientIDs = append(clientIDs, groupClientID)
-		report.pass("group chat via kafka transfer", gotGroup.MessageId)
+		report.pass("two-member group via kafka transfer", gotGroup.MessageId)
 	} else if cfg.RequireTransfer {
 		return fmt.Errorf("transfer service unavailable at %s/healthz", cfg.TransferBase)
 	} else {
-		report.skip("group chat via kafka transfer", "Transfer is not running; start full docker-compose stack or set REQUIRE_TRANSFER=1")
+		report.skip("two-member group via kafka transfer", "Transfer is not running; start full docker-compose stack or set REQUIRE_TRANSFER=1")
 	}
 
 	messageCount, err := countDemoMessages(ctx, db, clientIDs)
@@ -478,7 +478,7 @@ func (r *demoReport) write(path string) error {
 	b.WriteString("- WebSocket route registration\n")
 	b.WriteString("- Online single chat receive and ACK cleanup\n")
 	b.WriteString("- Offline message indexing and reconnect replay\n")
-	b.WriteString("- Group chat dispatch through Kafka Transfer\n")
+	b.WriteString("- Minimal two-member group dispatch through Kafka Transfer\n")
 	b.WriteString("- MySQL message persistence\n")
 	b.WriteString("- Gateway Prometheus metrics exposure\n")
 	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {

@@ -142,6 +142,38 @@ Gateway 的 `AuthMiddleware`：
 
 后续代码从 Context 获取身份，不相信请求体里由用户随便填写的发送者 ID。
 
+### Context 为什么看起来像 map
+
+这段代码不是把两个变量塞进一个 map：
+
+```go
+ctx := context.WithValue(r.Context(), ctxUserIDKey{}, claims.UserID)
+next(w, r.WithContext(ctx))
+```
+
+`WithValue` 返回一个新的子 Context。这个子节点只保存三样东西：父 Context、一个 key、一个 value。可以先把它想成下面的链：
+
+```text
+新 valueCtx
+  key   = ctxUserIDKey{}
+  value = "1001"
+  parent ───────────────→ 原请求 Context
+```
+
+`r.WithContext(ctx)` 又创建一份浅拷贝 Request，让后续 Handler 调用 `r.Context()` 时拿到这个新节点。原来的 Request 和原 Context 没有被修改。
+
+后续代码执行：
+
+```go
+ctx.Value(ctxUserIDKey{})
+```
+
+查找从最外层节点开始。当前节点的 key 相等就返回 `any("1001")`；不相等就调用父 Context 的 `Value` 继续找。多次 `WithValue` 会形成多层链，因此用起来像按 key 查询，但内部不是一张可修改的哈希表。
+
+`ctxUserIDKey{}` 是当前 middleware 包内定义的空结构体类型。这个类型可比较，而且外部包不能直接使用同一个未导出类型作为 key，从而降低命名冲突。`.(string)` 是类型断言，因为 `Value` 的返回类型是 `any`；断言成功时 `uid` 得到 `"1001"`，`ok` 为 true。
+
+Context 还沿父链传递取消信号和截止时间。它适合保存少量、跟一次请求有关的元数据，例如认证后的 user_id 或 trace_id，不适合拿来装请求体、数据库连接或大量业务数据。
+
 WebSocket 握手目前还支持从 URL 查询参数 `token=...` 读取 Token。这方便浏览器演示，但 URL 可能出现在代理访问日志中；正式环境需要 HTTPS/WSS、日志脱敏和更谨慎的 Token 传递策略。
 
 ## 8. 登录成功为什么还要 WebSocket

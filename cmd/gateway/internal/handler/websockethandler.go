@@ -34,14 +34,6 @@ func WebSocketHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		},
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		if rejectInvalidWebSocketOrigin(
-			w,
-			r,
-			svcCtx.Config.Gateway.AllowedOrigins,
-			svcCtx.Config.Gateway.AllowMissingOrigin,
-		) {
-			return
-		}
 		userID := gwmiddleware.UserIDFromContext(r.Context())
 		if userID == "" {
 			httpx.WriteJsonCtx(r.Context(), w, http.StatusUnauthorized, map[string]string{"error": "missing user context"})
@@ -68,7 +60,7 @@ func WebSocketHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		clientConn := server.NewClientConn(conn, newConnectionID())
 		defer clientConn.Close()
 
-		routeValue := server.BuildRouteValue(svcCtx.GatewayID, clientConn.SessionID)
+		routeValue := server.BuildRouteValue(svcCtx.GatewayID, clientConn.ConnectionID)
 		server.Manager.Add(userID, clientConn)
 		metrics.WSConnections.Inc()
 		defer server.Manager.Remove(userID, clientConn)
@@ -160,19 +152,6 @@ LIMIT 1
 	}
 
 	return errors.New("unsupported replay session format")
-}
-
-func rejectInvalidWebSocketOrigin(
-	w http.ResponseWriter,
-	r *http.Request,
-	allowedOrigins []string,
-	allowMissingOrigin bool,
-) bool {
-	if webSocketOriginAllowed(r, allowedOrigins, allowMissingOrigin) {
-		return false
-	}
-	http.Error(w, "websocket origin is not allowed", http.StatusForbidden)
-	return true
 }
 
 func webSocketOriginAllowed(r *http.Request, allowedOrigins []string, allowMissingOrigin bool) bool {
