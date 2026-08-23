@@ -489,7 +489,7 @@ G100 图中 `im_groups` 只有一行，保存名称、owner 和群状态；每�
 8. 当前不会验证请求中每个成员账号存在，没有完整邀请、退群、踢人和角色 RBAC；MySQL commit 后 Redis 缓存失败只记录日志且无重建任务。重复 group_id 会拒绝，非 active 成员不能列成员。
 9. 好友、建群、成员列表、红包和 AI 等 Gateway REST Logic 直接持有并访问 MySQL；只有消息主链路的登录、历史和 WebSocket Push 通过独立 Logic。
 
-下一步：[14 红包并发一致性](14_RED_PACKET.md)
+下一步：[14 安全、日志、指标和故障](14_SECURITY_OBSERVABILITY.md)。钱包红包与 AI Bot 作为可选业务扩展放在附录。
 
 ## 可靠性升级后的会话成员边界
 

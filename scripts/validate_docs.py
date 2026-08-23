@@ -27,14 +27,14 @@ EXPECTED_HANDBOOK = [
     "11_RELIABILITY_AND_OFFLINE.md",
     "12_GROUP_CHAT_AND_KAFKA.md",
     "13_RELATIONSHIPS_AND_CONVERSATIONS.md",
-    "14_RED_PACKET.md",
-    "15_AI_BOT.md",
-    "16_SECURITY_OBSERVABILITY.md",
-    "17_DOCKER_AND_CI.md",
-    "18_KUBERNETES_DEPLOYMENT.md",
-    "19_COMPLETE_CODE_WALK.md",
-    "20_INTERVIEW_PREP.md",
-    "21_CHECKLIST.md",
+    "14_SECURITY_OBSERVABILITY.md",
+    "15_DOCKER_AND_CI.md",
+    "16_KUBERNETES_DEPLOYMENT.md",
+    "17_COMPLETE_CODE_WALK.md",
+    "18_INTERVIEW_PREP.md",
+    "19_CHECKLIST.md",
+    "APPENDIX_A_WALLET_RED_PACKET.md",
+    "APPENDIX_B_AI_BOT.md",
 ]
 
 KNOWLEDGE_PATHS = [
@@ -187,7 +187,7 @@ def main() -> None:
     validate_learning_contract()
     print(
         "PASS documentation layout, "
-        f"{len(EXPECTED_HANDBOOK) - 1} ordered chapters, "
+        "20 ordered chapters plus 2 optional appendices, "
         f"{checked_links} repository links, {len(KNOWLEDGE_PATHS)} knowledge sources, "
         "in-file chapter answers, and no stale claims"
     )

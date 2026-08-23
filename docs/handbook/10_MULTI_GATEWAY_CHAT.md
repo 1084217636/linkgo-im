@@ -55,7 +55,7 @@ Gateway 需要知道当前有哪些 Logic 实例可用：
 LinkGo 使用 Etcd 保存 Logic 的注册信息，注册 Key 是：
 
 ```text
-/services/logic
+services/logic
 ```
 
 Etcd 在这里是服务通讯录，不保存好友关系或聊天正文。
@@ -76,7 +76,7 @@ Logic 配置包含：
 Etcd:
   Hosts:
     - etcd:2379
-  Key: /services/logic
+  Key: services/logic
 ```
 
 服务监听 `0.0.0.0:9001` 只表示接受本机所有网卡的连接，其他服务器不能把 `0.0.0.0` 当目标地址。
@@ -91,7 +91,7 @@ Etcd:
 
 ```text
 LOGIC_ADDR 非空 → 直接连接配置的地址
-LOGIC_ADDR 为空 → 从 Etcd /services/logic 发现实例
+LOGIC_ADDR 为空 → 从 Etcd `services/logic` 发现实例
 ```
 
 生产示例配置故意不设置 `LOGIC_ADDR`，从而使用 Etcd 和 `p2c_ewma`。
@@ -289,7 +289,7 @@ WebSocket 是已建立的长连接，不能把一条连接无损地从 Gateway-1
 6. 新连接通过 `ClaimRoute` 写入新的 Redis routeValue。
 7. 客户端使用确认进度和历史接口恢复可能缺失消息。
 
-Kubernetes 怎样创建实例、停止导流和滚动更新在第 18 章解释。本章只回答网络事实：扩容首先影响新连接，不会自动迁移旧连接。
+Kubernetes 怎样创建实例、停止导流和滚动更新在第 16 章解释。本章只回答网络事实：扩容首先影响新连接，不会自动迁移旧连接。
 
 ## 14. 多服务器中间件到底放在哪里
 
@@ -331,7 +331,7 @@ Kafka 会在群聊章节加入这张图；现在单聊链路不需要为了“�
 
 | 顺序 | 打开位置 | 这次只看什么 |
 | --- | --- | --- |
-| 1 | `cmd/gateway/internal/svc/logicrouter.go` 的 `LogicRouterPool`、`NewLogicRouter`、`GetClient`、`Ready` | 对比 `Logic.Addr` 直连和 Etcd `/services/logic`，找到 `p2c_ewma`，确认 `GetClient` 的 key 当前未做用户固定路由 |
+| 1 | `cmd/gateway/internal/svc/logicrouter.go` 的 `LogicRouterPool`、`NewLogicRouter`、`GetClient`、`Ready` | 对比 `Logic.Addr` 直连和 Etcd `services/logic`，找到 `p2c_ewma`，确认 `GetClient` 的 key 当前未做用户固定路由 |
 | 2 | `cmd/logic/etc/logic.yaml` 的 Etcd Key 与 `deploy/k8s/logic.yaml` 的 `POD_IP` | 解释监听 `0.0.0.0` 与注册可访问 Pod IP 的区别 |
 | 3 | `cmd/gateway/internal/handler/websockethandler.go` 的 `WebSocketHandler` | 找到 `BuildRouteValue`、本机 `Manager.Add`、`ClaimRoute` 和 defer 中的 `ClearRouteIfMatch` |
 | 4 | `internal/server/route.go` 的 `ClaimRoute`、`RefreshRouteIfMatch`、`ClearRouteIfMatch`、`CleanupGatewayRoutes` | 写下每个函数修改的 Key 和所有权条件 |
@@ -406,7 +406,7 @@ go test ./cmd/gateway/internal/svc -run TestWaitForLogicReady -v
 ### 动手练习答案
 
 1. 图上应有：`A -(WebSocket)-> Gateway-1 -(gRPC)-> Logic-2 -(SQL INSERT)-> MySQL`；Logic 再 `GET route:B`、先登记 pending 并向 Redis `PUBLISH im_message_push:Gateway-3`；Gateway-3 订阅事件后 `-(WebSocket)-> B`。不要画 Gateway-1 直接读取 Gateway-3 的 map。
-2. `LOGIC_ADDR=logic:9001` 经环境覆盖写入 `Config.Logic.Addr`，`NewLogicRouter` 使用 direct client；地址为空且有 `ETCD_ENDPOINTS` 时使用 Etcd `/services/logic` 发现实例，并设置 `p2c_ewma`。
+2. `LOGIC_ADDR=logic:9001` 经环境覆盖写入 `Config.Logic.Addr`，`NewLogicRouter` 使用 direct client；地址为空且有 `ETCD_ENDPOINTS` 时使用 Etcd `services/logic` 发现实例，并设置 `p2c_ewma`。
 3. 故障推演：
    - MySQL INSERT 前 Logic 崩溃：没有新消息正文持久化，发送方可能收到 `MESSAGE_REJECTED` 或因连接故障收不到结果；应复用同一 `client_msg_id` 重试。
    - MySQL INSERT 成功后 Redis 不可用：历史和会话摘要 Outbox 仍在 MySQL，实时投递和 pending 失败，Logic 返回错误，Gateway 尝试发送可重试的 `MESSAGE_REJECTED`。重试可按 MySQL 标准记录恢复，但当前没有覆盖 Redis 接收方的消息投递 Outbox 自动扫描该窗口。
@@ -419,8 +419,8 @@ go test ./cmd/gateway/internal/svc -run TestWaitForLogicReady -v
 
 1. 实例是服务代码的一次运行；集群是同类实例集合；入口 LB 给客户端稳定地址并把新连接分给健康 Gateway。
 2. Etcd 保存 Logic 的可访问实例地址和租约，不保存消息、好友、群成员或 WebSocket。
-3. Logic 启动 zRPC 服务，使用 Etcd Key `/services/logic` 和在 K8s 中注入的 `POD_IP:9001` 注册，租约失效后地址被发现端移除。
-4. 非空时直连该地址；为空时根据 Etcd endpoints 发现 `/services/logic` 下的实例。
+3. Logic 启动 zRPC 服务，使用 Etcd Key `services/logic` 和在 K8s 中注入的 `POD_IP:9001` 注册，租约失效后地址被发现端移除。Key 不加前导 `/`，否则 go-zero resolver 的 URL 路径归一化会导致注册端与订阅端不一致。
+4. 非空时直连该地址；为空时根据 Etcd endpoints 发现 `services/logic` 下的实例。
 5. 不是。它根据少量候选和近期延迟选择调用实例，不保证同一用户固定到同一 Logic。
 6. A 帧进入 Gateway-1，按 uid 入队，通过 Etcd 发现的 gRPC client 调 Logic；Logic 验身份和权限、幂等、分配 seq、写 MySQL；RedisDelivery 先记 B 的 pending，读 `route:B` 后发布到 Gateway-3；Gateway-3 校验 routeValue、查本机连接、写 B；B 解码后 ACK。
 7. gatewayID 用来选择定向频道，connectionID 是路由所有权栅栏，防止旧通知或旧清理误伤同 uid 的新连接。

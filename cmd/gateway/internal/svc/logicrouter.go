@@ -25,7 +25,7 @@ func NewLogicRouter(c config.Config) *LogicRouterPool {
 	if c.Logic.Addr != "" {
 		conf = zrpc.NewDirectClientConf([]string{c.Logic.Addr}, "", "")
 	} else {
-		conf = zrpc.NewEtcdClientConf(c.Etcd.Endpoints, "/services/logic", "", "")
+		conf = zrpc.NewEtcdClientConf(c.Etcd.Endpoints, "services/logic", "", "")
 	}
 	conf.NonBlock = true
 	conf.Timeout = int64((2 * time.Second).Milliseconds())

@@ -172,6 +172,57 @@ type RedPacketDetailResp struct {
 	Claimed bool                 `json:"claimed"`
 }
 
+type RedPacketRefundReq struct {
+	RedPacketID string `json:"red_packet_id"`
+}
+
+type RedPacketRefundResp struct {
+	RedPacketID string `json:"red_packet_id"`
+	SenderID    string `json:"sender_id"`
+	Amount      int64  `json:"amount"`
+	Balance     int64  `json:"balance"`
+	RefundedAt  int64  `json:"refunded_at"`
+	AlreadyDone bool   `json:"already_done"`
+}
+
+type WalletRechargeReq struct {
+	RequestID string `json:"request_id"`
+	Channel   string `json:"channel"`
+	Amount    int64  `json:"amount"`
+}
+
+type WalletInfo struct {
+	UserID           string `json:"user_id"`
+	AvailableBalance int64  `json:"available_balance"`
+	UpdatedAt        int64  `json:"updated_at"`
+}
+
+type WalletLedgerEntry struct {
+	ID           string `json:"id"`
+	UserID       string `json:"user_id"`
+	Direction    string `json:"direction"`
+	Amount       int64  `json:"amount"`
+	BusinessType string `json:"business_type"`
+	BusinessID   string `json:"business_id"`
+	BalanceAfter int64  `json:"balance_after"`
+	CreatedAt    int64  `json:"created_at"`
+}
+
+type WalletDetailResp struct {
+	Wallet WalletInfo          `json:"wallet"`
+	Ledger []WalletLedgerEntry `json:"ledger"`
+}
+
+type WalletRechargeResp struct {
+	OrderID         string     `json:"order_id"`
+	RequestID       string     `json:"request_id"`
+	Channel         string     `json:"channel"`
+	Amount          int64      `json:"amount"`
+	ProviderTradeNo string     `json:"provider_trade_no"`
+	AlreadyPaid     bool       `json:"already_paid"`
+	Wallet          WalletInfo `json:"wallet"`
+}
+
 type AISummaryReq struct {
 	GroupID      string `json:"group_id"`
 	MessageLimit int    `json:"message_limit,optional"`

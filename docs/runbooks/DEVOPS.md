@@ -1,6 +1,6 @@
 # Docker、CI 与 Kubernetes 操作手册
 
-> 这是一份查命令的操作手册，不是入门教材。第一次学习请先读手册第 [17 章](../handbook/17_DOCKER_AND_CI.md) 和第 [18 章](../handbook/18_KUBERNETES_DEPLOYMENT.md)。
+> 这是一份查命令的操作手册，不是入门教材。第一次学习请先读手册第 [15 章](../handbook/15_DOCKER_AND_CI.md) 和第 [16 章](../handbook/16_KUBERNETES_DEPLOYMENT.md)。
 
 ## 1. 三个工具分别做什么
 

@@ -1,4 +1,4 @@
-# 21 学习检查表
+# 19 学习检查表
 
 ## 使用规则
 
@@ -59,17 +59,12 @@
 
 验收：连续回答 ACK 丢失、Gateway 宕机、Transfer 宕机三个故障题。
 
-## 阶段五：业务
+## 阶段五：IM 业务关系
 
 - [ ] 能解释好友关系与群成员为什么既是数据也是权限。
 - [ ] 能说明会话摘要与消息正文不是同一个东西。
-- [ ] 能画红包 `SELECT FOR UPDATE` 事务。
-- [ ] 能解释唯一索引为什么仍然需要。
-- [ ] 能说出红包没有钱包和资金流水的边界。
-- [ ] 能解释 AI provider、mock、fallback 和轻量检索。
-- [ ] 知道 AI bot 使用非持久 goroutine 的风险。
 
-验收：分别用 30 秒讲红包和 AI，但不把它们抢成项目主线。
+验收：从好友、群成员和会话数据模型讲清发送前授权与历史查询。钱包红包和 AI Bot 只作为可选附录，不影响主线验收。
 
 ## 阶段六：工程化
 
@@ -87,7 +82,7 @@
 ## 阶段七：代码所有权和面试
 
 - [ ] 能闭卷写出 12 个核心结构体的职责。
-- [ ] 能在 10 分钟内定位登录、单聊、群聊、红包、AI 五条入口。
+- [ ] 能在 10 分钟内定位登录、跨 Gateway 单聊、群聊和重连恢复四条入口。
 - [ ] 能完成 20 秒、1 分钟、3 分钟项目介绍。
 - [ ] 能主动说出至少五个当前边界。
 - [ ] 能写一条真实历史查询 SQL，并解释联合索引。
@@ -103,9 +98,9 @@
 第 3 到 4 天    第 05 到 08 章，登录、连接、单机单聊
 第 5 到 7 天    第 09 到 11 章，Redis、多 Gateway、可靠性
 第 8 到 9 天    第 12 到 13 章，Kafka、好友群会话
-第 10 天        第 14 到 15 章，红包、AI
-第 11 到 12 天  第 16 到 18 章，安全、观测、Docker、CI、K8s
-第 13 到 14 天  第 19 到 21 章，完整源码复述和模拟面试
+第 10 到 11 天  第 14 到 16 章，安全、观测、Docker、CI、K8s
+第 12 到 14 天  第 17 到 19 章，完整源码复述和模拟面试
+可选加练       附录 A/B，钱包红包与 AI Bot
 ```
 
 时间只是参考。答不上当前章闭卷题时不要为了赶日期进入下一章。
@@ -156,9 +151,9 @@
 - 阶段二：页面 `login()` 经 HTTP Gateway、gRPC Logic、MySQL users、bcrypt 和 JWT 返回 Token；页面再用 Token 握手 `/ws`，通过 Origin/资源检查后登记 `ClientConn`、`ClientManager` 和 Redis route。
 - 阶段三：Gateway-1 不能读取 Gateway-3 的 map。共享 Redis `route:B` 定位 Gateway-3，定向 Pub/Sub 唤醒它，再由它查本机 B。
 - 阶段四：ACK 丢失会触发同 message_id 重推；Gateway 宕机丢本机连接，客户端重连并用 Redis 短期状态补偿；Transfer 宕机留下未提交 Kafka offset，重启后配合 recipient lease 继续，可能重复。
-- 阶段五：红包用行锁保护总剩余、唯一索引保护单用户，当前没有钱包；AI provider 隔离模型实现，Bot goroutine 不持久，当前检索不是向量 RAG。
+- 阶段五：好友与群成员既承载业务关系也参与资源授权；会话摘要用于列表，消息正文用于历史，两者不能混成同一份数据。
 - 阶段六：push 触发 CI 对该 SHA 执行 fmt/vet/test/race/build 和配置检查；经过外部推镜像后，发布脚本可 set image、等 rollout、smoke，失败尝试 undo。当前 Actions 本身 `push:false`，没有真实生产 CD。
-- 阶段七：只有能在十分钟内定位五条入口、讲清十二个结构体所有权并主动说边界，才算代码所有权通过。
+- 阶段七：只有能在十分钟内定位四条 IM 核心入口、讲清关键结构体所有权并主动说边界，才算代码所有权通过。
 
 ### 最终验收题答案
 
@@ -167,7 +162,7 @@
 3. Kafka 群聊：Logic 校验群成员、写一条 MySQL 消息、查询 recipients 并写 job；Transfer Fetch 后逐成员 claim lease 和 RedisDelivery，成功 done，失败转 retry/DLQ，输出耐久后才 Commit。
 4. MySQL 保存账号、关系、群成员、消息历史、会话摘要、红包和 AI 记录；Redis 保存在线 route、幂等预占、seq、pending/ACK、offline/timeline 和会话热数据。Redis Pub/Sub 是通知，不是存储表。
 5. 五个故障示例：Redis 宕机使实时链路失败但 MySQL 历史和摘要 Outbox 仍在；Logic 宕机中断 RPC且 Kafka/Redis 投递窗口需主动重试；Gateway 宕机要客户端重连；Transfer 宕机由未提交 offset 和 lease 恢复；ACK 丢失造成同 ID 重推并由客户端去重。
-6. 五个缺口示例：没有覆盖 Kafka/Redis 接收方的完整消息投递 Outbox；重连不自动扫 MySQL 所有会话；不支持多设备 route；群 recipients 不分页；没有真实生产 K8s/Redis/MySQL 集群验证。也可用 AI Worker 不持久、红包无钱包替换其中项。
+6. 五个缺口示例：没有覆盖 Kafka/Redis 接收方的完整消息投递 Outbox；重连不自动扫 MySQL 所有会话；不支持多设备 route；群 recipients 不分页；没有真实生产 K8s/Redis/MySQL 集群验证。
 7. 技术选择示例：WebSocket 解决服务端实时下行，替代轮询但增加连接管理；Redis route 解决跨 Gateway 定位，替代节点两两 RPC但成为强依赖；MySQL 解决持久关系和事务，替代进程 map但增加网络磁盘成本；Kafka 解耦群扇出，替代同步循环但引入重复和积压；K8s 管理副本和滚动发布，替代手工进程运维但增加集群复杂度。每项都必须再结合当前代码位置说明，不能只背这段。
 
 完成本轮后回到：[查看手册总目录并按薄弱章节回读](README.md)。之后只针对检查表中的薄弱项复习，不再随机翻旧文档。

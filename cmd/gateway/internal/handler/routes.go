@@ -126,6 +126,21 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 			},
 			rest.Route{
 				Method:  http.MethodPost,
+				Path:    "/red-packets/refund",
+				Handler: RedPacketRefundHandler(serverCtx),
+			},
+			rest.Route{
+				Method:  http.MethodGet,
+				Path:    "/wallet",
+				Handler: WalletDetailHandler(serverCtx),
+			},
+			rest.Route{
+				Method:  http.MethodPost,
+				Path:    "/wallet/recharge/mock",
+				Handler: WalletRechargeHandler(serverCtx),
+			},
+			rest.Route{
+				Method:  http.MethodPost,
 				Path:    "/ai/group-summary",
 				Handler: AISummaryHandler(serverCtx),
 			},

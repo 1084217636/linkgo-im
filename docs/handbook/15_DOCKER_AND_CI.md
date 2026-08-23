@@ -1,4 +1,4 @@
-# 17 Docker 与 GitHub Actions
+# 15 Docker 与 GitHub Actions
 
 ## 本章前置
 
@@ -111,7 +111,7 @@ volume 可以把容器外的目录或由 Docker 管理的存储挂进容器。�
 
 `depends_on` 主要表达启动顺序，不天然证明依赖已经可以处理请求。当前 Logic 对 MySQL 使用 `condition: service_healthy`，会等待 MySQL 的 `healthcheck` 成功；对 Redis、Etcd、Kafka 主要只等待容器开始运行。进程启动和服务 ready 是两回事，例如 Kafka 进程刚启动时仍可能在初始化。因此应用仍要设置连接超时、重试或在依赖不可用时明确失败，不能把 `depends_on` 当作可靠性机制。
 
-`healthcheck` 是在容器内周期执行的小检查。没有它，Compose 只能知道进程是否存在，不知道服务能否响应。检查过浅可能把故障服务判为健康，检查过深又可能因短暂依赖抖动反复判错；第 16 章的 `healthz/readyz` 区分仍然适用。
+`healthcheck` 是在容器内周期执行的小检查。没有它，Compose 只能知道进程是否存在，不知道服务能否响应。检查过浅可能把故障服务判为健康，检查过深又可能因短暂依赖抖动反复判错；第 14 章的 `healthz/readyz` 区分仍然适用。
 
 常用命令由 Makefile 包装：
 
@@ -266,4 +266,4 @@ CI 还单独执行 `make vet` 与 `make test-race`。vet 是静态可疑用法�
 3. CI 自动检查和构建一个明确 commit；CD 把通过检查的制品发布到环境并处理验证、回滚。当前 Actions 不推镜像，仓库只有发布脚本示例。
 4. SHA 标签不可变地对应源码和 CI 结果，运行版本可追溯，回滚能指向上一明确镜像；`latest` 会不断改变指向。
 
-下一步：[18 Kubernetes 多服务器部署](18_KUBERNETES_DEPLOYMENT.md)
+下一步：[16 Kubernetes 多服务器部署](16_KUBERNETES_DEPLOYMENT.md)

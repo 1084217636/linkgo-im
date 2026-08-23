@@ -1,8 +1,8 @@
-# 20 面试讲述与逐层追问
+# 18 面试讲述与逐层追问
 
 ## 本章前置
 
-只有当你能独立画出第 19 章链路时才读本章。本章负责压缩表达，不负责替代学习。
+只有当你能独立画出第 17 章链路时才读本章。本章负责压缩表达，不负责替代学习。
 
 ## 本章目标
 
@@ -10,11 +10,11 @@
 
 ## 20 秒版本
 
-> LinkGo 是我使用 Go 和 go-zero 实现的分布式 IM 项目，采用 Gateway、Logic、Transfer 分层。单聊通过 MySQL 持久化、Redis 在线路由和跨 Gateway 通知完成实时投递，并用 client_msg_id、会话 seq、ACK 和短期重连补偿处理重复、顺序与断线；群聊使用 Kafka 和 Transfer 解耦逐成员投递，业务上还实现了事务红包和 AI 虚拟好友。
+> LinkGo 是我使用 Go 和 go-zero 实现的分布式 IM 项目，采用 Gateway、Logic、Transfer 分层。单聊通过 MySQL 持久化、Redis 在线路由和跨 Gateway 通知完成实时投递，并用 client_msg_id、会话 seq、ACK 和短期重连补偿处理重复、顺序与断线；群聊使用 Kafka 和 Transfer 解耦逐成员投递。
 
 ## 1 分钟版本
 
-> 项目默认按多服务器场景设计：A、B 可以连接不同 Gateway，每台 Gateway 只保存本机 WebSocket，在线路由放在共享 Redis。Gateway 通过 Etcd 发现 Logic 集群并使用 p2c_ewma 调用。A 发单聊后，Logic 做好友权限和 client_msg_id 幂等，用 Redis Lua 生成会话 seq，同步写入 MySQL，再查询 B 的 route，把实时通知发布到 B 所在 Gateway；B 收到后返回 ACK。Redis Pub/Sub 只负责低延迟通知，当前断线自动恢复依赖 Redis pending 和单会话 timeline，MySQL 历史通过独立接口查询。群聊由 Logic 解析成员后写 Kafka，Transfer 逐收件人投递并处理 lease 幂等、retry 和 DLQ。红包使用 MySQL 事务、行锁和唯一索引，AI 作为普通账号异步回复。
+> 项目默认按多服务器场景设计：A、B 可以连接不同 Gateway，每台 Gateway 只保存本机 WebSocket，在线路由放在共享 Redis。Gateway 通过 Etcd 发现 Logic 集群并使用 p2c_ewma 调用。A 发单聊后，Logic 做好友权限和 client_msg_id 幂等，用 Redis Lua 生成会话 seq，同步写入 MySQL，再查询 B 的 route，把实时通知发布到 B 所在 Gateway；B 收到后返回 ACK。Redis Pub/Sub 只负责低延迟通知，当前断线自动恢复依赖 Redis pending 和单会话 timeline，MySQL 历史通过独立接口查询。群聊由 Logic 解析成员后写 Kafka，Transfer 逐收件人投递并处理 lease 幂等、retry 和 DLQ。
 
 ## 3 分钟顺序
 
@@ -25,8 +25,7 @@
 3. 60 秒 A 在 Gateway-1、B 在 Gateway-3 的单聊链路。
 4. 30 秒可靠性：ID、seq、ACK、当前重连边界。
 5. 30 秒群聊 Kafka 与 Transfer。
-6. 20 秒红包和 AI。
-7. 10 秒验证与真实性边界。
+6. 20 秒工程验证、故障演练与真实性边界。
 
 ## 技术选择必须讲出因果
 
@@ -62,7 +61,7 @@
 | UID 分片有界队列 | 每消息起 goroutine 会资源无界；全局单 worker 会互相阻塞 | 同一 uid 进入同一 shard，限制并发和内存并暴露背压 | 哈希碰撞用户会互相影响；只保证本 Gateway 提交 FIFO |
 | Kafka + Transfer | Logic 同步逐成员投递会被大群和慢下游拖住 | 把逐成员投递移到可缓冲、可重试、可扩容的消费者 | 不是防死锁；Logic 仍同步解析 recipients，消费可能积压和重复 |
 | 手动提交 + lease | 先提交可能丢任务，后提交可能重复任务 | 输出成功后提交，重复时按 message_id+recipient 控制副作用 | 状态机更复杂；`done` 不代表客户端已经 ACK |
-| 行锁 + 唯一索引 | 并发领取可能超发，同一用户可能重复领取 | 行锁保护总剩余，唯一索引保护单用户约束 | 热点红包在同一行排队；当前不是钱包资金系统 |
+| 钱包流水 + 行锁 + 唯一索引 | 发红包无资金来源、并发领取超发或重复入账 | 发出扣款、领取入账；行锁保护总剩余，业务唯一键保护幂等 | 热点红包在同一行排队；模拟支付不是真实渠道 |
 | AI provider + 异步触发 | 外部模型同步塞进消息热路径会拖慢普通聊天 | 隔离模型厂商，原消息完成后再生成回复 | 当前 goroutine 不持久，Logic 崩溃可能丢 AI 任务 |
 | Docker/CI/K8s | 只在开发者电脑可运行，提交后全靠人工检查和发布 | 固化环境、自动验证、声明式管理副本与滚动更新 | 清单和绿色 CI 不等于真实生产高可用经历 |
 
@@ -91,7 +90,7 @@
 
 - 基于 Go/go-zero 实现 Gateway、Logic、Transfer 分层 IM；Logic 通过 Etcd 注册，Gateway 使用 zRPC `p2c_ewma` 选择实例，并利用共享 Redis 在线路由和定向 Pub/Sub 完成跨 Gateway 实时投递。
 - 使用 `client_msg_id` Redis/MySQL 双层幂等、Redis Lua 会话 seq、消息与会话摘要 Outbox、客户端 ACK 和短期 pending/timeline 构建可重试、可短期恢复的投递链路，并以 UID 分片有界队列暴露背压；当前 MySQL 到 Kafka/Redis 接收方仍缺跨系统投递 Outbox。
-- 通过 Kafka/Transfer 解耦群聊逐成员投递，实现成员级 lease 幂等、retry/DLQ 和手动位点提交；补充 MySQL 事务红包、AI 虚拟好友、Prometheus 指标及 Docker/Kubernetes 验证清单。
+- 通过 Kafka/Transfer 解耦群聊逐成员投递，实现成员级 lease 幂等、retry/DLQ 和手动位点提交；补充 Prometheus 指标、Compose 故障演练及 Docker/Kubernetes 验证清单。
 
 不要在没有重新压测报告时写具体连接数、QPS 或 P99。
 
@@ -166,8 +165,7 @@ Logic 仍同步解析完整 recipients，所以 Kafka 只解耦逐成员投递�
 单聊和可靠性         25
 Kafka 群聊           15
 MySQL/Redis          15
-红包/AI              10
-工程化与故障         10
+工程化与故障         20
 真实性               5
 ```
 
@@ -175,7 +173,7 @@ MySQL/Redis          15
 
 ## 本章代码阅读任务
 
-面试准备不能只背上面的口径。下面七个位置用于证明你能把回答落回代码。
+面试准备不能只背上面的口径。下面五个核心位置用于证明你能把回答落回代码。钱包红包和 AI 文件只在面试官主动追问可选扩展时阅读。
 
 | 顺序 | 打开位置 | 面试前必须能现场指出什么 |
 | --- | --- | --- |
@@ -184,8 +182,6 @@ MySQL/Redis          15
 | 3 | `internal/server/client.go` 的 `StartClientLoop`、`pool.go` 的 `SubmitWithResult`、`client_error.go` 的 `writePushResult` | 从浏览器帧讲到 uid 分片，再讲 accepted/rejected 如何回发送端 |
 | 4 | `internal/logic/handler.go` 的 `PushMessage`、`saveMessage`、`deliverPersistedMessage` 与 `internal/delivery/redis.go` 的 `Deliver` | 现场指出权限、幂等、seq、MySQL、pending、route、PUBLISH 的先后 |
 | 5 | `cmd/transfer/main.go` 的 `processFetchedMessage`、`commitFetchedMessage` 与 `cmd/transfer/recipient_lease.go` | 回答提交位点前宕机、lease owner 崩溃和 retry/DLQ 失败 |
-| 6 | `internal/logic/redpacket.go` 的 `Claim` | 指出 `FOR UPDATE`、唯一键回读、expired/finished Commit 和资金系统边界 |
-| 7 | `internal/logic/bot.go` 的 `triggerBotResponse` 与 `internal/ai/ask_service.go` 的 `Ask` | 指出 goroutine、检索、provider、审计和再次 PushMessage |
 
 看到这个程度才算可面试：面试官随机抽一个名词时，你能在十秒内说出文件和符号，在两分钟内画完相邻调用，在追问失败时明确当前处理与缺口。暂时不必背行号、第三方库源码和没有测试数据支撑的 QPS/P99。
 
@@ -215,13 +211,12 @@ MySQL/Redis          15
 13. `ClientManager`：当前 Gateway 进程内的 `sync.Map`，把 uid 映射为当前 `ClientConn`；`Add` 替换旧连接，`Remove` 只删除匹配对象，`GetConn` 用于最后一跳。
 14. `RedisDelivery.Deliver`：先写 pending_ack/ack_idx/ack_retry，再 GET route、封装 envelope、PUBLISH；无路由或无订阅者时写 offline，并只清理匹配 route。
 15. 群成员解析：`internal/logic/handler.go` 的 `resolveRecipients` 从 MySQL 查询 active `group_members` 并排除发送者，结果随 Kafka job 发送。
-16. 红包加锁：`internal/logic/redpacket.go` 的 `RedPacketService.Claim` 在 MySQL 事务中执行 `SELECT ... FOR UPDATE`，锁保持到 Commit/Rollback。
 
 ### 闭卷检查答案
 
-1. 参考 1 分钟版本应完整覆盖：多 Gateway 本机连接、共享 Redis route、Etcd 发现 Logic、MySQL 先落库、Redis pending/PubSub、B ACK、Kafka 群扩散、红包和 AI 边界。只列技术名词不算通过。
+1. 参考 1 分钟版本应完整覆盖：多 Gateway 本机连接、共享 Redis route、Etcd 发现 Logic、MySQL 先落库、Redis pending/PubSub、B ACK 和 Kafka 群扩散。只列技术名词不算通过。
 2. MySQL 中消息历史和会话摘要 Outbox 保住；实时 pending/通知可能没有发生，发送方也可能收不到结果。当前靠同 client_msg_id 主动重试或历史查询恢复，Kafka/Redis 投递仍缺专用 Outbox 自动补发。
 3. 任意三项均可，但必须具体，例如：重连不自动扫 MySQL 全部会话；单账号只保留一个 route，不支持多端；Redis/MySQL 只接稳定入口，不原生实现 Cluster/Sentinel/读写分离；Logic 仍加载完整群成员；K8s 未在真实生产集群验证。
 4. 一条合格路径至少指出 `api/protocol.proto::WireMessage`、`internal/server/client.go::StartClientLoop`、`internal/server/pool.go::SubmitWithResult`、`internal/logic/handler.go::PushMessage/saveMessage`、`internal/delivery/redis.go::Deliver`、`internal/server/manager.go::SubscribeRedis`、`internal/server/ack.go::AckMessage`。
 
-下一步：[21 学习检查表](21_CHECKLIST.md)
+下一步：[19 学习检查表](19_CHECKLIST.md)

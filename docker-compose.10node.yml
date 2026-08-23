@@ -1,3 +1,17 @@
+x-linkgo-build: &linkgo-build
+  context: .
+  args:
+    GO_BUILDER_IMAGE: ${GO_BUILDER_IMAGE:-golang:1.25-alpine}
+    RUNTIME_IMAGE: ${RUNTIME_IMAGE:-alpine:3.22}
+
+x-gateway-depends: &gateway-depends
+  logic:
+    condition: service_healthy
+  redis:
+    condition: service_started
+  etcd:
+    condition: service_started
+
 services:
   etcd:
     image: quay.io/coreos/etcd:v3.5.15
@@ -9,14 +23,14 @@ services:
       - --listen-client-urls=http://0.0.0.0:2379
 
   zookeeper:
-    image: confluentinc/cp-zookeeper:7.6.0
+    image: ${ZOOKEEPER_IMAGE:-confluentinc/cp-zookeeper:7.6.0}
     container_name: linkgo-zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
 
   kafka:
-    image: confluentinc/cp-kafka:7.6.0
+    image: ${KAFKA_IMAGE:-confluentinc/cp-kafka:7.6.0}
     container_name: linkgo-kafka
     depends_on:
       - zookeeper
@@ -28,12 +42,12 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
 
   redis:
-    image: redis:7-alpine
+    image: ${REDIS_IMAGE:-redis:7-alpine}
     container_name: linkgo-redis
     command: redis-server --requirepass 123456
 
   mysql:
-    image: mysql:8.0
+    image: ${MYSQL_IMAGE:-mysql:8.0}
     container_name: linkgo-mysql
     environment:
       - MYSQL_ROOT_PASSWORD=root
@@ -46,7 +60,7 @@ services:
       retries: 10
 
   logic:
-    build: .
+    build: *linkgo-build
     container_name: linkgo-logic
     command: ./logic
     depends_on:
@@ -66,9 +80,15 @@ services:
       - ETCD_ENDPOINTS=etcd:2379
       - KAFKA_BROKERS=kafka:9092
       - KAFKA_GROUP_TOPIC=group_message_dispatch
+      - LOGIC_HEALTH_PORT=9002
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9002/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   transfer:
-    build: .
+    build: *linkgo-build
     container_name: linkgo-transfer
     command: ./transfer
     depends_on:
@@ -85,15 +105,12 @@ services:
       - TRANSFER_METRICS_PORT=9102
 
   gateway-a:
-    build: .
+    build: *linkgo-build
     container_name: linkgo-gateway-a
     command: ./gateway
     ports:
       - "8090:8090"
-    depends_on:
-      - logic
-      - redis
-      - etcd
+    depends_on: *gateway-depends
     environment:
       - GATEWAY_PORT=8090
       - GATEWAY_ID=gateway-a
@@ -102,15 +119,12 @@ services:
       - ETCD_ENDPOINTS=etcd:2379
 
   gateway-b:
-    build: .
+    build: *linkgo-build
     container_name: linkgo-gateway-b
     command: ./gateway
     ports:
       - "8091:8090"
-    depends_on:
-      - logic
-      - redis
-      - etcd
+    depends_on: *gateway-depends
     environment:
       - GATEWAY_PORT=8090
       - GATEWAY_ID=gateway-b
@@ -119,15 +133,12 @@ services:
       - ETCD_ENDPOINTS=etcd:2379
 
   gateway-c:
-    build: .
+    build: *linkgo-build
     container_name: linkgo-gateway-c
     command: ./gateway
     ports:
       - "8092:8090"
-    depends_on:
-      - logic
-      - redis
-      - etcd
+    depends_on: *gateway-depends
     environment:
       - GATEWAY_PORT=8090
       - GATEWAY_ID=gateway-c
@@ -136,15 +147,12 @@ services:
       - ETCD_ENDPOINTS=etcd:2379
 
   gateway-d:
-    build: .
+    build: *linkgo-build
     container_name: linkgo-gateway-d
     command: ./gateway
     ports:
       - "8093:8090"
-    depends_on:
-      - logic
-      - redis
-      - etcd
+    depends_on: *gateway-depends
     environment:
       - GATEWAY_PORT=8090
       - GATEWAY_ID=gateway-d
@@ -153,15 +161,12 @@ services:
       - ETCD_ENDPOINTS=etcd:2379
 
   gateway-e:
-    build: .
+    build: *linkgo-build
     container_name: linkgo-gateway-e
     command: ./gateway
     ports:
       - "8094:8090"
-    depends_on:
-      - logic
-      - redis
-      - etcd
+    depends_on: *gateway-depends
     environment:
       - GATEWAY_PORT=8090
       - GATEWAY_ID=gateway-e
@@ -170,15 +175,12 @@ services:
       - ETCD_ENDPOINTS=etcd:2379
 
   gateway-f:
-    build: .
+    build: *linkgo-build
     container_name: linkgo-gateway-f
     command: ./gateway
     ports:
       - "8095:8090"
-    depends_on:
-      - logic
-      - redis
-      - etcd
+    depends_on: *gateway-depends
     environment:
       - GATEWAY_PORT=8090
       - GATEWAY_ID=gateway-f
@@ -187,15 +189,12 @@ services:
       - ETCD_ENDPOINTS=etcd:2379
 
   gateway-g:
-    build: .
+    build: *linkgo-build
     container_name: linkgo-gateway-g
     command: ./gateway
     ports:
       - "8096:8090"
-    depends_on:
-      - logic
-      - redis
-      - etcd
+    depends_on: *gateway-depends
     environment:
       - GATEWAY_PORT=8090
       - GATEWAY_ID=gateway-g
@@ -204,15 +203,12 @@ services:
       - ETCD_ENDPOINTS=etcd:2379
 
   gateway-h:
-    build: .
+    build: *linkgo-build
     container_name: linkgo-gateway-h
     command: ./gateway
     ports:
       - "8097:8090"
-    depends_on:
-      - logic
-      - redis
-      - etcd
+    depends_on: *gateway-depends
     environment:
       - GATEWAY_PORT=8090
       - GATEWAY_ID=gateway-h
@@ -221,15 +217,12 @@ services:
       - ETCD_ENDPOINTS=etcd:2379
 
   gateway-i:
-    build: .
+    build: *linkgo-build
     container_name: linkgo-gateway-i
     command: ./gateway
     ports:
       - "8098:8090"
-    depends_on:
-      - logic
-      - redis
-      - etcd
+    depends_on: *gateway-depends
     environment:
       - GATEWAY_PORT=8090
       - GATEWAY_ID=gateway-i
@@ -238,15 +231,12 @@ services:
       - ETCD_ENDPOINTS=etcd:2379
 
   gateway-j:
-    build: .
+    build: *linkgo-build
     container_name: linkgo-gateway-j
     command: ./gateway
     ports:
       - "8099:8090"
-    depends_on:
-      - logic
-      - redis
-      - etcd
+    depends_on: *gateway-depends
     environment:
       - GATEWAY_PORT=8090
       - GATEWAY_ID=gateway-j

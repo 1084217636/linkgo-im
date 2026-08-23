@@ -74,21 +74,23 @@ func main() {
 		heartbeatEvery    = flag.Duration("heartbeat-every", 5*time.Second, "heartbeat interval")
 		pairs             = flag.Int("pairs", 100, "single-chat sender/receiver connection pairs")
 		messages          = flag.Int("messages", 1000, "single-chat messages")
+		sendRate          = flag.Int("send-rate", 0, "global single-chat send rate per second; 0 means unlimited burst")
 		messageTimeout    = flag.Duration("message-timeout", 45*time.Second, "single-chat receive timeout")
 		secret            = flag.String("jwt-secret", "linkgo_im_secret_2026", "JWT secret")
+		origin            = flag.String("origin", "http://127.0.0.1:8088", "websocket Origin header allowed by gateway")
 	)
 	flag.Parse()
 
-	fmt.Printf("bench_config gateways=%d per_gateway=%d heartbeat_duration=%s pairs=%d messages=%d\n",
-		*gateways, *perGateway, heartbeatDuration.String(), *pairs, *messages)
+	fmt.Printf("bench_config gateways=%d per_gateway=%d heartbeat_duration=%s pairs=%d messages=%d send_rate=%d origin=%s\n",
+		*gateways, *perGateway, heartbeatDuration.String(), *pairs, *messages, *sendRate, *origin)
 
 	waitGateways(*host, *startPort, *gateways, 60*time.Second)
 
 	if *perGateway > 0 {
-		runHeartbeatBench(*host, *startPort, *gateways, *perGateway, *heartbeatDuration, *heartbeatEvery, *secret)
+		runHeartbeatBench(*host, *startPort, *gateways, *perGateway, *heartbeatDuration, *heartbeatEvery, *secret, *origin)
 	}
 	if *pairs > 0 && *messages > 0 {
-		runSingleChatBench(*host, *startPort, *gateways, *pairs, *messages, *messageTimeout, *secret)
+		runSingleChatBench(*host, *startPort, *gateways, *pairs, *messages, *sendRate, *messageTimeout, *secret, *origin)
 	}
 
 	scrapeMetrics(*host, *startPort, *gateways)
@@ -120,7 +122,7 @@ func waitGateways(host string, startPort, gateways int, timeout time.Duration) {
 	}
 }
 
-func runHeartbeatBench(host string, startPort, gateways, perGateway int, duration, every time.Duration, secret string) {
+func runHeartbeatBench(host string, startPort, gateways, perGateway int, duration, every time.Duration, secret, origin string) {
 	var success, failed, heartbeatSent, heartbeatOK, heartbeatFailed int64
 	var latencies latencyRecorder
 	var wg sync.WaitGroup
@@ -133,7 +135,7 @@ func runHeartbeatBench(host string, startPort, gateways, perGateway int, duratio
 			uid := fmt.Sprintf("hb_%d_%d", port, j)
 			go func(port int, uid string) {
 				defer wg.Done()
-				conn, err := dialWS(host, port, uid, secret)
+				conn, err := dialWS(host, port, uid, secret, origin)
 				if err != nil {
 					atomic.AddInt64(&failed, 1)
 					return
@@ -208,7 +210,7 @@ type chatPair struct {
 	receiver    *websocket.Conn
 }
 
-func runSingleChatBench(host string, startPort, gateways, pairs, messages int, timeout time.Duration, secret string) {
+func runSingleChatBench(host string, startPort, gateways, pairs, messages, sendRate int, timeout time.Duration, secret, origin string) {
 	if gateways < 1 {
 		return
 	}
@@ -218,12 +220,12 @@ func runSingleChatBench(host string, startPort, gateways, pairs, messages int, t
 		receiverPort := startPort + ((i + gateways/2) % gateways)
 		senderUID := fmt.Sprintf("msg_sender_%d", i)
 		receiverUID := fmt.Sprintf("msg_receiver_%d", i)
-		sender, err := dialWS(host, senderPort, senderUID, secret)
+		sender, err := dialWS(host, senderPort, senderUID, secret, origin)
 		if err != nil {
 			fmt.Printf("single_chat_setup_error sender=%s err=%v\n", senderUID, err)
 			continue
 		}
-		receiver, err := dialWS(host, receiverPort, receiverUID, secret)
+		receiver, err := dialWS(host, receiverPort, receiverUID, secret, origin)
 		if err != nil {
 			_ = sender.Close()
 			fmt.Printf("single_chat_setup_error receiver=%s err=%v\n", receiverUID, err)
@@ -266,11 +268,10 @@ func runSingleChatBench(host string, startPort, gateways, pairs, messages int, t
 					return
 				default:
 				}
-				_ = pair.receiver.SetReadDeadline(time.Now().Add(time.Second))
 				_, msg, err := pair.receiver.ReadMessage()
 				if err != nil {
-					if ctx.Err() != nil || isTimeout(err) {
-						continue
+					if ctx.Err() != nil {
+						return
 					}
 					atomic.AddInt64(&recvErrors, 1)
 					return
@@ -298,7 +299,19 @@ func runSingleChatBench(host string, startPort, gateways, pairs, messages int, t
 
 	begin := time.Now()
 	var sent int64
+	var sendTicker *time.Ticker
+	if sendRate > 0 {
+		interval := time.Second / time.Duration(sendRate)
+		if interval <= 0 {
+			interval = time.Nanosecond
+		}
+		sendTicker = time.NewTicker(interval)
+		defer sendTicker.Stop()
+	}
 	for i := 0; i < messages; i++ {
+		if sendTicker != nil && i > 0 {
+			<-sendTicker.C
+		}
 		pair := chatPairs[i%len(chatPairs)]
 		clientMsgID := fmt.Sprintf("bench-msg-%d-%d", begin.UnixNano(), i)
 		traceID := fmt.Sprintf("bench-trace-%d", i)
@@ -325,6 +338,11 @@ func runSingleChatBench(host string, startPort, gateways, pairs, messages int, t
 		time.Sleep(100 * time.Millisecond)
 	}
 	cancel()
+	// A websocket read cannot be safely retried after a read deadline fires.
+	// Close receivers to unblock their read goroutines after the benchmark ends.
+	for _, pair := range chatPairs {
+		_ = pair.receiver.Close()
+	}
 	wg.Wait()
 
 	count, avg, p50, p95, p99 := latencies.summary()
@@ -347,7 +365,7 @@ func runSingleChatBench(host string, startPort, gateways, pairs, messages int, t
 	)
 }
 
-func dialWS(host string, port int, uid, secret string) (*websocket.Conn, error) {
+func dialWS(host string, port int, uid, secret, origin string) (*websocket.Conn, error) {
 	token, err := signJWT(uid, secret)
 	if err != nil {
 		return nil, err
@@ -359,7 +377,9 @@ func dialWS(host string, port int, uid, secret string) (*websocket.Conn, error) 
 		RawQuery: "token=" + url.QueryEscape(token),
 	}
 	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second}
-	conn, _, err := dialer.Dial(u.String(), nil)
+	header := http.Header{}
+	header.Set("Origin", origin)
+	conn, _, err := dialer.Dial(u.String(), header)
 	return conn, err
 }
 

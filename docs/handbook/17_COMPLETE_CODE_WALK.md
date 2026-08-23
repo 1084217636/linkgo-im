@@ -1,8 +1,8 @@
-# 19 完整调用链与代码地图
+# 17 完整调用链与代码地图
 
 ## 本章前置
 
-你已经完成第 00 到 18 章。本章不再从零解释 HTTP、WebSocket、MySQL、Redis、Kafka 或 Kubernetes，而是把它们重新拼成当前代码。
+你已经完成第 00 到 16 章。本章不再从零解释 HTTP、WebSocket、MySQL、Redis、Kafka 或 Kubernetes，而是把它们重新拼成当前代码。
 
 ## 本章目标
 
@@ -132,7 +132,7 @@ Kafka publish 返回后 Logic 才记录 timeline，但 Transfer 可能已经并�
 
 顺序理由：Transfer 必须先完成收件人处理，或把失败任务可靠写入 retry/DLQ，才能提交原 Kafka offset。若先提交再处理，进程崩溃后任务会被跳过；若永不提交，重启后会无限重复。因此项目接受“可能重复”，再用收件人 lease 幂等约束副作用。
 
-## 链路五：红包
+## 可选链路：钱包红包
 
 ```text
 网页 HTTP 请求
@@ -150,7 +150,7 @@ Kafka publish 返回后 Logic 才记录 timeline，但 Transfer 可能已经并�
 
 顺序理由：事务先 `SELECT ... FOR UPDATE` 读取锁定后的剩余量，再插入 claim、条件扣减并 commit，使同一红包的并发领取串行修改同一份余额。唯一索引仍负责拦截同一用户的重复记录；只加锁不加唯一约束，会把这项约束完全交给容易遗漏的应用判断。
 
-## 链路六：AI 虚拟好友
+## 可选链路：AI 虚拟好友
 
 ```text
 用户向 9001 发送普通单聊
@@ -237,7 +237,7 @@ Logic 崩溃会丢失尚未完成的 goroutine 任务。当前不是 Kafka/数�
 
 ## 本章代码阅读任务
 
-这次不再按知识点读，而是为六条链路建立可现场定位的代码地图。
+这次不再按知识点读，而是为四条 IM 主链建立可现场定位的代码地图。两个可选业务扩展只在面试官追问时抽查。
 
 | 顺序 | 打开位置 | 这次必须记录什么 |
 | --- | --- | --- |
@@ -246,10 +246,10 @@ Logic 崩溃会丢失尚未完成的 goroutine 任务。当前不是 Kafka/数�
 | 3 | `internal/server/manager.go` 的 `ClientConn`、`ClientManager` 与 `internal/server/pool.go` 的 `PushWorkerPool` | 为三个结构各做一张“谁创建、谁持有、关键字段、两个方法、失败路径”卡 |
 | 4 | `cmd/logic/internal/svc/servicecontext.go` 的 `ServiceContext` 与 `internal/logic/handler.go` 的 `LogicHandler` | 写出 Core 怎样获得 DB/Rdb/Delivery/GroupDispatcher/BotResponder，再沿 `PushMessage` 走一遍 |
 | 5 | `internal/delivery/redis.go` 的 `RedisDelivery`、`cmd/logic/internal/svc/kafka_dispatcher.go` 与 `cmd/transfer/main.go` 的 `groupDispatchJob` | 对比单聊直接 Deliver 与群聊 job 后逐收件人 Deliver，确认 job 两端 JSON 字段一致 |
-| 6 | `internal/logic/redpacket.go` 的 `RedPacketService` 与 `internal/ai/ask_service.go` 的 `AskService` | 各写出依赖字段、两个入口方法和一个当前无法自动恢复的失败路径 |
-| 7 | 关闭文档，使用练习中的四条 `rg` 命令 | 任意选择登录、单聊、群聊、红包或 AI，十分钟内从外部入口画到存储与失败出口 |
+| 6（可选） | `internal/logic/redpacket.go` 的 `RedPacketService` 与 `internal/ai/ask_service.go` 的 `AskService` | 只在准备扩展追问时，各写出依赖字段、入口方法和一个当前无法自动恢复的失败路径 |
+| 7 | 关闭文档，使用练习中的四条 `rg` 命令 | 任意选择登录、单聊或群聊，十分钟内从外部入口画到存储与失败出口 |
 
-看到这个程度才算完成：十二个结构体都能说出所有权，六条链路任意抽一条都能在十分钟内定位真实函数，不需要背行号。暂时不必阅读任何生成文件实现、第三方库源码和未出现在主链路的辅助函数。
+看到这个程度才算完成：IM 核心结构体都能说出所有权，登录、单聊、群聊和恢复链路任意抽一条都能在十分钟内定位真实函数，不需要背行号。暂时不必阅读任何生成文件实现、第三方库源码和可选扩展内部细节。
 
 ## 动手练习
 
@@ -288,4 +288,4 @@ rg "FetchMessage|CommitMessages" cmd/transfer
 5. ACK 的 Lua 清理 `pending_ack`、`offline_msg`、`ack_idx`、`ack_retry`，并另用 payload 推进 Redis read seq。它表示客户端程序收到并处理到消息，不是用户肉眼阅读。
 6. `triggerBotResponse` 只启动 Logic 进程内 goroutine，没有持久任务、claim 或重试状态；进程退出时未完成任务随内存消失。
 
-下一步：[20 面试讲述与逐层追问](20_INTERVIEW_PREP.md)
+下一步：[18 面试讲述与逐层追问](18_INTERVIEW_PREP.md)

@@ -1,6 +1,6 @@
-# LinkGo 从零学习手册
+# LinkGo 分布式 IM 学习手册
 
-> 唯一学习主线：只按本目录 `00_START_HERE.md` 到 `21_CHECKLIST.md` 的编号顺序阅读。此前新增的 `docs/learning/` 摘要已合并到本手册，不再单独维护。
+> 唯一学习主线：只按本目录 `00_START_HERE.md` 到 `19_CHECKLIST.md` 的编号顺序阅读。钱包红包与 AI Bot 是可选附录，不进入秋招主叙事。
 
 这是一套给“只会 Go 基本语法、第一次接触后端项目”的教材。它不是复习提纲，也不要求你提前知道 Redis、MySQL、Kafka、WebSocket、Docker 或 Kubernetes。
 
@@ -30,23 +30,28 @@
 12. [11 ACK、重试与离线恢复](11_RELIABILITY_AND_OFFLINE.md)
 13. [12 Kafka 与群聊扩散](12_GROUP_CHAT_AND_KAFKA.md)
 
-### 第四阶段：理解业务功能
+### 第四阶段：补齐 IM 业务关系
 
 14. [13 好友、群组与会话](13_RELATIONSHIPS_AND_CONVERSATIONS.md)
-15. [14 红包并发一致性](14_RED_PACKET.md)
-16. [15 AI 虚拟好友](15_AI_BOT.md)
 
 ### 第五阶段：理解工程化
 
-17. [16 安全、日志、指标和故障](16_SECURITY_OBSERVABILITY.md)
-18. [17 Docker 与 GitHub Actions](17_DOCKER_AND_CI.md)
-19. [18 Kubernetes 多服务器部署](18_KUBERNETES_DEPLOYMENT.md)
+15. [14 安全、日志、指标和故障](14_SECURITY_OBSERVABILITY.md)
+16. [15 Docker 与 GitHub Actions](15_DOCKER_AND_CI.md)
+17. [16 Kubernetes 多服务器部署](16_KUBERNETES_DEPLOYMENT.md)
 
 ### 第六阶段：形成面试表达
 
-20. [19 完整调用链与代码地图](19_COMPLETE_CODE_WALK.md)
-21. [20 面试讲述与逐层追问](20_INTERVIEW_PREP.md)
-22. [21 学习检查表](21_CHECKLIST.md)
+18. [17 完整调用链与代码地图](17_COMPLETE_CODE_WALK.md)
+19. [18 面试讲述与逐层追问](18_INTERVIEW_PREP.md)
+20. [19 学习检查表](19_CHECKLIST.md)
+
+### 可选业务扩展
+
+- [附录 A：钱包与红包并发一致性](APPENDIX_A_WALLET_RED_PACKET.md)
+- [附录 B：AI 虚拟好友](APPENDIX_B_AI_BOT.md)
+
+它们用于补充 MySQL 事务与业务扩展能力。简历空间有限时不写；其中 AI 功能也不与独立 CodeRepair 项目竞争定位。
 
 ## 每章怎么学
 

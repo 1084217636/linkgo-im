@@ -42,6 +42,19 @@ func TestRedPacketCreatePersistsInitialState(t *testing.T) {
 		NewID: func() string { return "rp-test" },
 	}
 
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO wallet_accounts").
+		WithArgs("1001", now.UnixMilli()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery("SELECT available_balance").
+		WithArgs("1001").
+		WillReturnRows(sqlmock.NewRows([]string{"available_balance"}).AddRow(int64(500)))
+	mock.ExpectExec("UPDATE wallet_accounts").
+		WithArgs(int64(400), now.UnixMilli(), "1001").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO wallet_ledger").
+		WithArgs(sqlmock.AnyArg(), "1001", "debit", int64(100), "red_packet_send", "rp-test", int64(400), now.UnixMilli()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("INSERT INTO red_packets").
 		WithArgs(
 			"rp-test",
@@ -58,6 +71,7 @@ func TestRedPacketCreatePersistsInitialState(t *testing.T) {
 			now.UnixMilli(),
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
 
 	packet, err := svc.Create(ctx, RedPacketCreateParams{
 		SenderID:       "1001",
@@ -108,6 +122,18 @@ func TestRedPacketClaimLocksAndUpdates(t *testing.T) {
 	mock.ExpectExec("UPDATE red_packets").
 		WithArgs(int64(50), "active", now.UnixMilli(), "rp-1", int64(50)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO wallet_accounts").
+		WithArgs("1002", now.UnixMilli()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery("SELECT available_balance").
+		WithArgs("1002").
+		WillReturnRows(sqlmock.NewRows([]string{"available_balance"}).AddRow(int64(20)))
+	mock.ExpectExec("UPDATE wallet_accounts").
+		WithArgs(int64(70), now.UnixMilli(), "1002").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO wallet_ledger").
+		WithArgs(sqlmock.AnyArg(), "1002", "credit", int64(50), "red_packet_claim", "rp-1", int64(70), now.UnixMilli()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
 	claim, err := svc.Claim(ctx, "rp-1", "1002")
@@ -209,6 +235,18 @@ func TestRedPacketExpiredStatusIsCommitted(t *testing.T) {
 			"id", "sender_id", "conversation_id", "to_type", "total_amount", "total_count",
 			"remaining_amount", "remaining_count", "greeting", "status", "created_at", "expires_at", "updated_at",
 		}).AddRow("rp-1", "1001", "c2c:1001:1002", "user", int64(100), 2, int64(100), 2, "hi", "active", int64(1), now.Add(-time.Second).UnixMilli(), int64(1)))
+	mock.ExpectExec("INSERT INTO wallet_accounts").
+		WithArgs("1001", now.UnixMilli()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery("SELECT available_balance").
+		WithArgs("1001").
+		WillReturnRows(sqlmock.NewRows([]string{"available_balance"}).AddRow(int64(10)))
+	mock.ExpectExec("UPDATE wallet_accounts").
+		WithArgs(int64(110), now.UnixMilli(), "1001").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO wallet_ledger").
+		WithArgs(sqlmock.AnyArg(), "1001", "credit", int64(100), "red_packet_refund", "rp-1", int64(110), now.UnixMilli()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("UPDATE red_packets SET status = 'expired'").
 		WithArgs(now.UnixMilli(), "rp-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))

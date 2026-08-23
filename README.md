@@ -1,12 +1,12 @@
 # LinkGo Chat
 
-LinkGo 是一个使用 Go 和 go-zero 实现的 `IM + 红包 + AI` 秋招项目。主线是多 Gateway 场景下的 WebSocket 连接、跨节点单聊、消息持久化、ACK/重连补偿和 Kafka 群聊投递；红包用于演示数据库并发一致性，AI 作为虚拟好友接入普通消息链路。
+LinkGo 是一个使用 Go 和 go-zero 实现的分布式 IM 秋招项目。主线是多 Gateway 场景下的 WebSocket 连接、跨节点单聊、消息持久化、ACK/重连补偿和 Kafka 群聊投递。钱包红包与 AI 虚拟好友保留为可选业务扩展示例，不作为简历主线。
 
 ## 第一次看这个项目
 
 如果你只会 Go 基本语法，请不要从架构图或面试题开始。
 
-学习本项目时只看 [LinkGo 从零学习手册](docs/handbook/README.md)，从第 00 章开始按编号顺序读到第 21 章。`docs/handbook/` 是唯一学习主线；其他 docs 目录分别用于查代码、执行操作、查看证据或提供程序运行时语料。
+学习本项目时只看 [LinkGo 分布式 IM 学习手册](docs/handbook/README.md)，从第 00 章开始按编号顺序读到第 19 章。钱包红包与 AI Bot 放在附录，需要补业务扩展时再读。
 
 完整文档分类见 [docs/README.md](docs/README.md)。
 
@@ -17,8 +17,7 @@ LinkGo 是一个使用 Go 和 go-zero 实现的 `IM + 红包 + AI` 秋招项目�
 - 登录、好友、群组和会话列表。
 - 单聊、群聊、历史查询。
 - 心跳、ACK、`last_seq` 短期补偿和过载退避重试。
-- 红包创建、领取、详情查询。
-- AI 虚拟好友入口。
+- 可选扩展：模拟充值、站内钱包红包与 AI 虚拟好友入口。
 
 它用于验证后端链路，不定位为商业级前端；Token 只保存在页面内存，刷新后需要重新登录，断线自动重连和浏览器 E2E 仍不完整。
 
@@ -56,7 +55,7 @@ Client B -> LB -> Gateway-3 <- Redis Pub/Sub <-----'
 
 ## 数据组件
 
-- MySQL：消息最终历史、用户/好友/群/会话关系、红包和 AI 记录。
+- MySQL：消息最终历史、用户/好友/群/会话关系、钱包账户/资金流水/红包和 AI 记录。
 - Redis：在线路由、会话 seq、短期 pending/ACK payload/timeline 和热点索引。
 - Kafka：群聊逐成员投递任务、重试和死信。
 - Etcd：Logic 服务注册与发现。
@@ -136,7 +135,7 @@ docs/knowledge/  AI 问答运行时语料
 - `ack_idx` 仍按接收用户保存完整编码 payload，尚未完全优化为纯消息 ID 引用。
 - `offline_msg` 当前是标记索引，重连实际读取 `pending_ack`；MySQL 历史接口固定返回最近 50 条，没有游标参数。
 - Logic 仍同步解析群成员后才写 Kafka，所以群消息发送成本并非完全与群规模无关。
-- 红包是等额账本模型，没有钱包扣款、入账、退款、资金流水和对账。
+- 红包已接入最小站内钱包：模拟微信/支付宝充值入账，发红包扣款，领取入账，过期余额按请求退款并记录流水；没有真实支付回调、自动过期扫描、提现、对账、风控或支付合规能力。
 - AI 默认使用 mock；FAQ 是轻量文本召回，AI 回复任务是非持久 goroutine，不是可靠任务队列。
 - `deploy/k8s/production` 是应用工作负载的可渲染示例，没有 Ingress/TLS、前端部署或真实生产集群证据。
 - 当前应用使用 Redis 稳定单入口和 MySQL 单 DSN，不原生实现 Redis Cluster/Sentinel 客户端或 MySQL 应用层读写分离。

@@ -1,4 +1,4 @@
-# 18 Kubernetes 多服务器部署
+# 16 Kubernetes 多服务器部署
 
 ## 本章前置
 
@@ -132,7 +132,7 @@ Gateway、Logic、Transfer 可以从同一镜像重建，主要持久数据却�
 
 Logic 监听 `0.0.0.0:9001`，但其他 Pod 不能把 `0.0.0.0` 当目标地址。K8s Downward API 将实际 Pod IP 注入 `POD_IP`；go-zero 注册 Etcd 时使用 `POD_IP:9001`。
 
-Gateway 不设置 `LOGIC_ADDR` 时，通过 `/services/logic` 获取存活实例并使用 `p2c_ewma` 选择。它在两个候选实例中结合负载估计做选择，目标是减少热点。
+Gateway 不设置 `LOGIC_ADDR` 时，通过 `services/logic` 获取存活实例并使用 `p2c_ewma` 选择。它在两个候选实例中结合负载估计做选择，目标是减少热点。
 
 ## 扩容 Gateway 会不会搬迁旧连接
 
@@ -176,7 +176,7 @@ Gateway 和 Logic 显式配置 `maxUnavailable: 0`、`maxSurge: 1`，表示发�
 
 Deployment 内部会用 ReplicaSet 管理“某一个 Pod 模板版本”的实例集合。这里第一次出现 ReplicaSet，只需要知道：修改 Deployment 镜像后，K8s 创建代表新版本的 ReplicaSet，并逐步缩小旧版本的 ReplicaSet。
 
-从第 17 章的不可变镜像到运行版本，完整因果链是：
+从第 15 章的不可变镜像到运行版本，完整因果链是：
 
 ```text
 CI 已验证并由调用者推送 image:<commit-sha>
@@ -248,4 +248,4 @@ kubectl kustomize deploy/k8s/production --load-restrictor LoadRestrictionsNone
 5. 已建立 WebSocket 的 TCP 状态和 `ClientConn` 在旧 Pod 中。新增 Pod 只会承接新连接，旧连接要断开、客户端重连并重建 Redis route。
 6. 单 Pod 数据库随 Pod/Node 故障会形成数据和可用性单点。production overlay 把有状态依赖放到应用发布边界之外，通过托管或独立 HA 稳定入口连接，也诚实表明仓库没有实现这些外部集群。
 
-下一步：[19 完整调用链与代码地图](19_COMPLETE_CODE_WALK.md)
+下一步：[17 完整调用链与代码地图](17_COMPLETE_CODE_WALK.md)

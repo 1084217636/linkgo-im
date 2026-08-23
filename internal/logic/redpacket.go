@@ -20,6 +20,8 @@ var (
 	ErrRedPacketAlreadyClaimed = errors.New("red packet already claimed")
 	ErrRedPacketFinished       = errors.New("red packet finished")
 	ErrRedPacketExpired        = errors.New("red packet expired")
+	ErrRedPacketNotExpired     = errors.New("red packet has not expired")
+	ErrRedPacketNotSender      = errors.New("only the sender can refund a red packet")
 )
 
 type RedPacketService struct {
@@ -65,6 +67,15 @@ type RedPacketDetail struct {
 	Packet  RedPacketInfo        `json:"packet"`
 	Claims  []RedPacketClaimInfo `json:"claims"`
 	Claimed bool                 `json:"claimed"`
+}
+
+type RedPacketRefundInfo struct {
+	RedPacketID string `json:"red_packet_id"`
+	SenderID    string `json:"sender_id"`
+	Amount      int64  `json:"amount"`
+	Balance     int64  `json:"balance"`
+	RefundedAt  int64  `json:"refunded_at"`
+	AlreadyDone bool   `json:"already_done"`
 }
 
 func NewRedPacketService(db *sql.DB) *RedPacketService {
@@ -121,13 +132,44 @@ func (s *RedPacketService) Create(ctx context.Context, params RedPacketCreatePar
 		UpdatedAt:       now,
 	}
 
-	_, err := s.DB.ExecContext(ctx, `
+	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	balance, err := lockWallet(ctx, tx, packet.SenderID, now)
+	if err != nil {
+		return nil, err
+	}
+	if balance < packet.TotalAmount {
+		return nil, ErrInsufficientBalance
+	}
+	balance -= packet.TotalAmount
+	if err := updateWalletAndLedger(
+		ctx,
+		tx,
+		newWalletLedgerID(),
+		packet.SenderID,
+		"debit",
+		packet.TotalAmount,
+		"red_packet_send",
+		packet.ID,
+		balance,
+		now,
+	); err != nil {
+		return nil, err
+	}
+
+	_, err = tx.ExecContext(ctx, `
 INSERT INTO red_packets
   (id, sender_id, conversation_id, to_type, total_amount, total_count, remaining_amount, remaining_count, greeting, status, created_at, expires_at, updated_at)
 VALUES
   (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
 `, packet.ID, packet.SenderID, packet.ConversationID, packet.ToType, packet.TotalAmount, packet.TotalCount, packet.RemainingAmount, packet.RemainingCount, packet.Greeting, packet.CreatedAt, packet.ExpiresAt, packet.UpdatedAt)
 	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return packet, nil
@@ -161,11 +203,14 @@ func (s *RedPacketService) Claim(ctx context.Context, redPacketID, userID string
 	}
 
 	now := s.now().UnixMilli()
+	if packet.Status == "expired" {
+		return nil, ErrRedPacketExpired
+	}
 	if packet.Status != "active" {
 		return nil, ErrRedPacketFinished
 	}
 	if packet.ExpiresAt > 0 && packet.ExpiresAt <= now {
-		if err := markRedPacketExpired(ctx, tx, packet.ID, now); err != nil {
+		if _, err := refundRedPacketRemainder(ctx, tx, packet, now); err != nil {
 			return nil, err
 		}
 		if err := tx.Commit(); err != nil {
@@ -227,6 +272,25 @@ WHERE id = ? AND remaining_amount >= ? AND remaining_count > 0
 	if affected, err := res.RowsAffected(); err == nil && affected != 1 {
 		return nil, ErrRedPacketFinished
 	}
+	balance, err := lockWallet(ctx, tx, userID, now)
+	if err != nil {
+		return nil, err
+	}
+	balance += amount
+	if err := updateWalletAndLedger(
+		ctx,
+		tx,
+		newWalletLedgerID(),
+		userID,
+		"credit",
+		amount,
+		"red_packet_claim",
+		packet.ID,
+		balance,
+		now,
+	); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -236,6 +300,53 @@ WHERE id = ? AND remaining_amount >= ? AND remaining_count > 0
 		Amount:      amount,
 		CreatedAt:   now,
 	}, nil
+}
+
+func (s *RedPacketService) RefundExpired(ctx context.Context, redPacketID, senderID string) (*RedPacketRefundInfo, error) {
+	if s == nil || s.DB == nil {
+		return nil, errors.New("database is required")
+	}
+	redPacketID = strings.TrimSpace(redPacketID)
+	senderID = strings.TrimSpace(senderID)
+	if redPacketID == "" || senderID == "" {
+		return nil, fmt.Errorf("%w: red_packet_id and sender_id are required", ErrRedPacketInvalid)
+	}
+
+	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	packet, err := loadRedPacketForUpdate(ctx, tx, redPacketID)
+	if err != nil {
+		return nil, err
+	}
+	if packet.SenderID != senderID {
+		return nil, ErrRedPacketNotSender
+	}
+	if packet.Status == "finished" {
+		return nil, ErrRedPacketFinished
+	}
+	if packet.Status == "expired" {
+		refund, err := loadRedPacketRefund(ctx, tx, packet.ID, senderID)
+		if err != nil {
+			return nil, err
+		}
+		refund.AlreadyDone = true
+		return refund, nil
+	}
+	now := s.now().UnixMilli()
+	if packet.ExpiresAt <= 0 || packet.ExpiresAt > now {
+		return nil, ErrRedPacketNotExpired
+	}
+	refund, err := refundRedPacketRemainder(ctx, tx, packet, now)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return refund, nil
 }
 
 func (s *RedPacketService) Detail(ctx context.Context, redPacketID, userID string) (*RedPacketDetail, error) {
@@ -342,6 +453,65 @@ func markRedPacketFinished(ctx context.Context, tx *sql.Tx, redPacketID string, 
 func markRedPacketExpired(ctx context.Context, tx *sql.Tx, redPacketID string, now int64) error {
 	_, err := tx.ExecContext(ctx, "UPDATE red_packets SET status = 'expired', updated_at = ? WHERE id = ?", now, redPacketID)
 	return err
+}
+
+func refundRedPacketRemainder(
+	ctx context.Context,
+	tx *sql.Tx,
+	packet RedPacketInfo,
+	now int64,
+) (*RedPacketRefundInfo, error) {
+	refund := &RedPacketRefundInfo{
+		RedPacketID: packet.ID,
+		SenderID:    packet.SenderID,
+		Amount:      packet.RemainingAmount,
+		RefundedAt:  now,
+	}
+	if packet.RemainingAmount > 0 {
+		balance, err := lockWallet(ctx, tx, packet.SenderID, now)
+		if err != nil {
+			return nil, err
+		}
+		balance += packet.RemainingAmount
+		if err := updateWalletAndLedger(
+			ctx,
+			tx,
+			newWalletLedgerID(),
+			packet.SenderID,
+			"credit",
+			packet.RemainingAmount,
+			"red_packet_refund",
+			packet.ID,
+			balance,
+			now,
+		); err != nil {
+			return nil, err
+		}
+		refund.Balance = balance
+	}
+	if err := markRedPacketExpired(ctx, tx, packet.ID, now); err != nil {
+		return nil, err
+	}
+	return refund, nil
+}
+
+func loadRedPacketRefund(ctx context.Context, tx *sql.Tx, redPacketID, senderID string) (*RedPacketRefundInfo, error) {
+	var refund RedPacketRefundInfo
+	refund.RedPacketID = redPacketID
+	refund.SenderID = senderID
+	err := tx.QueryRowContext(ctx, `
+SELECT amount, balance_after, created_at
+FROM wallet_ledger
+WHERE user_id = ? AND business_type = 'red_packet_refund' AND business_id = ?
+`, senderID, redPacketID).Scan(&refund.Amount, &refund.Balance, &refund.RefundedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, errors.New("expired red packet is missing its refund ledger")
+	}
+	return &refund, err
+}
+
+func newWalletLedgerID() string {
+	return strings.Replace(ids.NewTraceID(), "tr-", "wallet-", 1)
 }
 
 func nextEqualClaimAmount(packet RedPacketInfo) int64 {

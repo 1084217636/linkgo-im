@@ -366,7 +366,7 @@ func (h *LogicHandler) Login(ctx context.Context, req *api.LoginReq) (*api.Login
 		h.upgradeLegacyPassword(ctx, uid, pwdInDB, req.Password)
 	}
 
-	token, err := middleware.GenerateToken(uid)
+	token, err := middleware.GenerateToken(uid) //生成JWT
 	if err != nil {
 		return nil, err
 	}

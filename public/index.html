@@ -520,6 +520,21 @@
 
             <section class="section">
                 <div class="section-title">
+                    <span>站内钱包（模拟支付）</span>
+                    <button class="ghost" id="wallet-detail-btn">余额/流水</button>
+                </div>
+                <div class="grid-2">
+                    <input id="wallet-recharge-amount" placeholder="充值金额分，如 1000">
+                    <select id="wallet-recharge-channel">
+                        <option value="mock_wechat">模拟微信支付</option>
+                        <option value="mock_alipay">模拟支付宝</option>
+                    </select>
+                </div>
+                <button id="wallet-recharge-btn">模拟充值到账</button>
+            </section>
+
+            <section class="section">
+                <div class="section-title">
                     <span>红包</span>
                     <button class="ghost" id="red-packet-detail-btn">详情</button>
                 </div>
@@ -534,6 +549,7 @@
                 <div class="row">
                     <input id="red-packet-id" placeholder="红包ID">
                     <button id="red-packet-claim-btn">抢</button>
+                    <button class="ghost" id="red-packet-refund-btn">过期退款</button>
                 </div>
             </section>
 
@@ -1059,7 +1075,7 @@
                     password: $("password").value
                 }
             });
-            state.token = payload.token;
+            state.token = payload.token;//这里已经完成jwt了
             state.userId = payload.user_id;
             state.conversations.clear();
             state.lastSeqBySession.clear();
@@ -1494,6 +1510,48 @@
         }
     }
 
+    async function rechargeWallet() {
+        if (!state.token) return;
+        const amount = Number.parseInt($("wallet-recharge-amount").value.trim(), 10);
+        if (!Number.isFinite(amount) || amount <= 0) {
+            log("warn", "充值金额必须是正整数分");
+            return;
+        }
+        try {
+            const payload = await apiFetch("/api/v1/wallet/recharge/mock", {
+                method: "POST",
+                body: {
+                    request_id: `demo-${crypto.randomUUID()}`,
+                    channel: $("wallet-recharge-channel").value,
+                    amount
+                }
+            });
+            log("ok", "模拟充值到账", {
+                channel: payload.channel,
+                amount: formatFen(payload.amount),
+                balance: formatFen(payload.wallet?.available_balance || 0),
+                order_id: payload.order_id
+            });
+        } catch (err) {
+            log("error", "模拟充值失败", err.message);
+        }
+    }
+
+    async function detailWallet() {
+        if (!state.token) return;
+        try {
+            const payload = await apiFetch("/api/v1/wallet");
+            log("info", "钱包余额与最近流水", {
+                balance: formatFen(payload.wallet?.available_balance || 0),
+                ledger: (payload.ledger || []).map((item) =>
+                    `${item.direction}:${formatFen(item.amount)} ${item.business_type} balance=${formatFen(item.balance_after)}`
+                )
+            });
+        } catch (err) {
+            log("error", "钱包查询失败", err.message);
+        }
+    }
+
     async function claimRedPacket() {
         const redPacketID = $("red-packet-id").value.trim();
         if (!state.token || !redPacketID) return;
@@ -1528,6 +1586,27 @@
             });
         } catch (err) {
             log("error", "红包详情失败", err.message);
+        }
+    }
+
+    async function refundRedPacket() {
+        const redPacketID = $("red-packet-id").value.trim();
+        if (!state.token || !redPacketID) return;
+        try {
+            const payload = await apiFetch("/api/v1/red-packets/refund", {
+                method: "POST",
+                body: { red_packet_id: redPacketID }
+            });
+            log(payload.already_done ? "info" : "ok", "红包未领取金额已退款", {
+                red_packet_id: payload.red_packet_id,
+                amount: formatFen(payload.amount),
+                balance: formatFen(payload.balance),
+                already_done: payload.already_done
+            });
+            await detailWallet();
+            await detailRedPacket();
+        } catch (err) {
+            log("error", "红包退款失败", err.message);
         }
     }
 
@@ -1651,9 +1730,12 @@
     $("friends-btn").onclick = () => Promise.allSettled([refreshFriends(), refreshRequests()]);
     $("groups-btn").onclick = refreshGroups;
     $("create-group-btn").onclick = createGroup;
+    $("wallet-recharge-btn").onclick = rechargeWallet;
+    $("wallet-detail-btn").onclick = detailWallet;
     $("red-packet-create-btn").onclick = createRedPacket;
     $("red-packet-claim-btn").onclick = claimRedPacket;
     $("red-packet-detail-btn").onclick = detailRedPacket;
+    $("red-packet-refund-btn").onclick = refundRedPacket;
     $("open-chat-btn").onclick = () => {
         const target = $("target-id").value.trim();
         const type = $("target-type").value;

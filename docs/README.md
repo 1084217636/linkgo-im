@@ -4,11 +4,11 @@
 
 ## 第一次学习项目
 
-从 [LinkGo 从零学习手册](handbook/README.md) 开始，严格按 `00_START_HERE.md` 到 `21_CHECKLIST.md` 的编号阅读。`docs/handbook/` 是唯一学习目录；旧的 `docs/learning/` 摘要已合并后删除。
+从 [LinkGo 分布式 IM 学习手册](handbook/README.md) 开始，严格按 `00_START_HERE.md` 到 `19_CHECKLIST.md` 的编号阅读。钱包红包与 AI Bot 是可选附录，不进入 IM 简历主线。
 
 这套手册假设你只会 Go 基本语法。每章只使用前面已经解释过的知识，并包含前置、新概念、项目链路、选择理由、精确到函数/字段的代码阅读任务、练习和闭卷题。参考答案就在同一章题目后面；请先独立作答，再逐题核对，不需要跳到另一份文档找答案。
 
-当前可靠性升级的学习入口仍然是原有章节，不另开第二套教材：第 05 章看 `before_seq/limit` 历史 cursor 和 `acked_seq` 数据语义，第 09、11 章看 Redis 快速补偿与 MySQL 长期兜底，第 12、13 章看群成员初始化、写扩散边界和会话游标，第 21 章执行追加检查。先读代码和测试，再回答章节末的面试追问。
+当前可靠性升级的学习入口仍然是原有章节，不另开第二套教材：第 05 章看 `before_seq/limit` 历史 cursor 和 `acked_seq` 数据语义，第 09、11 章看 Redis 快速补偿与 MySQL 长期兜底，第 12、13 章看群成员初始化、写扩散边界和会话游标，第 19 章执行追加检查。先读代码和测试，再回答章节末的面试追问。
 
 ## 其他目录
 
@@ -30,8 +30,8 @@ docs/
 ### runbooks
 
 - [按步骤启动本地演示并核对预期结果](runbooks/LOCAL_DEMO.md)：学完相关章节后执行，不用它学习概念。
-- [执行 Docker、CI、Kubernetes 命令并判断输出](runbooks/DEVOPS.md)：学完第 17、18 章后作为操作手册。
-- [故障先行演练与恢复](runbooks/FAULT_HANDLING.md)：学完第 16、18 章后，按故障矩阵验证摘流量、替换、扩容和业务恢复。
+- [执行 Docker、CI、Kubernetes 命令并判断输出](runbooks/DEVOPS.md)：学完第 15、16 章后作为操作手册。
+- [故障先行演练与恢复](runbooks/FAULT_HANDLING.md)：学完第 14、16 章后，按故障矩阵验证摘流量、替换、扩容和业务恢复。
 
 ### 面试讲稿
 

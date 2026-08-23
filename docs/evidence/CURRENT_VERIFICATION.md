@@ -59,7 +59,7 @@ git diff --check
 
 本地结果：以上检查全部通过。K8s 校验确认 demo/production 两套清单可渲染，并检查 Logic 发现、Secret 边界、非 root 容器和不可变镜像标签；Promtool 确认一份配置文件和三条告警规则有效；Docker 镜像构建成功，镜像默认用户实测为 `10001:10001`。Compose 只完成配置渲染，本轮没有凭这一步声称所有容器已经启动。最终远程结果仍以本文件所在 commit 的 GitHub Actions 页面为准。
 
-本轮没有执行需要真实运行栈的浏览器 E2E 和重新压测。2026-08-12 已在完整 Compose 上执行：
+2026-08-12 的该轮检查没有执行浏览器 E2E 和重新压测；当时已在完整 Compose 上执行：
 
 ```bash
 FAULT_INJECTION_CONFIRM=1 \
@@ -87,6 +87,19 @@ docker run --rm --network host \
 
 该命令已通过全部 Go 包的 race 检测。主机永久安装 gcc 仍需用户在 WSL 终端执行带 sudo 的安装命令；GitHub Actions 也会继续执行 `make test-race`。
 
+### 3.1 2026-08-16 钱包红包与当前协议压测补充
+
+在本次待提交工作树上完成了最小钱包红包闭环联调：模拟微信充值 1000 分（相同 request_id 重试不重复入账），发 300 分红包并由另一用户领取（重复领取结果幂等），再发 200 分短期红包并触发过期退款（重复退款结果幂等）。最终发送者相对充值后净支出 300 分、接收者入账 300 分，流水包含 `mock_recharge`、`red_packet_send`、`red_packet_claim`、`red_packet_refund`。这不包含真实微信/支付宝签名回调、提现、渠道对账和风控。
+
+同一工作树在完整十 Gateway Compose 上重新运行当前 JWT + Origin + Protobuf 协议压测：
+
+- 10000/10000 WebSocket 连接成功，59983/59983 次心跳成功；心跳 P95 4.83ms，P99 8.25ms。
+- 100 对连接按总计 500 msg/s 发送 2000 条，2000 条到达并 ACK；P95 5.29ms，P99 6.63ms。
+- 不限速瞬时发送 2000 条时，到达并 ACK 1934 条，96.7%；其余请求触发单用户 WebSocket 限流，不能描述为“可靠链路随机丢失”。
+- 200 个用户并发领取 100 份、总额 10000 分的红包：100 个成功、100 个已抢完、异常 0，总领取 10000 分，剩余金额和份数均为 0；该基准直连服务层和 MariaDB，不覆盖 HTTP/JWT。
+
+压测同时发现并修复了 Origin 缺失、压测器错误重读 WebSocket、Etcd 注册/订阅 Key 前导斜杠不一致、benchmark 用户缺少好友关系，以及 Gateway 未等待 Logic ready 的问题。完整机器配置、原始结果和边界见 [`benchmark/bench_report_20260816.md`](../../benchmark/bench_report_20260816.md)。基线 SHA 是 `07fe1df1a36eeff3efa47c909336eeaf5c4e5f70`，以上改动尚未提交，因此正式简历引用前仍应在提交后的 SHA 再跑一次。
+
 ## 4. 关键自动化用例位置
 
 ```text
@@ -106,10 +119,10 @@ scripts/validate_fault_handling.py      故障演练脚本、依赖探针和 run
 ## 5. 当前最重要的未覆盖边界
 
 - 单元测试不能替代真实 Redis/MySQL/Kafka 的长时间稳定性测试。
-- 红包用例主要验证 SQL 顺序和约束，不是资金系统或生产级并发压测。
+- 钱包红包用例主要验证充值、扣款、领取入账、退款的 SQL 事务顺序和约束，不是真实支付系统或生产级并发压测。
 - K8s render/check 不等于真实集群 rollout、扩缩和故障恢复已经完成。
 - 当前没有浏览器 E2E 测试证明断线重连的全部交互。
-- 历史 benchmark 只代表当时机器和代码；没有在当前 commit 重跑就不能引用具体 QPS、连接数或 P99。
+- 2026-08-16 已在待提交工作树重跑当前协议 benchmark；具体数字仍只代表报告中的机器、参数和代码状态，提交后应再绑定新 commit SHA。
 - production overlay 没有 Ingress/TLS、前端 Deployment 或真实中间件高可用集群验证。
 
 ## 6. 面试证据口径

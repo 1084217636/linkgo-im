@@ -147,6 +147,32 @@ func (l *RedPacketLogic) Detail(req *types.RedPacketDetailReq) (*types.RedPacket
 	return resp, nil
 }
 
+func (l *RedPacketLogic) Refund(req *types.RedPacketRefundReq) (*types.RedPacketRefundResp, error) {
+	if l.svcCtx.DB == nil {
+		return nil, errors.New("database is required")
+	}
+	senderID := gwmiddleware.UserIDFromContext(l.ctx)
+	packetID := strings.TrimSpace(req.RedPacketID)
+	if senderID == "" || packetID == "" {
+		return nil, errors.New("red_packet_id is required")
+	}
+	service := corelogic.NewRedPacketService(l.svcCtx.DB)
+	refund, err := service.RefundExpired(l.ctx, packetID, senderID)
+	if err != nil {
+		metrics.RedPacketOperations.WithLabelValues("refund", redPacketMetricResult(err)).Inc()
+		return nil, err
+	}
+	metrics.RedPacketOperations.WithLabelValues("refund", "success").Inc()
+	return &types.RedPacketRefundResp{
+		RedPacketID: refund.RedPacketID,
+		SenderID:    refund.SenderID,
+		Amount:      refund.Amount,
+		Balance:     refund.Balance,
+		RefundedAt:  refund.RefundedAt,
+		AlreadyDone: refund.AlreadyDone,
+	}, nil
+}
+
 func (l *RedPacketLogic) validateConversationAccess(uid, targetID, toType, conversationID string) error {
 	if toType == "group" {
 		return l.validateGroupSendPermission(uid, targetID)

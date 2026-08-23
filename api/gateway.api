@@ -183,6 +183,57 @@ type RedPacketDetailResp {
 	Claimed bool                 `json:"claimed"`
 }
 
+type RedPacketRefundReq {
+	RedPacketID string `json:"red_packet_id"`
+}
+
+type RedPacketRefundResp {
+	RedPacketID string `json:"red_packet_id"`
+	SenderID string `json:"sender_id"`
+	Amount int64 `json:"amount"`
+	Balance int64 `json:"balance"`
+	RefundedAt int64 `json:"refunded_at"`
+	AlreadyDone bool `json:"already_done"`
+}
+
+type WalletRechargeReq {
+	RequestID string `json:"request_id"`
+	Channel string `json:"channel"`
+	Amount int64 `json:"amount"`
+}
+
+type WalletInfo {
+	UserID string `json:"user_id"`
+	AvailableBalance int64 `json:"available_balance"`
+	UpdatedAt int64 `json:"updated_at"`
+}
+
+type WalletLedgerEntry {
+	ID string `json:"id"`
+	UserID string `json:"user_id"`
+	Direction string `json:"direction"`
+	Amount int64 `json:"amount"`
+	BusinessType string `json:"business_type"`
+	BusinessID string `json:"business_id"`
+	BalanceAfter int64 `json:"balance_after"`
+	CreatedAt int64 `json:"created_at"`
+}
+
+type WalletDetailResp {
+	Wallet WalletInfo `json:"wallet"`
+	Ledger []WalletLedgerEntry `json:"ledger"`
+}
+
+type WalletRechargeResp {
+	OrderID string `json:"order_id"`
+	RequestID string `json:"request_id"`
+	Channel string `json:"channel"`
+	Amount int64 `json:"amount"`
+	ProviderTradeNo string `json:"provider_trade_no"`
+	AlreadyPaid bool `json:"already_paid"`
+	Wallet WalletInfo `json:"wallet"`
+}
+
 type AISummaryReq {
 	GroupID      string `json:"group_id"`
 	MessageLimit int    `json:"message_limit,optional"`
@@ -285,6 +336,15 @@ service gateway-api {
 
 	@handler RedPacketDetail
 	get /red-packets/detail (RedPacketDetailReq) returns (RedPacketDetailResp)
+
+	@handler RedPacketRefund
+	post /red-packets/refund (RedPacketRefundReq) returns (RedPacketRefundResp)
+
+	@handler WalletDetail
+	get /wallet returns (WalletDetailResp)
+
+	@handler WalletRecharge
+	post /wallet/recharge/mock (WalletRechargeReq) returns (WalletRechargeResp)
 
 	@handler AISummary
 	post /ai/group-summary (AISummaryReq) returns (AISummaryResp)

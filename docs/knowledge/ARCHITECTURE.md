@@ -8,7 +8,7 @@
 
 ## 多实例
 
-Logic Pod 把 Pod IP 注册到 Etcd `/services/logic`。Gateway 未配置 `LOGIC_ADDR` 时取得实例列表，并由 go-zero zRPC `p2c_ewma` 选择。当前主链路不是一致性哈希。
+Logic Pod 把 Pod IP 注册到 Etcd `services/logic`。Gateway 未配置 `LOGIC_ADDR` 时取得实例列表，并由 go-zero zRPC `p2c_ewma` 选择。当前主链路不是一致性哈希。
 
 客户端 A、B 可以位于不同 Gateway。每台 Gateway 只持有本机 WebSocket；共享 Redis 的 `route:<uid>` 指出目标用户当前 Gateway，定向 Pub/Sub 频道把在线通知送到目标 Gateway。
 

@@ -3,7 +3,7 @@ ListenOn: 0.0.0.0:9001
 Etcd:
   Hosts:
     - etcd:2379
-  Key: /services/logic
+  Key: services/logic
 
 Cache:
   Addr: redis:6379
