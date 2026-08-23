@@ -4,7 +4,7 @@
 
 ## 第一次学习项目
 
-从 [LinkGo 分布式 IM 学习手册](handbook/README.md) 开始，严格按 `00_START_HERE.md` 到 `19_CHECKLIST.md` 的编号阅读。钱包红包与 AI Bot 是可选附录，不进入 IM 简历主线。
+从 [LinkGo 分布式 IM 学习手册](handbook/README.md) 开始，严格按 `00_START_HERE.md` 到 `20_AI_ASSISTED_BACKEND_DEVELOPMENT.md` 的编号阅读。最后一章专门复盘 AI 辅助开发、真实失败、公司工作差异和面试口径；钱包红包与 AI Bot 是可选附录。
 
 这套手册假设你只会 Go 基本语法。每章只使用前面已经解释过的知识，并包含前置、新概念、项目链路、选择理由、精确到函数/字段的代码阅读任务、练习和闭卷题。参考答案就在同一章题目后面；请先独立作答，再逐题核对，不需要跳到另一份文档找答案。
 

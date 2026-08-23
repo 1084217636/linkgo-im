@@ -33,6 +33,7 @@ EXPECTED_HANDBOOK = [
     "17_COMPLETE_CODE_WALK.md",
     "18_INTERVIEW_PREP.md",
     "19_CHECKLIST.md",
+    "20_AI_ASSISTED_BACKEND_DEVELOPMENT.md",
     "APPENDIX_A_WALLET_RED_PACKET.md",
     "APPENDIX_B_AI_BOT.md",
 ]
@@ -187,7 +188,7 @@ def main() -> None:
     validate_learning_contract()
     print(
         "PASS documentation layout, "
-        "20 ordered chapters plus 2 optional appendices, "
+        "21 ordered chapters plus 2 optional appendices, "
         f"{checked_links} repository links, {len(KNOWLEDGE_PATHS)} knowledge sources, "
         "in-file chapter answers, and no stale claims"
     )

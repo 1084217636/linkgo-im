@@ -1,6 +1,6 @@
 # LinkGo 分布式 IM 学习手册
 
-> 唯一学习主线：只按本目录 `00_START_HERE.md` 到 `19_CHECKLIST.md` 的编号顺序阅读。钱包红包与 AI Bot 是可选附录，不进入秋招主叙事。
+> 唯一学习主线：只按本目录 `00_START_HERE.md` 到 `20_AI_ASSISTED_BACKEND_DEVELOPMENT.md` 的编号顺序阅读。钱包红包与 AI Bot 是可选附录，不进入秋招主叙事。
 
 这是一套给“只会 Go 基本语法、第一次接触后端项目”的教材。它不是复习提纲，也不要求你提前知道 Redis、MySQL、Kafka、WebSocket、Docker 或 Kubernetes。
 
@@ -45,6 +45,7 @@
 18. [17 完整调用链与代码地图](17_COMPLETE_CODE_WALK.md)
 19. [18 面试讲述与逐层追问](18_INTERVIEW_PREP.md)
 20. [19 学习检查表](19_CHECKLIST.md)
+21. [20 AI 辅助后端开发：真实问题、工作差异与面试口径](20_AI_ASSISTED_BACKEND_DEVELOPMENT.md)
 
 ### 可选业务扩展
 

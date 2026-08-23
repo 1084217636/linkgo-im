@@ -6,7 +6,7 @@ LinkGo 是一个使用 Go 和 go-zero 实现的分布式 IM 秋招项目。主�
 
 如果你只会 Go 基本语法，请不要从架构图或面试题开始。
 
-学习本项目时只看 [LinkGo 分布式 IM 学习手册](docs/handbook/README.md)，从第 00 章开始按编号顺序读到第 19 章。钱包红包与 AI Bot 放在附录，需要补业务扩展时再读。
+学习本项目时只看 [LinkGo 分布式 IM 学习手册](docs/handbook/README.md)，从第 00 章开始按编号顺序读到第 20 章。最后一章复盘 AI 辅助开发中的真实失败、调试方法、工作差异和面试口径；钱包红包与 AI Bot 放在附录。
 
 完整文档分类见 [docs/README.md](docs/README.md)。
 
