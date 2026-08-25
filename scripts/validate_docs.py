@@ -178,6 +178,12 @@ def validate_learning_contract() -> None:
                 f"{name} reading task must name concrete files and symbols, "
                 "not only another document"
             )
+        if name.startswith(tuple(f"{number:02d}_" for number in range(9, 21))) or name.startswith("APPENDIX_"):
+            if "> 我" not in reading_block or "答案" not in reading_block:
+                fail(
+                    f"{name} reading task must contain a same-file, copyable "
+                    "one-problem AI prompt with answered self-checks"
+                )
 
 
 def main() -> None:

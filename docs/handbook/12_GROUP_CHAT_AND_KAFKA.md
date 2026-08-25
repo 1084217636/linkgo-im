@@ -378,6 +378,14 @@ A 调用创建群接口，members = [B]
 
 ## 本章代码阅读任务
 
+### 每次只问一个代码问题
+
+下面每一行只解决群聊链路中的一个问题，不要把 Producer、Consumer、lease、retry 和 DLQ 一次学完：
+
+> 我正在学习 LinkGo 第 12 章，现在只学习表格第 X 行。请先说明这段代码位于“Logic 保存一条群消息，Kafka 异步扩散，Transfer 逐成员投递”的哪一步，以及不用它会发生什么。然后根据真实代码分文件、分函数解释输入、输出、Kafka record、recipient 状态、offset 提交条件和失败路径。凡是提到 at-least-once、幂等、lease、retry、DLQ，都要结合当前字段和状态举例，不能只讲定义。最后说明本行能证明什么、不能证明什么，并附 3 道带答案的自测题。
+
+完成一行后再继续下一行。
+
 | 顺序 | 打开位置 | 这次只看什么 |
 | --- | --- | --- |
 | 1 | `internal/logic/handler.go` 的 `resolveRecipients`、`deliverPersistedMessage` | 确认群成员从 MySQL 取 active 列表并排除发送者，群聊走 `GroupDispatcher` 而不是逐个同步 Deliver |

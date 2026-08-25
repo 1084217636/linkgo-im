@@ -392,6 +392,14 @@ Ask 保存 question 时也执行这类基础替换。
 
 ## 本章代码阅读任务
 
+### 每次只问一条 AI Bot 链路
+
+AI Bot 是附加功能，不要和 IM 可靠性主线一起学。表格每一行单独问：
+
+> 我正在学习 LinkGo AI Bot 附录，现在只学习表格第 X 行。请先说明用户触发了什么功能，再按 HTTP/WebSocket 入口、请求结构、模型适配器、超时与错误处理、结果写回消息系统的顺序分段解释。明确哪些是确定性代码、哪些结果来自模型、模型不可用时怎样降级，以及测试使用真实模型还是 fake。最后写出第一遍只需掌握的边界和 3 道带答案的自测题。
+
+不要求把这个附加功能讲成完整 Agent 平台。
+
 | 顺序 | 打开位置 | 这次只看什么 |
 | --- | --- | --- |
 | 1 | `internal/ai/provider.go` 的 `Provider`、`ProviderOptions`、`NewProviderWithOptions` | 写出业务只依赖的两个方法，并看配置怎样选择 mock、外部 provider 和 fallback 包装 |

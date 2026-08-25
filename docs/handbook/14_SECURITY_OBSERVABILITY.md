@@ -175,6 +175,14 @@ Go 代码在事件发生时更新 Counter/Gauge/Histogram
 
 ## 本章代码阅读任务
 
+### 每次只问一个代码问题
+
+安全和可观测性不能靠背名词。下面每行单独问，并要求回答绑定真实攻击或故障：
+
+> 我正在学习 LinkGo 第 14 章，现在只学习表格第 X 行。请根据当前代码先给一个具体风险或线上现象，再逐段解释这一行的中间件、配置、指标或日志代码怎样处理。说明输入是否可信、校验发生在哪里、拒绝后返回什么、记录了哪些字段、还有什么残余风险。不要把“有 JWT、有 Prometheus”当成完整答案。最后给出第一遍必须会讲的内容、暂不必背的库内部细节，以及 3 道带答案的自测题。
+
+每次只处理一种风险或一种观测信号。
+
 | 顺序 | 打开位置 | 这次只看什么 |
 | --- | --- | --- |
 | 1 | `internal/middleware/auth.go` 的 `GenerateToken`、`ParseToken` 与 `cmd/gateway/internal/middleware/authmiddleware.go` 的 `Handle` | 看签名、过期和 uid Context，列出 JWT 不能替代的资源授权 |

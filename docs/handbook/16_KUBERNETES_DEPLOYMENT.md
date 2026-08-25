@@ -197,6 +197,14 @@ CI 已验证并由调用者推送 image:<commit-sha>
 
 ## 本章代码阅读任务
 
+### 每次只问一个代码问题
+
+Kubernetes 文件一次只学一种资源。下面表格每一行单独提问：
+
+> 我正在学习 LinkGo 第 16 章，现在只学习表格第 X 行。我只知道 Kubernetes 这个名字，请先用 LinkGo 的实际部署场景解释当前资源为什么存在，再按 YAML 层级解释 metadata、spec、selector、Pod、容器、端口、环境变量、Probe 和安全字段。说明它与其他资源怎样通过名称连接、扩容或滚动更新时会发生什么、配置错误时怎样观察。最后给出本地只读验证命令、预期结果、第一遍学习边界和 3 道带答案的自测题。
+
+回答不能只给 Kubernetes 通用定义，必须对应当前 YAML 中的真实值。
+
 | 顺序 | 打开位置 | 这次只看什么 |
 | --- | --- | --- |
 | 1 | `deploy/k8s/gateway.yaml` 的 Deployment、Service、Probe、`rollingUpdate`、`securityContext` | 把 replicas、selector、port、readiness/liveness 和 UID 10001 对应到本章概念 |
