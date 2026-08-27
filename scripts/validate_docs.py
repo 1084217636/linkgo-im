@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
 HANDBOOK = DOCS / "handbook"
+MOBILE = DOCS / "mobile_go_interview"
 
 EXPECTED_HANDBOOK = [
     "README.md",
@@ -37,6 +38,28 @@ EXPECTED_HANDBOOK = [
     "APPENDIX_A_WALLET_RED_PACKET.md",
     "APPENDIX_B_AI_BOT.md",
 ]
+
+EXPECTED_MOBILE = [
+    "README.md",
+    "01_GO_AND_CONCURRENCY.md",
+    "02_CS_NETWORK.md",
+    "03_LINKGO_ARCHITECTURE.md",
+    "04_CHAT_AND_RELIABILITY.md",
+    "05_DATA_AND_MIDDLEWARE.md",
+    "06_FAILURE_AND_SCALING.md",
+    "07_ENGINEERING_AND_TESTING.md",
+    "08_PROJECT_STORY.md",
+    "09_LAST_MINUTE_CARDS.md",
+]
+
+MOBILE_ANSWER_SECTIONS = (
+    "### 面试官问",
+    "### 30 秒回答",
+    "### 详细回答",
+    "### 结合 LinkGo",
+    "### 为什么这样选，替代方案是什么",
+    "### 边界与追问",
+)
 
 KNOWLEDGE_PATHS = [
     "docs/knowledge/IM_FAQ.md",
@@ -83,6 +106,13 @@ def validate_layout() -> None:
         missing = sorted(set(expected) - set(actual))
         extra = sorted(set(actual) - set(expected))
         fail(f"handbook chapter mismatch, missing={missing}, extra={extra}")
+
+    actual_mobile = sorted(path.name for path in MOBILE.glob("*.md"))
+    expected_mobile = sorted(EXPECTED_MOBILE)
+    if actual_mobile != expected_mobile:
+        missing = sorted(set(expected_mobile) - set(actual_mobile))
+        extra = sorted(set(actual_mobile) - set(expected_mobile))
+        fail(f"mobile handbook mismatch, missing={missing}, extra={extra}")
 
 
 def validate_links() -> int:
@@ -186,15 +216,40 @@ def validate_learning_contract() -> None:
                 )
 
 
+def validate_mobile_contract() -> None:
+    """Keep each commuting chapter complete enough to answer without another prompt."""
+
+    for name in EXPECTED_MOBILE[1:]:
+        path = MOBILE / name
+        content = path.read_text(encoding="utf-8")
+        question_count = len(re.findall(r"^## \d+\.", content, re.MULTILINE))
+        if question_count < 3:
+            fail(f"{name} must contain at least 3 complete interview questions")
+        for heading in MOBILE_ANSWER_SECTIONS:
+            actual = len(
+                re.findall(rf"^{re.escape(heading)}$", content, re.MULTILINE)
+            )
+            if actual != question_count:
+                fail(
+                    f"{name} has {actual} {heading!r} sections for "
+                    f"{question_count} questions"
+                )
+        for unfinished in ("待补充", "再去问 AI", "继续向 AI 提问"):
+            if unfinished in content:
+                fail(f"{name} contains unfinished learning instruction {unfinished!r}")
+
+
 def main() -> None:
     validate_layout()
     checked_links = validate_links()
     validate_no_obsolete_paths()
     validate_knowledge_paths()
     validate_learning_contract()
+    validate_mobile_contract()
     print(
         "PASS documentation layout, "
         "21 ordered chapters plus 2 optional appendices, "
+        "9 complete mobile interview chapters, "
         f"{checked_links} repository links, {len(KNOWLEDGE_PATHS)} knowledge sources, "
         "in-file chapter answers, and no stale claims"
     )
