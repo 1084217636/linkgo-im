@@ -86,11 +86,38 @@
 | Transfer 宕机 | Kafka 群任务暂时没人扩散 | 未提交 Kafka 记录仍保留 | 重启后重读，lease 到期可接管，可能重复投递 |
 | Etcd 故障 | Gateway 无法刷新 Logic 实例列表 | 已建立的部分 gRPC 连接可能暂时可用 | 新发现和故障摘除受影响，不能描述为无感容灾 |
 
-## 简历三条
+## 简历可直接使用版
 
-- 基于 Go/go-zero 实现 Gateway、Logic、Transfer 分层 IM；Logic 通过 Etcd 注册，Gateway 使用 zRPC `p2c_ewma` 选择实例，并利用共享 Redis 在线路由和定向 Pub/Sub 完成跨 Gateway 实时投递。
-- 使用 `client_msg_id` Redis/MySQL 双层幂等、Redis Lua 会话 seq、消息与会话摘要 Outbox、客户端 ACK 和短期 pending/timeline 构建可重试、可短期恢复的投递链路，并以 UID 分片有界队列暴露背压；当前 MySQL 到 Kafka/Redis 接收方仍缺跨系统投递 Outbox。
-- 通过 Kafka/Transfer 解耦群聊逐成员投递，实现成员级 lease 幂等、retry/DLQ 和手动位点提交；补充 Prometheus 指标、Compose 故障演练及 Docker/Kubernetes 验证清单。
+项目名称：
+
+```text
+LinkGo 分布式即时通信系统
+```
+
+技术栈：
+
+```text
+Go / go-zero / WebSocket / gRPC / Protobuf / MySQL / Redis / Kafka / Etcd / Docker / Kubernetes
+```
+
+项目描述：
+
+```text
+面向多节点部署的 Client-Server 即时通信系统。客户端通过 HTTP 完成登录与关系操作，通过 WebSocket 维持实时双向连接；服务端按 Gateway 接入层、Logic 业务层和 Transfer 异步投递层拆分，支持跨 Gateway 单聊、离线补偿与 Kafka 群聊扩散。
+```
+
+简历正文建议保留三条：
+
+- 设计 Gateway、Logic、Transfer 分层服务架构：Gateway 负责 WebSocket 连接与协议接入，Logic 负责鉴权、会话和消息持久化，Transfer 负责群消息异步扩散；通过 Etcd 服务发现和 Redis 共享在线路由完成多 Gateway 场景下的定向投递。
+- 构建消息可靠性链路：使用 `client_msg_id` 保证发送幂等，Redis Lua 分配会话序号，MySQL 保存消息事实，结合 pending、客户端 ACK 和重连回放处理重复消息与短时断线；Gateway 使用按 UID 分片的有界队列维持同用户处理顺序并提供背压。
+- 使用 Kafka 解耦群聊发送与逐成员投递，Transfer 通过手动提交 offset、成员级 lease、retry 和 DLQ 处理重复消费与失败任务；使用 Prometheus、故障注入和自动化测试验证服务停止、重复消费、离线重连等关键场景。
+
+如果简历版面很紧，可以压缩为两条：
+
+- 基于 Go/go-zero 实现 Client-Server 分布式 IM，按 Gateway 接入层、Logic 业务层和 Transfer 投递层拆分，使用 WebSocket/gRPC、Etcd 服务发现及 Redis 在线路由完成跨节点实时通信。
+- 围绕消息幂等、会话顺序、ACK/重连补偿和 Kafka 群聊消费设计可靠性机制，并通过有界队列背压、故障注入及自动化测试验证关键失败路径。
+
+这两条用于简历，`p2c_ewma`、Lua 条件删除、Outbox、lease owner 和具体 Redis Key 留到面试追问。它们是实现证据，不应抢占项目定位。
 
 不要在没有重新压测报告时写具体连接数、QPS 或 P99。
 

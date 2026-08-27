@@ -1,6 +1,6 @@
 # LinkGo Chat
 
-LinkGo 是一个使用 Go 和 go-zero 实现的分布式 IM 秋招项目。主线是多 Gateway 场景下的 WebSocket 连接、跨节点单聊、消息持久化、ACK/重连补偿和 Kafka 群聊投递。钱包红包与 AI 虚拟好友保留为可选业务扩展示例，不作为简历主线。
+LinkGo 是一个使用 Go 和 go-zero 实现的 Client-Server 分布式 IM 项目。客户端通过 HTTP 与 WebSocket 接入，服务端按 Gateway 连接层、Logic 业务层和 Transfer 异步投递层拆分，主线覆盖跨 Gateway 单聊、消息持久化、ACK/重连补偿和 Kafka 群聊扩散。钱包红包与 AI 虚拟好友是可选扩展示例，不进入简历主线。
 
 ## 第一次看这个项目
 
