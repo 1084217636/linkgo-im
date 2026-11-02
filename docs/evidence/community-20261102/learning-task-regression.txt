@@ -1,0 +1,5 @@
+PASS publish: durable group notification and task visibility
+PASS submit: idempotency, permissions, manager visibility
+PASS concurrent review, return, resubmit, approve and close
+PASS expiry replay, admin role, removed-member access and progress denominator
+PASS final: group=GIMP11793589965621cd task=lt_fe6f4870651a0a89ebbe1661e02f2891; history endpoint intact

@@ -29,7 +29,7 @@ def validate(path: str, required_ids: set[str], required_text: set[str]) -> None
 
 validate(
     "public/index.html",
-    {"login-btn", "connect-btn", "send-btn", "history-btn", "red-packet-create-btn", "open-ai-btn"},
+    {"login-btn", "connect-btn", "send-btn", "history-btn", "sync-history-btn", "red-packet-create-btn", "open-ai-btn", "local-data-btn"},
     {
         "/api/v1/login",
         "/api/v1/history",
@@ -38,5 +38,15 @@ validate(
         "MESSAGE_ACCEPTED",
         "MESSAGE_REJECTED",
         "markPendingMessageState",
+        "client-store.js",
+        "history-sync.js",
+        "syncKnownHistory",
+        "reconcileServerPage",
     },
 )
+
+store = (ROOT / "public/client-store.js").read_text(encoding="utf-8")
+for required in {"indexedDB.open", "putMessage", "putCursor", "listMessages", "listSyncProgress", "saveHistoryRange", "updateOutgoingStatus"}:
+    if required not in store:
+        raise SystemExit(f"public/client-store.js: missing {required}")
+print("PASS public/client-store.js: IndexedDB message/cursor persistence")

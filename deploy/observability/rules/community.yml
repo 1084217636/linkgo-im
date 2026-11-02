@@ -1,0 +1,17 @@
+groups:
+  - name: community
+    rules:
+      - alert: LinkGoCommunityOutboxBlocked
+        expr: sum(rate(linkgo_community_events_total{operation="publish",result=~"retry|dead"}[1m])) > 0
+        for: 15s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Community notifications are retrying; posts remain in MySQL"
+      - alert: LinkGoDemoTransferDown
+        expr: up{job="linkgo-transfer"} == 0
+        for: 15s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Transfer unavailable in local demo"

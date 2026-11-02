@@ -78,7 +78,7 @@
 
 | 故障 | 为什么会受影响 | 当前保住什么 | 当前恢复或缺口 |
 |---|---|---|---|
-| Gateway 宕机 | 本机 WebSocket 随进程消失 | MySQL 历史和部分 Redis 短期状态仍在 | 客户端需重连；网页暂无自动重连，旧 route 等 TTL/比较清理 |
+| Gateway 宕机 | 本机 WebSocket 随进程消失 | MySQL 历史和部分 Redis 短期状态仍在 | 网页会退避重连当前配置的入口；若入口是宕机节点的固定端口，不能自动切换到另一端口，需稳定负载均衡入口 |
 | Logic 宕机 | 正在执行的 gRPC 中断 | 已提交的 MySQL 消息和摘要 Outbox 仍在 | Kafka/Redis 投递仍需重试或消息投递 Outbox；未提交请求可复用 client_msg_id |
 | Redis 故障 | route、seq、pending、Pub/Sub 都在实时链路 | 已提交 MySQL 历史 | readiness 停止接流量并等待恢复；MySQL 不能替代全部实时状态 |
 | MySQL 故障 | 权限、关系和消息最终历史依赖数据库 | Redis 已有短期状态不等于可以继续安全写消息 | 当前发送失败；需要数据库高可用入口和运维恢复 |

@@ -1,0 +1,31 @@
+?   	github.com/1084217636/linkgo-im/api	[no test files]
+ok  	github.com/1084217636/linkgo-im/cmd/gateway	0.024s
+?   	github.com/1084217636/linkgo-im/cmd/gateway/internal/config	[no test files]
+ok  	github.com/1084217636/linkgo-im/cmd/gateway/internal/handler	0.020s
+ok  	github.com/1084217636/linkgo-im/cmd/gateway/internal/logic	0.076s
+ok  	github.com/1084217636/linkgo-im/cmd/gateway/internal/middleware	(cached)
+ok  	github.com/1084217636/linkgo-im/cmd/gateway/internal/svc	(cached)
+?   	github.com/1084217636/linkgo-im/cmd/gateway/internal/types	[no test files]
+ok  	github.com/1084217636/linkgo-im/cmd/logic	0.019s
+?   	github.com/1084217636/linkgo-im/cmd/logic/internal/config	[no test files]
+?   	github.com/1084217636/linkgo-im/cmd/logic/internal/logic	[no test files]
+?   	github.com/1084217636/linkgo-im/cmd/logic/internal/server	[no test files]
+ok  	github.com/1084217636/linkgo-im/cmd/logic/internal/svc	0.020s
+ok  	github.com/1084217636/linkgo-im/cmd/secure-demo	(cached)
+ok  	github.com/1084217636/linkgo-im/cmd/transfer	(cached)
+ok  	github.com/1084217636/linkgo-im/internal/ai	(cached)
+ok  	github.com/1084217636/linkgo-im/internal/attachment	(cached)
+ok  	github.com/1084217636/linkgo-im/internal/community	(cached)
+ok  	github.com/1084217636/linkgo-im/internal/delivery	(cached)
+?   	github.com/1084217636/linkgo-im/internal/discovery	[no test files]
+ok  	github.com/1084217636/linkgo-im/internal/health	(cached)
+?   	github.com/1084217636/linkgo-im/internal/ids	[no test files]
+ok  	github.com/1084217636/linkgo-im/internal/learningtask	(cached)
+ok  	github.com/1084217636/linkgo-im/internal/logic	0.303s
+?   	github.com/1084217636/linkgo-im/internal/metrics	[no test files]
+ok  	github.com/1084217636/linkgo-im/internal/middleware	(cached)
+ok  	github.com/1084217636/linkgo-im/internal/server	(cached)
+?   	github.com/1084217636/linkgo-im/pkg/codec	[no test files]
+?   	github.com/1084217636/linkgo-im/tools/core_im_demo	[no test files]
+?   	github.com/1084217636/linkgo-im/tools/leaklab	[no test files]
+?   	github.com/1084217636/linkgo-im/tools/reconnect_demo	[no test files]

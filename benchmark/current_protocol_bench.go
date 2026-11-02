@@ -210,6 +210,10 @@ type chatPair struct {
 	receiver    *websocket.Conn
 }
 
+type clientSystemDetail struct {
+	Code string `json:"code"`
+}
+
 func runSingleChatBench(host string, startPort, gateways, pairs, messages, sendRate int, timeout time.Duration, secret, origin string) {
 	if gateways < 1 {
 		return
@@ -252,13 +256,47 @@ func runSingleChatBench(host string, startPort, gateways, pairs, messages, sendR
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	startAt := sync.Map{}
-	var received, acked, recvErrors int64
-	var latencies latencyRecorder
+	deliveryStartAt := sync.Map{}
+	acceptStartAt := sync.Map{}
+	var accepted, rejected, received, ackWritten, recvErrors, senderReadErrors int64
+	var deliveryLatencies, acceptLatencies latencyRecorder
 	var wg sync.WaitGroup
 
 	for _, pair := range chatPairs {
 		pair := pair
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				_, msg, err := pair.sender.ReadMessage()
+				if err != nil {
+					if ctx.Err() == nil {
+						atomic.AddInt64(&senderReadErrors, 1)
+					}
+					return
+				}
+				var frame api.WireMessage
+				if err := proto.Unmarshal(msg, &frame); err != nil || frame.MsgType != api.MsgType_SYSTEM {
+					continue
+				}
+				var detail clientSystemDetail
+				if err := json.Unmarshal([]byte(frame.Body), &detail); err != nil {
+					continue
+				}
+				switch detail.Code {
+				case "MESSAGE_ACCEPTED":
+					atomic.AddInt64(&accepted, 1)
+					if started, ok := acceptStartAt.LoadAndDelete(frame.ClientMsgId); ok {
+						acceptLatencies.add(time.Since(started.(time.Time)))
+					}
+				case "MESSAGE_REJECTED", "SERVER_BUSY", "SERVER_UNAVAILABLE", "REQUEST_CANCELED":
+					atomic.AddInt64(&rejected, 1)
+					acceptStartAt.Delete(frame.ClientMsgId)
+					deliveryStartAt.Delete(frame.ClientMsgId)
+				}
+			}
+		}()
+
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -280,8 +318,8 @@ func runSingleChatBench(host string, startPort, gateways, pairs, messages, sendR
 				if err := proto.Unmarshal(msg, &frame); err != nil || frame.MsgType != api.MsgType_NORMAL {
 					continue
 				}
-				if started, ok := startAt.LoadAndDelete(frame.ClientMsgId); ok {
-					latencies.add(time.Since(started.(time.Time)))
+				if started, ok := deliveryStartAt.LoadAndDelete(frame.ClientMsgId); ok {
+					deliveryLatencies.add(time.Since(started.(time.Time)))
 				}
 				atomic.AddInt64(&received, 1)
 				ackPayload, _ := proto.Marshal(&api.WireMessage{
@@ -291,7 +329,7 @@ func runSingleChatBench(host string, startPort, gateways, pairs, messages, sendR
 					SentAt:       time.Now().UnixMilli(),
 				})
 				if err := pair.receiver.WriteMessage(websocket.BinaryMessage, ackPayload); err == nil {
-					atomic.AddInt64(&acked, 1)
+					atomic.AddInt64(&ackWritten, 1)
 				}
 			}
 		}()
@@ -315,7 +353,9 @@ func runSingleChatBench(host string, startPort, gateways, pairs, messages, sendR
 		pair := chatPairs[i%len(chatPairs)]
 		clientMsgID := fmt.Sprintf("bench-msg-%d-%d", begin.UnixNano(), i)
 		traceID := fmt.Sprintf("bench-trace-%d", i)
-		startAt.Store(clientMsgID, time.Now())
+		started := time.Now()
+		deliveryStartAt.Store(clientMsgID, started)
+		acceptStartAt.Store(clientMsgID, started)
 		payload, _ := proto.Marshal(&api.WireMessage{
 			From:        pair.senderUID,
 			To:          pair.receiverUID,
@@ -332,37 +372,46 @@ func runSingleChatBench(host string, startPort, gateways, pairs, messages, sendR
 
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if atomic.LoadInt64(&received) >= sent {
+		settled := atomic.LoadInt64(&accepted) + atomic.LoadInt64(&rejected)
+		if settled >= sent && atomic.LoadInt64(&received) >= atomic.LoadInt64(&accepted) {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	cancel()
 	// A websocket read cannot be safely retried after a read deadline fires.
-	// Close receivers to unblock their read goroutines after the benchmark ends.
+	// Close both sides to unblock their read goroutines after the benchmark ends.
 	for _, pair := range chatPairs {
+		_ = pair.sender.Close()
 		_ = pair.receiver.Close()
 	}
 	wg.Wait()
 
-	count, avg, p50, p95, p99 := latencies.summary()
-	timeoutCount := sent - atomic.LoadInt64(&received)
-	ackTimeoutRate := float64(timeoutCount) / math.Max(1, float64(sent))
-	fmt.Printf("single_chat_result pairs=%d sent=%d received=%d acked=%d receive_errors=%d timeout=%d ack_timeout_rate=%.4f latency_count=%d avg=%s p50=%s p95=%s p99=%s elapsed=%s\n",
+	acceptCount, acceptAvg, acceptP50, acceptP95, acceptP99 := acceptLatencies.summary()
+	deliveryCount, deliveryAvg, deliveryP50, deliveryP95, deliveryP99 := deliveryLatencies.summary()
+	acceptedCount := atomic.LoadInt64(&accepted)
+	receivedCount := atomic.LoadInt64(&received)
+	unresolved := sent - acceptedCount - atomic.LoadInt64(&rejected)
+	deliveryTimeout := acceptedCount - receivedCount
+	deliveryTimeoutRate := float64(deliveryTimeout) / math.Max(1, float64(acceptedCount))
+	fmt.Printf("single_chat_result pairs=%d ws_written=%d accepted=%d rejected=%d unresolved=%d received=%d ack_written=%d receive_errors=%d sender_read_errors=%d delivery_timeout=%d delivery_timeout_rate=%.4f elapsed=%s\n",
 		len(chatPairs),
 		sent,
-		received,
-		acked,
+		acceptedCount,
+		rejected,
+		unresolved,
+		receivedCount,
+		ackWritten,
 		recvErrors,
-		timeoutCount,
-		ackTimeoutRate,
-		count,
-		avg,
-		p50,
-		p95,
-		p99,
+		senderReadErrors,
+		deliveryTimeout,
+		deliveryTimeoutRate,
 		time.Since(begin),
 	)
+	fmt.Printf("accept_latency count=%d avg=%s p50=%s p95=%s p99=%s\n",
+		acceptCount, acceptAvg, acceptP50, acceptP95, acceptP99)
+	fmt.Printf("delivery_latency count=%d avg=%s p50=%s p95=%s p99=%s\n",
+		deliveryCount, deliveryAvg, deliveryP50, deliveryP95, deliveryP99)
 }
 
 func dialWS(host string, port int, uid, secret, origin string) (*websocket.Conn, error) {

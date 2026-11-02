@@ -82,7 +82,6 @@ FORBIDDEN_DOC_CLAIMS = [
     "基于用户维度做一致性路由",
     "异步持久化到 MySQL",
     "异步落库到 MySQL",
-    "/api/v1/ws",
     "多网关扩展可线性提高吞吐",
     "当前 V2 使用 mock provider",
 ]
@@ -119,7 +118,7 @@ def validate_links() -> int:
     files = sorted(
         path
         for path in ROOT.rglob("*.md")
-        if ".git" not in path.parts and "artifacts" not in path.parts
+        if not {".git", "artifacts", "node_modules", ".venv"}.intersection(path.parts)
     )
 
     checked = 0
@@ -141,7 +140,7 @@ def validate_no_obsolete_paths() -> None:
     files = sorted(
         path
         for path in ROOT.rglob("*.md")
-        if ".git" not in path.parts and "artifacts" not in path.parts
+        if not {".git", "artifacts", "node_modules", ".venv"}.intersection(path.parts)
     )
     for source in files:
         content = source.read_text(encoding="utf-8")
@@ -157,6 +156,9 @@ def validate_no_obsolete_paths() -> None:
                     f"forbidden stale claim {forbidden!r} found in "
                     f"{source.relative_to(ROOT)}"
                 )
+        # /api/v1/ws is obsolete, but /api/v1/ws-ticket is a valid endpoint.
+        if re.search(r"/api/v1/ws(?=[^A-Za-z0-9_-]|$)", content):
+            fail(f"forbidden stale route '/api/v1/ws' found in {source.relative_to(ROOT)}")
 
 
 def validate_knowledge_paths() -> None:

@@ -1,6 +1,6 @@
 APP_NAME := linkgo-im
 
-.PHONY: test test-race vet fmt-check build docker-build compose-config compose-cn-config compose-light-config compose-light-cn-config observability-config observability-cn-config prometheus-check observability-up observability-cn-up observability-down observability-cn-down docker-up docker-cn-up docker-cn-reset docker-light-up docker-light-cn-up docker-down docker-cn-down docker-light-down docker-light-cn-down k8s-render k8s-check k8s-dry-run k8s-apply k8s-release k8s-delete ci-local bench ops-smoke fault-injection fault-check frontend-static-check docs-check core-im-demo frontend-smoke group-transfer-demo ai-demo ai-ask-demo im-ai-final-demo
+.PHONY: test test-race vet fmt-check build docker-build compose-config compose-cn-config compose-light-config compose-light-cn-config observability-config observability-cn-config prometheus-check observability-up observability-cn-up observability-down observability-cn-down local-up docker-up docker-cn-up docker-cn-reset docker-light-up docker-light-cn-up docker-down docker-cn-down docker-light-down docker-light-cn-down k8s-render k8s-check k8s-dry-run k8s-apply k8s-release k8s-delete ci-local bench ops-smoke cluster-smoke fault-injection fault-check frontend-static-check docs-check core-im-demo frontend-smoke group-transfer-demo ai-demo ai-ask-demo im-ai-final-demo
 
 test:
 	go test ./...
@@ -21,6 +21,9 @@ build:
 
 docker-build:
 	docker build -t $(APP_NAME):local .
+
+local-up:
+	./scripts/start_local.sh
 
 compose-config:
 	docker compose config
@@ -109,6 +112,9 @@ bench:
 
 ops-smoke:
 	bash scripts/ops_smoke.sh
+
+cluster-smoke:
+	bash scripts/verify_cluster_topology.sh
 
 fault-injection:
 	FAULT_INJECTION_CONFIRM=1 bash scripts/fault_injection.sh

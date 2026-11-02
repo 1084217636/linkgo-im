@@ -4,7 +4,7 @@
 
 ## 当前脚本
 
-- `init.sql`：创建 `users` 和 `messages` 表，并插入测试账号。
+- `init.sql`：创建全量基础表，并插入测试账号。
 - `20260518_conversations.sql`：旧库补齐会话列表相关字段和表。
 - `20260611_v1_message_idempotency.sql`：旧库补齐 `client_msg_id` 和发送幂等唯一索引。
 - `20260611_contacts_groups.sql`：旧库补齐好友申请、好友关系、群组和群成员表。
@@ -15,12 +15,16 @@
 - `20260707_ai_qa_records.sql`：旧库补齐 AI 知识问答记录表。
 - `20260708_ai_bot_seed.sql`：旧库补齐默认 AI 助手账号和演示好友关系。
 - `20260809_reliability_cursors.sql`：为 `conversation_members` 增加 `acked_seq`，补建已有 active 群成员会话记录，并创建会话摘要 Outbox。
+- `20260903_delivery_outbox.sql`：创建消息投递 Outbox，使消息事实与待投递事件在同一个 MySQL 事务提交。
+- `20261102_delivery_trace.sql`：给已有 Outbox 增加 `trace_id`，使 worker 重试和 Kafka/Redis 投递沿用入库时的链路编号；可重复执行。
+- `20261028_learning_tasks.sql`：增量创建学习群任务、成员提交、审计事件和任务通知待办四表，并预留禁用登录的系统通知账号 9002。
 
 ## 关键表设计
 
 - `users`：登录账号与用户 ID 映射，也承载 AI 助手这类系统虚拟用户。
 - `messages`：保存 `message_id / client_msg_id / conversation_id / session_id / seq / from_uid / to_id / to_type / create_time`，支撑历史消息查询、会话顺序展示和发送幂等。
 - `conversation_outbox`：消息事务内写入会话摘要事件；logic worker 以 pending/processing/done 状态重试，达到最大尝试次数后转 dead，避免毒事件无限重试。
+- `delivery_outbox`：保存待投递消息及收件人快照；Logic 提交消息后先尝试一次，Redis/Kafka 失败由 worker 通过 processing lease 重试，成功后转 done，多次失败转 dead。
 - `friend_requests / friend_relations`：保存好友申请和双向好友关系，支撑单聊权限校验。
 - `im_groups / group_members`：保存群组和群成员关系，支撑群聊权限校验和扩散成员来源。
 - `red_packets / red_packet_claims`：保存红包主状态和领取记录，使用红包主行锁和 `red_packet_id + user_id` 唯一索引防止并发超卖与重复领取。

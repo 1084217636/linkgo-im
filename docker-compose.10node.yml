@@ -7,6 +7,8 @@ x-linkgo-build: &linkgo-build
 x-gateway-depends: &gateway-depends
   logic:
     condition: service_healthy
+  logic-b:
+    condition: service_healthy
   redis:
     condition: service_started
   etcd:
@@ -15,7 +17,7 @@ x-gateway-depends: &gateway-depends
 services:
   etcd:
     image: quay.io/coreos/etcd:v3.5.15
-    container_name: linkgo-etcd
+    container_name: linkgo-next-etcd
     command:
       - /usr/local/bin/etcd
       - --name=etcd0
@@ -24,14 +26,14 @@ services:
 
   zookeeper:
     image: ${ZOOKEEPER_IMAGE:-confluentinc/cp-zookeeper:7.6.0}
-    container_name: linkgo-zookeeper
+    container_name: linkgo-next-zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
 
   kafka:
     image: ${KAFKA_IMAGE:-confluentinc/cp-kafka:7.6.0}
-    container_name: linkgo-kafka
+    container_name: linkgo-next-kafka
     depends_on:
       - zookeeper
     environment:
@@ -43,12 +45,12 @@ services:
 
   redis:
     image: ${REDIS_IMAGE:-redis:7-alpine}
-    container_name: linkgo-redis
+    container_name: linkgo-next-redis
     command: redis-server --requirepass 123456
 
   mysql:
     image: ${MYSQL_IMAGE:-mysql:8.0}
-    container_name: linkgo-mysql
+    container_name: linkgo-next-mysql
     environment:
       - MYSQL_ROOT_PASSWORD=root
       - MYSQL_DATABASE=linkgo_im
@@ -61,7 +63,7 @@ services:
 
   logic:
     build: *linkgo-build
-    container_name: linkgo-logic
+    container_name: linkgo-next-logic
     command: ./logic
     depends_on:
       mysql:
@@ -76,7 +78,37 @@ services:
       - REDIS_ADDR=redis:6379
       - REDIS_PASSWORD=123456
       - DB_DSN=root:root@tcp(mysql:3306)/linkgo_im?charset=utf8mb4&parseTime=True&loc=Local
-      - SERVICE_ADDR=logic:9001
+      - DB_MAX_OPEN_CONNS=50
+      - DB_MAX_IDLE_CONNS=10
+      - ETCD_ENDPOINTS=etcd:2379
+      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_GROUP_TOPIC=group_message_dispatch
+      - LOGIC_HEALTH_PORT=9002
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9002/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  logic-b:
+    build: *linkgo-build
+    container_name: linkgo-next-logic-b
+    command: ./logic
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      etcd:
+        condition: service_started
+      kafka:
+        condition: service_started
+    environment:
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=123456
+      - DB_DSN=root:root@tcp(mysql:3306)/linkgo_im?charset=utf8mb4&parseTime=True&loc=Local
+      - DB_MAX_OPEN_CONNS=50
+      - DB_MAX_IDLE_CONNS=10
       - ETCD_ENDPOINTS=etcd:2379
       - KAFKA_BROKERS=kafka:9092
       - KAFKA_GROUP_TOPIC=group_message_dispatch
@@ -89,7 +121,7 @@ services:
 
   transfer:
     build: *linkgo-build
-    container_name: linkgo-transfer
+    container_name: linkgo-next-transfer
     command: ./transfer
     depends_on:
       - redis
@@ -106,140 +138,164 @@ services:
 
   gateway-a:
     build: *linkgo-build
-    container_name: linkgo-gateway-a
+    container_name: linkgo-next-gateway-a
     command: ./gateway
     ports:
       - "8090:8090"
     depends_on: *gateway-depends
     environment:
+      - LINKGO_UPLOAD_DIR=/app/uploads
       - GATEWAY_PORT=8090
       - GATEWAY_ID=gateway-a
       - REDIS_ADDR=redis:6379
       - REDIS_PASSWORD=123456
       - ETCD_ENDPOINTS=etcd:2379
+    volumes: &gateway-media
+      - linkgo-uploads:/app/uploads
 
   gateway-b:
     build: *linkgo-build
-    container_name: linkgo-gateway-b
+    container_name: linkgo-next-gateway-b
     command: ./gateway
     ports:
       - "8091:8090"
     depends_on: *gateway-depends
     environment:
+      - LINKGO_UPLOAD_DIR=/app/uploads
       - GATEWAY_PORT=8090
       - GATEWAY_ID=gateway-b
       - REDIS_ADDR=redis:6379
       - REDIS_PASSWORD=123456
       - ETCD_ENDPOINTS=etcd:2379
+    volumes: *gateway-media
 
   gateway-c:
     build: *linkgo-build
-    container_name: linkgo-gateway-c
+    container_name: linkgo-next-gateway-c
     command: ./gateway
     ports:
       - "8092:8090"
     depends_on: *gateway-depends
     environment:
+      - LINKGO_UPLOAD_DIR=/app/uploads
       - GATEWAY_PORT=8090
       - GATEWAY_ID=gateway-c
       - REDIS_ADDR=redis:6379
       - REDIS_PASSWORD=123456
       - ETCD_ENDPOINTS=etcd:2379
+    volumes: *gateway-media
 
   gateway-d:
     build: *linkgo-build
-    container_name: linkgo-gateway-d
+    container_name: linkgo-next-gateway-d
     command: ./gateway
     ports:
       - "8093:8090"
     depends_on: *gateway-depends
     environment:
+      - LINKGO_UPLOAD_DIR=/app/uploads
       - GATEWAY_PORT=8090
       - GATEWAY_ID=gateway-d
       - REDIS_ADDR=redis:6379
       - REDIS_PASSWORD=123456
       - ETCD_ENDPOINTS=etcd:2379
+    volumes: *gateway-media
 
   gateway-e:
     build: *linkgo-build
-    container_name: linkgo-gateway-e
+    container_name: linkgo-next-gateway-e
     command: ./gateway
     ports:
       - "8094:8090"
     depends_on: *gateway-depends
     environment:
+      - LINKGO_UPLOAD_DIR=/app/uploads
       - GATEWAY_PORT=8090
       - GATEWAY_ID=gateway-e
       - REDIS_ADDR=redis:6379
       - REDIS_PASSWORD=123456
       - ETCD_ENDPOINTS=etcd:2379
+    volumes: *gateway-media
 
   gateway-f:
     build: *linkgo-build
-    container_name: linkgo-gateway-f
+    container_name: linkgo-next-gateway-f
     command: ./gateway
     ports:
       - "8095:8090"
     depends_on: *gateway-depends
     environment:
+      - LINKGO_UPLOAD_DIR=/app/uploads
       - GATEWAY_PORT=8090
       - GATEWAY_ID=gateway-f
       - REDIS_ADDR=redis:6379
       - REDIS_PASSWORD=123456
       - ETCD_ENDPOINTS=etcd:2379
+    volumes: *gateway-media
 
   gateway-g:
     build: *linkgo-build
-    container_name: linkgo-gateway-g
+    container_name: linkgo-next-gateway-g
     command: ./gateway
     ports:
       - "8096:8090"
     depends_on: *gateway-depends
     environment:
+      - LINKGO_UPLOAD_DIR=/app/uploads
       - GATEWAY_PORT=8090
       - GATEWAY_ID=gateway-g
       - REDIS_ADDR=redis:6379
       - REDIS_PASSWORD=123456
       - ETCD_ENDPOINTS=etcd:2379
+    volumes: *gateway-media
 
   gateway-h:
     build: *linkgo-build
-    container_name: linkgo-gateway-h
+    container_name: linkgo-next-gateway-h
     command: ./gateway
     ports:
       - "8097:8090"
     depends_on: *gateway-depends
     environment:
+      - LINKGO_UPLOAD_DIR=/app/uploads
       - GATEWAY_PORT=8090
       - GATEWAY_ID=gateway-h
       - REDIS_ADDR=redis:6379
       - REDIS_PASSWORD=123456
       - ETCD_ENDPOINTS=etcd:2379
+    volumes: *gateway-media
 
   gateway-i:
     build: *linkgo-build
-    container_name: linkgo-gateway-i
+    container_name: linkgo-next-gateway-i
     command: ./gateway
     ports:
       - "8098:8090"
     depends_on: *gateway-depends
     environment:
+      - LINKGO_UPLOAD_DIR=/app/uploads
       - GATEWAY_PORT=8090
       - GATEWAY_ID=gateway-i
       - REDIS_ADDR=redis:6379
       - REDIS_PASSWORD=123456
       - ETCD_ENDPOINTS=etcd:2379
+    volumes: *gateway-media
 
   gateway-j:
     build: *linkgo-build
-    container_name: linkgo-gateway-j
+    container_name: linkgo-next-gateway-j
     command: ./gateway
     ports:
       - "8099:8090"
     depends_on: *gateway-depends
     environment:
+      - LINKGO_UPLOAD_DIR=/app/uploads
       - GATEWAY_PORT=8090
       - GATEWAY_ID=gateway-j
       - REDIS_ADDR=redis:6379
       - REDIS_PASSWORD=123456
       - ETCD_ENDPOINTS=etcd:2379
+    volumes: *gateway-media
+
+volumes:
+  linkgo-uploads:

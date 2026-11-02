@@ -37,3 +37,8 @@ configs/config.yaml  # 如果里面有密码，先忽略，或者提交一个 co
 # 本地环境覆盖文件；.env.docker-cn 是可提交的镜像源配置，不放真实密钥
 .env.local
 .env.*.local
+.local-tls/
+
+web/node_modules/
+
+scripts/browser/node_modules/

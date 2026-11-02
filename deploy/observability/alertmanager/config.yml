@@ -1,0 +1,15 @@
+route:
+  receiver: local-audit
+  group_by: [alertname, instance]
+  group_wait: 1s
+  group_interval: 5s
+  repeat_interval: 1h
+receivers:
+  - name: local-audit
+    webhook_configs:
+      - url: http://gateway-a:8090/internal/alerts
+        send_resolved: true
+        http_config:
+          authorization:
+            type: Bearer
+            credentials: linkgo-local-alert

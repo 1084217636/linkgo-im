@@ -38,8 +38,7 @@ MySQL 写入成功
 
 因此，不能把 Redis Pub/Sub 当成最终送达证明。
 
-消息写入 MySQL 时，当前 logic 还会在同一个 InnoDB 事务写入
-`conversation_outbox`。它只负责“会话列表摘要最终一致”，不代表接收方已经 ACK；摘要处理失败最多重试 10 次，之后进入 `dead`，由运维检查 `last_error` 后修复或回放。
+消息写入 MySQL 时，logic 会在同一个 InnoDB 事务写入两类 Outbox：一类负责会话列表摘要最终一致，另一类保存收件人快照并负责 Redis/Kafka 外部投递。worker 以条件更新抢占租约，失败按退避时间重试，最多 10 次后进入 `dead`。Outbox 只保证消息提交后仍有可恢复的投递意图，不代表接收方已经 ACK。
 
 ## 2. LinkGo 中 ACK 的含义
 
@@ -241,7 +240,7 @@ seq > last_seq
 - 会先授权这个客户端提交的会话，不允许随意换 ID 读 timeline；
 - 依赖客户端正确维护并提交 `last_seq`。
 
-当前网页的初始 `last_seq` 来自登录返回的 `conversation.last_seq`，它是会话最新序号，不是这台设备已 ACK 的可靠游标；之后只在页面内存中更新，刷新会丢失。所以现有 timeline 更接近演示性近期补偿，不能说已经实现可靠的多设备游标同步。
+当前网页的初始 `last_seq` 来自登录返回的 `conversation.last_seq`，它是会话最新序号，不是这台设备已连续保存的可靠游标。网页另把完成 HTTP 历史分页后的 `sync_progress` 存入 IndexedDB，同一浏览器重新登录可以恢复。WebSocket timeline 仍只针对指定会话，不能据此说已实现完整多设备游标同步。
 
 所以不能在面试中说“用户一上线，服务端会自动从 MySQL 把所有会话缺失消息完整推送”。那是合理的下一版设计，但不是当前代码事实。
 
@@ -270,17 +269,17 @@ LIMIT 50;
 - 默认返回 50 条、最大 100 条，支持 `before_seq` 游标；
 - 使用 `before_seq` 向前翻页，默认返回 50 条、最大 100 条，并返回 `next_before_seq/has_more`；
 - 群历史会校验当前用户仍是 active 群成员；
-- 它由页面切换会话时主动调用，不是 WebSocket 重连函数自动调用。
+- 页面切换会话时调用它；登录、WebSocket 重连或点击“补齐历史”后，页面也会为已知会话逐个调用。它不是 Gateway 在单次 WebSocket 回放内部自动扫描所有会话。
 
 因此准确设计图是：
 
 ```text
 Redis pending/timeline    负责约 7 天内的自动快速补偿
 MySQL reconnect fallback  负责单会话缺口的长期回源
-MySQL history API         负责手动读取永久历史 cursor 页面
+MySQL history API         负责点开会话的历史页，以及网页对已知会话的本地补偿
 ```
 
-未来要实现完整恢复，才应增加“登录返回每个会话的客户端游标 + 按 seq 分页回源 MySQL”。
+当前页面使用现有 `before_seq` 历史接口向前翻页到本地进度；若要完整恢复，还需要服务端可分页的会话变更清单、连续水位和针对任意缺口的同步协议。
 
 ## 9. 四种 ID 各自解决什么问题
 
@@ -360,29 +359,31 @@ Gateway 不会让每个 WebSocket 读循环直接无限创建 goroutine。它按
 - 回放的第一次 WebSocket 写失败会立即返回并关闭无效连接。
 - 队列满时向客户端返回可关联的过载错误。
 - 消息事务内写入 `conversation_outbox`，worker 对会话摘要失败进行重试，毒事件超过 10 次进入 `dead`。
+- 消息事务内同时写入 `delivery_outbox`，worker 对 Redis/Kafka 外部投递做租约抢占、退避重试和 dead 收敛。
 
 ### 尚未实现
 
-- 自动从 MySQL 按 seq 恢复所有会话。
+- 服务端驱动地发现并恢复所有会话及任意低序号缺口；页面目前只逐个检查已知会话。
 - 带最终 `message_id/seq` 的发送方持久化回执；当前只有按 `client_msg_id` 关联的 Logic accepted/rejected 结果。
 - 多设备独立 ACK/游标。
-- 客户端持久化去重和完善的自动重连。
+- 完整多设备持久化去重与跨 Gateway 稳定入口故障切换；单浏览器 IndexedDB 和固定入口退避重连已经实现。
 - 跨机房容灾与数学意义的零丢失。
 
 仍需主动说明的故障窗口是：
 
 ```text
-MySQL 消息和摘要 Outbox 已提交
-→ Outbox worker 尚未处理，或 Redis pending/timeline 已过期
+MySQL 消息和两类 Outbox 已提交
+→ 投递 worker 重试 Redis/Kafka
+→ 外部写成功但 Outbox 标记完成前宕机时允许重复，由下游幂等收敛
 ```
 
-现在摘要事件不会因为 Logic 在消息提交后立刻崩溃而永久丢失；worker 会按状态重试。接收方投递仍受 Redis、Gateway、客户端 ACK 和重连游标影响，不能把当前系统描述成全链路无条件“至少一次”或零丢失。
+现在摘要和投递事件都不会因为 Logic 在消息提交后立刻崩溃而永久丢失；worker 会按状态重试。接收方投递仍受 Redis 保留期、Gateway、客户端 ACK 和重连游标影响，因此不能描述成零丢失或端到端 exactly-once。
 
 ## 12. 面试时怎样准确回答
 
 可以这样说：
 
-> 我的项目不把 Redis Pub/Sub 当可靠消息队列。Logic 先把消息和会话摘要 Outbox 写进同一个 MySQL 事务，再在 Redis 记录接收方 pending，并根据在线路由定向发布到目标 Gateway。客户端收到后按 message_id 返回 ACK，Gateway 才清理 pending；ACK 超时会有限重试。用户离线重连时，当前代码先回放 Redis pending，再按一个 session_id 和 last_seq 从 Redis timeline 补近期缺口，Redis 不足时按 `seq > last_seq` 回源 MySQL 分批补偿。Outbox worker 只保证摘要事件可恢复，不等于接收方已经送达；seq 也允许空洞。因此我会说它是边界清楚的可靠性原型，不会夸大成全链路零丢失或完整生产级至少一次。
+> 我的项目不把 Redis Pub/Sub 当可靠消息队列。Logic 在同一个 MySQL 事务提交消息事实、会话摘要事件和投递事件，提交后由投递 worker 先登记 pending，再根据消息类型写 Redis 或 Kafka；失败会退避重试，超过上限进入 dead。客户端收到后按 message_id 返回 ACK，Gateway 才清理 pending；ACK 超时会有限重试。用户重连时先回放 pending，再按客户端上报的一个会话游标从 Redis timeline 补近期缺口，不足时回源 MySQL。Outbox 解决数据库提交到外部投递之间的崩溃窗口，但外部写成功、标记完成前宕机仍会重复，所以 Kafka 消费、Redis 下行和客户端都必须幂等。
 
 ## 本章代码阅读任务
 
@@ -405,7 +406,7 @@ MySQL 消息和摘要 Outbox 已提交
 | 7 | `internal/server/client_error.go` 的 `pushProcessingDetail`、`writePushResult`，再看页面 `handleSystemMessage()` | 区分内部入队 accepted、Logic `MESSAGE_ACCEPTED/REJECTED` 和接收方 ACK |
 | 8 | `cmd/gateway/internal/logic/historylogic.go` 的 `GetHistory` 与核心 `LogicHandler.GetHistory` | 确认历史 HTTP/gRPC 使用 `before_seq` cursor；重连则使用 `seq > last_seq` 的 MySQL fallback |
 
-看到这个程度就停：你能画出正常 ACK、ACK 丢失、离线重连三张状态图，并能说出每一步保留或删除哪个 Key。暂时不必证明严格的分布式至少一次语义，也不必设计全链路 Outbox、设备游标和多会话自动恢复。
+看到这个程度就停：你能画出正常 ACK、Kafka 不可用、ACK 丢失、离线重连四张状态图，并能说出每一步保留或删除什么状态。暂时不必证明跨机房零丢失，也不必设计多设备游标和多会话自动恢复。
 
 与本章直接对应的测试是：
 
@@ -450,7 +451,7 @@ internal/server/sync_test.go      pending/timeline 回放遇到第一次写失�
 2. B 已收到但 ACK 丢失：pending 保留；超时循环用同一 message_id/payload 重推；B 可能收到重复并再次 ACK，客户端按 message_id 去重，服务端收到 ACK 后清理。
 3. B 离线：投递先留下 pending，再写 `offline_msg:B`；重连时先从 pending + ack_idx 回放，B ACK 后清理；若还带一个授权 session 和 last_seq，再从 timeline 补近期缺口。
 
-Redis 整体数据丢失后，MySQL 仍有消息正文、message_id、client_msg_id、session_id 和 seq，也有关系数据。当前不会自动恢复 pending/retry/offline、在线 route、timeline payload 和 Redis 快速游标；带单会话 cursor 的 WebSocket 重连可以回源 MySQL，但不会自动扫描用户所有会话，也不会恢复 Redis Pub/Sub 中断期间的实时通知。
+Redis 整体数据丢失后，MySQL 仍有消息正文、message_id、client_msg_id、session_id 和 seq，也有关系数据。当前不会自动恢复 pending/retry/offline、在线 route、timeline payload 和 Redis 快速游标；带单会话 cursor 的 WebSocket 重连可以回源 MySQL，网页也可用 HTTP 对已知会话逐个查历史，但未知会话与任意深层缺口仍不能保证完整发现。
 
 ### 闭卷检查答案
 
@@ -458,10 +459,10 @@ Redis 整体数据丢失后，MySQL 仍有消息正文、message_id、client_msg
 2. `pending_ack` 保存 message_id 与投递时间；`ack_idx` 保存 message_id 到完整 payload；`ack_retry` 保存重试次数。
 3. 客户端可能已经处理，但 ACK 在网络中丢失，服务端会重推；客户端按稳定 `message_id` 去重。
 4. 不是。它只作离线标记；重连正文先从 `pending_ack` 找 ID，再从 `ack_idx` 取 payload。
-5. URL 仍然携带一个会话 cursor，服务端先回放 pending 和 Redis timeline，再从 MySQL 按 `seq > last_seq` 分批兜底，保护上限为 1000 条；仍然不会一次同步用户所有会话。
+5. URL 仍然携带一个会话 cursor，Gateway 先回放 pending 和 Redis timeline，再从 MySQL 按 `seq > last_seq` 分批兜底，保护上限为 1000 条；网页随后另用 HTTP 逐个检查已知会话。
 6. 历史向前翻页使用 `seq < before_seq`，默认 50、最大 100，查询多一条判断 `has_more`；重连向后补偿使用 `seq > last_seq`，两者都是 cursor，不使用深 OFFSET。
 7. `client_msg_id` 由发送端生成并在重试时复用，约束一次逻辑发送；`message_id` 由服务端生成，用于持久记录、接收去重和 ACK。
-8. Outbox 能保证消息提交后的摘要事件可恢复，但 Redis 短期状态会过期或丢失，客户端也没有持久设备游标，因此接收方全链路仍有补偿窗口。
+8. Outbox 能保证消息提交后的摘要事件可恢复，但 Redis 短期状态会过期或丢失；网页虽然有 IndexedDB 的历史同步进度，仍缺多设备和任意乱序下的严格连续水位，因此接收方全链路仍有补偿窗口。
 9. 内部入队 `accepted` 只证明任务进入 Gateway 内存；入队拒绝帧证明任务未进入队列，并告诉客户端是否可重试。后续 `MESSAGE_ACCEPTED/REJECTED` 才表示 Logic 调用结果，仍不表示 B 已 ACK。
 10. socket 已经失效，继续循环只会制造更多失败并可能假装完成。立即返回会触发连接清理，未 ACK 的状态仍保留，客户端下次重连可再次尝试。
 

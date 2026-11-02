@@ -57,6 +57,14 @@
         button.primary:hover { background: #0f68e8; color: #fff; }
         button.danger:hover { border-color: var(--bad); color: var(--bad); }
         button.ghost { background: transparent; }
+        .task-panel { border-bottom: 1px solid var(--line); padding: 10px 16px; background: #f8fbff; max-height: 46vh; overflow: auto; }
+        .task-panel[hidden] { display: none; }
+        .task-panel summary { cursor: pointer; font-weight: 700; }
+        .task-panel .row { margin: 8px 0; }
+        .task-card { background: white; border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin: 8px 0; }
+        .task-card button { margin: 4px; }
+        .task-muted { color: var(--muted); font-size: 12px; }
+        .task-panel textarea { min-height: 65px; }
 
         input, select, textarea {
             width: 100%;
@@ -291,6 +299,10 @@
             grid-template-rows: 58px minmax(0, 1fr) 150px 132px;
         }
 
+        .chat:has(.task-panel:not([hidden])) {
+            grid-template-rows: 58px auto minmax(0, 1fr) 150px 132px;
+        }
+
         .chat-head {
             display: grid;
             grid-template-columns: 280px 112px 150px 86px 86px;
@@ -495,6 +507,8 @@
                     <button id="open-ai-btn">AI 助手</button>
                     <button id="fill-demo-btn">填充消息</button>
                     <button id="connect-btn">重连 WS</button>
+                    <button id="local-data-btn">本地数据</button>
+                    <button id="sync-history-btn">补齐历史</button>
                 </div>
                 <div class="row">
                     <input id="friend-target" placeholder="目标用户ID">
@@ -577,8 +591,22 @@
                 </select>
                 <input id="target-id" placeholder="目标ID">
                 <button id="open-chat-btn">打开</button>
-                <button id="history-btn">历史</button>
+                <button id="history-btn" disabled>加载更早</button>
             </div>
+
+            <details class="task-panel" id="task-panel" hidden>
+                <summary>学习群任务 <span id="task-group-name"></span></summary>
+                <div id="task-status" class="task-muted">请选择群聊</div>
+                <div class="row"><button id="task-refresh-btn">刷新任务</button><button id="task-new-btn" hidden>新建草稿</button></div>
+                <div id="task-create-form" hidden class="task-card">
+                    <input id="task-title" placeholder="任务标题（必填）">
+                    <textarea id="task-description" placeholder="任务说明"></textarea>
+                    <label>截止时间（可选）<input id="task-due-at" type="datetime-local"></label>
+                    <button id="task-create-btn" class="primary">保存草稿</button>
+                </div>
+                <div id="task-list"></div>
+                <div id="task-detail"></div>
+            </details>
 
             <div class="messages" id="messages">
                 <div class="empty">登录后选择会话</div>
@@ -586,6 +614,8 @@
 
             <div class="composer">
                 <input id="client-msg-id" placeholder="clientMsgId 自动生成">
+                <button id="attach-file-btn" type="button">上传群文件</button>
+                <input id="attach-file-input" type="file" accept="image/*,video/mp4,video/webm,.pdf,.txt,.md,.csv,.docx,.xlsx,.pptx" hidden>
                 <button id="send-btn" class="primary">发送</button>
                 <button id="resend-btn">重发上条</button>
                 <textarea id="message-input" placeholder="输入消息"></textarea>
@@ -596,12 +626,16 @@
     </main>
 </div>
 
+<script src="./client-store.js"></script>
+<script src="./history-sync.js"></script>
+<script src="./task-panel.js"></script>
 <script>
 (() => {
     const textEncoder = new TextEncoder();
     const textDecoder = new TextDecoder();
     const AI_BOT_ID = "9001";
     const AI_BOT_NAME = "ai_assistant";
+    const TASK_BOT_ID = "9002";
 
     const state = {
         token: "",
@@ -610,6 +644,7 @@
         heartbeatTimer: null,
         reconnectTimer: null,
         reconnectAttempt: 0,
+        wsConnectionSerial: 0,
         intentionalClose: false,
         lastPongAt: 0,
         currentTarget: "",
@@ -623,13 +658,27 @@
         lastAckedSeqBySession: new Map(),
         historyCursorBySession: new Map(),
         historyHasMoreBySession: new Map(),
+        historyLoadingSessions: new Set(),
+        historySyncedSeqBySession: new Map(),
+        historySyncReady: false,
+        historySyncPromise: null,
+        historySyncEpoch: 0,
+        historyRequestSerial: 0,
         lastWire: null,
-        pendingMessages: new Map()
+        pendingMessages: new Map(),
+        localStoreReady: false
     };
 
     const $ = (id) => document.getElementById(id);
 
     $("host").value = defaultGatewayHost();
+    if (window.location.protocol === "https:") {
+        // The secure demo serves the page and proxies API/WS on one TLS origin.
+        $("host").value = window.location.hostname;
+        $("port").value = window.location.port || "443";
+        $("host").disabled = true;
+        $("port").disabled = true;
+    }
 
     function defaultGatewayHost() {
         const host = window.location.hostname || "";
@@ -640,12 +689,13 @@
     }
 
     function apiBase() {
+        if (window.location.protocol === "https:") return window.location.origin;
         return `http://${$("host").value.trim() || "localhost"}:${$("port").value.trim() || "8090"}`;
     }
 
     function wsBase() {
-        const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-        return `${scheme}://${$("host").value.trim() || "localhost"}:${$("port").value.trim() || "8090"}`;
+        if (window.location.protocol === "https:") return `wss://${window.location.host}`;
+        return `ws://${$("host").value.trim() || "localhost"}:${$("port").value.trim() || "8090"}`;
     }
 
     function nowText() {
@@ -675,6 +725,94 @@
         } catch {
             return String(value);
         }
+    }
+
+    function persist(operation, label) {
+        Promise.resolve(operation).catch((error) => {
+            log("warn", `${label || "本地数据写入"}失败`, error.message || error);
+        });
+    }
+
+    async function restoreLocalState() {
+        if (!state.userId || !window.LinkGoStore) return;
+        try {
+            await window.LinkGoStore.open();
+            const [conversations, cursors, progress] = await Promise.all([
+                window.LinkGoStore.listConversations(state.userId),
+                window.LinkGoStore.listCursors(state.userId),
+                window.LinkGoStore.listSyncProgress(state.userId)
+            ]);
+            state.localStoreReady = true;
+            for (const conversation of conversations) {
+                addConversation(conversation.target, conversation.type, conversation);
+            }
+            for (const cursor of cursors) {
+                const lastSeq = Number(cursor.last_seq || 0);
+                const ackedSeq = Number(cursor.acked_seq || 0);
+                if (lastSeq > (state.lastSeqBySession.get(cursor.session_id) || 0)) {
+                    state.lastSeqBySession.set(cursor.session_id, lastSeq);
+                }
+                if (ackedSeq > (state.lastAckedSeqBySession.get(cursor.session_id) || 0)) {
+                    state.lastAckedSeqBySession.set(cursor.session_id, ackedSeq);
+                }
+            }
+            for (const row of progress) {
+                state.historySyncedSeqBySession.set(row.session_id, Number(row.synced_seq || 0));
+            }
+            log("ok", "IndexedDB 本地状态已恢复", {
+                conversations: conversations.length,
+                cursors: cursors.length,
+                synced_conversations: progress.length
+            });
+        } catch (error) {
+            state.localStoreReady = false;
+            log("warn", "IndexedDB 不可用，继续使用服务端历史", error.message || error);
+        }
+    }
+
+    async function renderLocalHistory(sessionID, reason) {
+        if (!state.localStoreReady || !state.userId || !sessionID) return false;
+        const messages = await window.LinkGoStore.listMessages(state.userId, sessionID);
+        if (!messages.length) return false;
+        renderMessages(messages);
+        log("warn", "已回退到 IndexedDB 本地历史", { reason, count: messages.length });
+        return true;
+    }
+
+    async function reconcileServerPage(sessionID, serverMessages) {
+        if (!state.localStoreReady || !state.userId) return [];
+        const localMessages = await window.LinkGoStore.listMessages(state.userId, sessionID);
+        const localByID = new Map(localMessages
+            .filter((item) => item.message_id)
+            .map((item) => [item.message_id, item]));
+        const serverByID = new Map(serverMessages
+            .filter((item) => item.message_id)
+            .map((item) => [item.message_id, item]));
+        const localIDs = new Set(localByID.keys());
+        const serverIDs = new Set(serverByID.keys());
+        const newFromServer = [...serverIDs].filter((id) => !localIDs.has(id)).length;
+        const localOutsidePage = [...localIDs].filter((id) => !serverIDs.has(id)).length;
+        let matched = 0;
+        let conflicts = 0;
+        for (const [messageID, serverMessage] of serverByID) {
+            const localMessage = localByID.get(messageID);
+            if (!localMessage) continue;
+            if (Number(localMessage.seq || 0) === Number(serverMessage.seq || 0)
+                && String(localMessage.body || "") === String(serverMessage.body || "")) {
+                matched++;
+            } else {
+                conflicts++;
+            }
+        }
+        log("info", "服务端历史与 IndexedDB 当前页对账", {
+            server_page: serverMessages.length,
+            local_total: localMessages.length,
+            matched,
+            conflicts,
+            new_from_server: newFromServer,
+            local_not_in_current_page: localOutsidePage
+        });
+        return localMessages;
     }
 
     window.addEventListener("error", (event) => {
@@ -863,6 +1001,7 @@
 
     function displayName(id, fallback = "") {
         if (isAIUser(id)) return AI_BOT_NAME;
+        if (String(id || "") === TASK_BOT_ID) return "学习任务助手";
         const meta = state.friendMeta.get(String(id || ""));
         return meta && meta.username ? meta.username : (fallback || id || "");
     }
@@ -873,12 +1012,14 @@
         const sessionID = buildSessionId(target, state.currentType);
         state.historyCursorBySession.delete(sessionID);
         state.historyHasMoreBySession.delete(sessionID);
+        updateHistoryButton(sessionID);
         $("target-id").value = target;
         $("target-type").value = state.currentType;
         const name = state.currentType === "group" ? target : displayName(target);
         $("current-title").textContent = target ? `${state.currentType === "group" ? "群聊" : "私聊"} ${name}` : "未选择会话";
         updateCurrentMeta();
         renderLists();
+        window.LinkGoTasks.setGroup(state.currentType === "group" ? target : "");
     }
 
     function updateCurrentMeta() {
@@ -892,7 +1033,11 @@
         const realType = type || (String(target).startsWith("G") ? "group" : "user");
         const key = `${realType}:${target}`;
         const prev = state.conversations.get(key) || {};
-        state.conversations.set(key, { ...prev, ...meta, target, type: realType });
+        const conversation = { ...prev, ...meta, target, type: realType };
+        state.conversations.set(key, conversation);
+        if (state.localStoreReady && state.userId) {
+            persist(window.LinkGoStore.putConversation(state.userId, conversation), "保存本地会话");
+        }
     }
 
     function targetFromConversation(conv) {
@@ -1023,7 +1168,10 @@
             box.appendChild(emptyLine("暂无消息"));
             return;
         }
-        for (const msg of messages) renderMessage(msg, { fromHistory: true });
+        for (const msg of messages) renderMessage(msg, {
+            fromHistory: true,
+            pending: msg.status === "pending"
+        });
         box.scrollTop = box.scrollHeight;
     }
 
@@ -1035,9 +1183,28 @@
         if (messageID) state.renderedMessageIds.add(messageID);
 
         const sessionID = sessionOfMessage(msg);
+        if (!options.skipPersist && state.localStoreReady && state.userId && sessionID) {
+            persist(
+                window.LinkGoStore.putMessage(
+                    state.userId,
+                    sessionID,
+                    msg,
+                    options.pending ? "pending" : (msg.status || "received")
+                ),
+                "保存本地消息"
+            );
+        }
         if (msg.seq) {
             const current = state.lastSeqBySession.get(sessionID) || 0;
-            if (msg.seq > current) state.lastSeqBySession.set(sessionID, msg.seq);
+            if (msg.seq > current) {
+                state.lastSeqBySession.set(sessionID, msg.seq);
+                if (state.localStoreReady && state.userId && sessionID) {
+                    persist(window.LinkGoStore.putCursor(state.userId, sessionID, {
+                        last_seq: msg.seq,
+                        acked_seq: state.lastAckedSeqBySession.get(sessionID) || 0
+                    }), "保存本地会话游标");
+                }
+            }
             updateCurrentMeta();
         }
 
@@ -1061,10 +1228,55 @@
             </div>
         `;
         row.querySelector(".meta").textContent = meta;
-        row.querySelector(".bubble").textContent = msg.body || "";
-        box.appendChild(row);
-        box.scrollTop = box.scrollHeight;
+        const bubble = row.querySelector(".bubble");
+        const attachment = parseAttachmentBody(msg.body);
+        if (attachment) {
+            bubble.replaceChildren();
+            const label = document.createElement("span");
+            label.textContent = `📎 ${attachment.file_name} (${formatBytes(attachment.size)}) `;
+            bubble.appendChild(label);
+            const open = document.createElement("button");
+            open.type = "button";
+            open.textContent = "查看/下载";
+            open.onclick = () => void openAttachment(attachment.attachment_id, attachment.file_name, attachment.mime_type);
+            bubble.appendChild(open);
+        } else {
+            bubble.textContent = msg.body || "";
+        }
+        if ((msg.body || "").includes("task://")) {
+            row.querySelector(".bubble").style.cursor = "pointer";
+            row.querySelector(".bubble").title = "打开学习任务";
+            row.querySelector(".bubble").onclick = () => window.LinkGoTasks.openFromMessage(msg.body || "");
+        }
+        if (msg.seq > 0) {
+            row.dataset.seq = String(msg.seq);
+            const next = [...box.querySelectorAll(".msg[data-seq]")]
+                .find((item) => Number(item.dataset.seq) > Number(msg.seq));
+            if (next) box.insertBefore(row, next);
+            else box.appendChild(row);
+        } else {
+            box.appendChild(row);
+        }
+        if (!options.preserveScroll) box.scrollTop = box.scrollHeight;
     }
+
+    function updateHistoryButton(sessionID = buildSessionId(state.currentTarget, state.currentType)) {
+        const button = $("history-btn");
+        if (!button) return;
+        const loading = state.historyLoadingSessions.has(sessionID);
+        const hasMore = state.historyHasMoreBySession.get(sessionID) === true;
+        button.disabled = loading || !hasMore;
+        button.textContent = loading ? "加载中…" : (hasMore ? "加载更早" : "没有更多");
+    }
+
+    $("messages").addEventListener("scroll", () => {
+        const sessionID = buildSessionId(state.currentTarget, state.currentType);
+        if ($("messages").scrollTop <= 32
+            && state.historyHasMoreBySession.get(sessionID) === true
+            && !state.historyLoadingSessions.has(sessionID)) {
+            void loadHistory({ older: true });
+        }
+    });
 
     async function login() {
         try {
@@ -1077,12 +1289,20 @@
             });
             state.token = payload.token;//这里已经完成jwt了
             state.userId = payload.user_id;
+            state.currentTarget = "";
+            state.currentType = "user";
+            window.LinkGoTasks.reset();
             state.conversations.clear();
             state.lastSeqBySession.clear();
             state.lastAckedSeqBySession.clear();
             state.historyCursorBySession.clear();
             state.historyHasMoreBySession.clear();
+            state.historySyncedSeqBySession.clear();
+            state.historySyncReady = false;
+            state.historySyncPromise = null;
+            state.historySyncEpoch += 1;
             state.friendMeta.clear();
+            await restoreLocalState();
             for (const conv of payload.conversations || []) {
                 const target = targetFromConversation(conv);
                 if (target) {
@@ -1095,6 +1315,12 @@
                     });
                     state.lastSeqBySession.set(conv.conversation_id, conv.last_seq || 0);
                     state.lastAckedSeqBySession.set(conv.conversation_id, conv.acked_seq || 0);
+                    if (state.localStoreReady) {
+                        persist(window.LinkGoStore.putCursor(state.userId, conv.conversation_id, {
+                            last_seq: conv.last_seq || 0,
+                            acked_seq: conv.acked_seq || 0
+                        }), "同步服务端会话游标");
+                    }
                 }
             }
             setStatus("warn", `已登录 ${state.userId}`);
@@ -1102,19 +1328,22 @@
             connectWebSocket();
             await Promise.allSettled([refreshFriends(), refreshRequests(), refreshGroups()]);
             const first = [...state.conversations.values()][0] || state.friends[0] && { target: state.friends[0].user_id, type: "user" };
-            if (first) {
+            if (first && !state.currentTarget) {
                 setCurrent(first.target, first.type);
                 await loadHistory();
             } else {
                 renderLists();
             }
+            state.historySyncReady = true;
+            void syncKnownHistory();
+            log("info", "登录初始化完成");
         } catch (err) {
             setStatus("error", "登录失败");
             log("error", "登录失败", err.message);
         }
     }
 
-    function connectWebSocket() {
+    async function connectWebSocket() {
         if (!state.token) {
             log("warn", "缺少 token，无法连接 WebSocket");
             return;
@@ -1127,9 +1356,24 @@
         if (state.ws) state.ws.close();
         if (state.heartbeatTimer) clearInterval(state.heartbeatTimer);
 
+        const serial = ++state.wsConnectionSerial;
+        let ticket;
+        try {
+            const issued = await apiFetch("/api/v1/ws-ticket", { method: "POST" });
+            ticket = issued.ticket;
+            if (!ticket) throw new Error("服务器未返回 WebSocket 凭证");
+        } catch (err) {
+            if (serial === state.wsConnectionSerial) {
+                log("error", "获取 WebSocket 凭证失败", err.message);
+                scheduleReconnect();
+            }
+            return;
+        }
+        if (serial !== state.wsConnectionSerial || !state.token) return;
+
         const sessionID = buildSessionId(state.currentTarget, state.currentType);
         const lastSeq = state.lastAckedSeqBySession.get(sessionID);
-        const query = new URLSearchParams({ token: state.token });
+        const query = new URLSearchParams({ ticket });
         if (sessionID) {
             query.set("session_id", sessionID);
             query.set("last_seq", String(lastSeq === undefined ? -1 : lastSeq));
@@ -1147,8 +1391,9 @@
             setStatus("ok", `在线 ${state.userId}`);
             log("ok", "WebSocket 已连接");
             startHeartbeat();
+            if (state.historySyncReady) void syncKnownHistory();
         };
-        ws.onmessage = (event) => handleWsMessage(event.data);
+        ws.onmessage = (event) => { void handleWsMessage(event.data); };
         ws.onerror = () => log("error", "WebSocket 错误");
         ws.onclose = () => {
             if (state.ws === ws) {
@@ -1201,7 +1446,7 @@
         }, 20000);
     }
 
-    function handleWsMessage(data) {
+    async function handleWsMessage(data) {
         if (typeof data === "string") {
             log("info", "收到文本消息", data);
             return;
@@ -1220,6 +1465,13 @@
 
             clearPendingMessage(msg.client_msg_id);
 
+            // Persist every conversation, including one that is not currently
+            // visible, before acknowledging a received message to the server.
+            const sessionID = sessionOfMessage(msg);
+            if (state.localStoreReady && state.userId && sessionID) {
+                await window.LinkGoStore.putMessage(state.userId, sessionID, msg, "received");
+            }
+
             const peer = peerOfMessage(msg);
             addConversation(peer, msg.to_type || "user", {
                 title: displayName(peer, peer),
@@ -1229,9 +1481,10 @@
             });
             renderLists();
             if (peer === state.currentTarget || sessionOfMessage(msg) === buildSessionId(state.currentTarget, state.currentType)) {
-                renderMessage(msg);
+                renderMessage(msg, { skipPersist: true });
             }
             ackMessage(msg);
+            window.LinkGoTasks.onMessage(msg.body || "");
             log("ok", "收到消息", {
                 from: msg.from,
                 to: msg.to,
@@ -1239,7 +1492,7 @@
                 message_id: msg.message_id
             });
         } catch (err) {
-            log("error", "解析 WebSocket 消息失败", err.message);
+            log("error", "消息处理或本地保存失败，暂不 ACK", err.message);
         }
     }
 
@@ -1254,6 +1507,9 @@
         if (detail.type === "result" && detail.code === "MESSAGE_ACCEPTED") {
             clearPendingMessage(clientMsgID);
             markPendingMessageState(clientMsgID, "accepted");
+            if (state.localStoreReady) {
+                persist(window.LinkGoStore.updateOutgoingStatus(state.userId, clientMsgID, "accepted"), "更新本地发送状态");
+            }
             log("ok", "消息已被 Logic 接受", { client_msg_id: clientMsgID });
             return true;
         }
@@ -1272,6 +1528,9 @@
         } else {
             clearPendingMessage(clientMsgID);
             markPendingMessageState(clientMsgID, "rejected");
+            if (state.localStoreReady) {
+                persist(window.LinkGoStore.updateOutgoingStatus(state.userId, clientMsgID, "rejected"), "更新本地发送状态");
+            }
         }
         return true;
     }
@@ -1339,35 +1598,134 @@
         }));
         const sessionID = sessionOfMessage(msg);
         const current = state.lastAckedSeqBySession.get(sessionID) || 0;
-        if (msg.seq > current) state.lastAckedSeqBySession.set(sessionID, msg.seq);
+        if (msg.seq > current) {
+            state.lastAckedSeqBySession.set(sessionID, msg.seq);
+            if (state.localStoreReady) {
+                persist(window.LinkGoStore.putCursor(state.userId, sessionID, {
+                    last_seq: Math.max(msg.seq, state.lastSeqBySession.get(sessionID) || 0),
+                    acked_seq: msg.seq
+                }), "保存本地 ACK 游标");
+            }
+        }
+    }
+
+    async function syncOneConversation(userID, token, conversation) {
+        const sessionID = buildSessionId(conversation.target, conversation.type);
+        if (!sessionID) return 0;
+        const previousSeq = state.historySyncedSeqBySession.get(sessionID) || 0;
+        const result = await window.LinkGoHistorySync.collectMissingPages(async (beforeSeq) => {
+            if (state.userId !== userID || state.token !== token) return { data: [] };
+            const params = new URLSearchParams({ target_id: conversation.target, limit: "100" });
+            if (beforeSeq > 0) params.set("before_seq", String(beforeSeq));
+            return apiFetch(`/api/v1/history?${params.toString()}`);
+        }, previousSeq);
+        if (state.userId !== userID || state.token !== token || !result.messages.length) return 0;
+        await window.LinkGoStore.saveHistoryRange(userID, sessionID, result.messages, result.newestSeq);
+        state.historySyncedSeqBySession.set(sessionID, result.newestSeq);
+        log("ok", "会话历史补齐并保存", {
+            session_id: sessionID,
+            added: result.added,
+            checked: result.messages.length,
+            pages: result.pages,
+            synced_seq: result.newestSeq
+        });
+        if (sessionID === buildSessionId(state.currentTarget, state.currentType)) {
+            await loadHistory({ latest: true });
+        }
+        return result.added;
+    }
+
+    function syncKnownHistory() {
+        if (!state.historySyncReady || !state.localStoreReady || !state.userId || !state.token) {
+            return Promise.resolve(0);
+        }
+        if (state.historySyncPromise) return state.historySyncPromise;
+        const userID = state.userId;
+        const token = state.token;
+        const epoch = state.historySyncEpoch;
+        const conversations = [...state.conversations.values()];
+        const running = (async () => {
+            let added = 0;
+            for (const conversation of conversations) {
+                if (state.userId !== userID || state.token !== token) break;
+                try {
+                    added += await syncOneConversation(userID, token, conversation);
+                } catch (error) {
+                    log("warn", "会话历史补齐失败，下次可重试", {
+                        target: conversation.target,
+                        error: error.message || String(error)
+                    });
+                }
+            }
+            log("info", "已检查已知会话历史", { conversations: conversations.length, added });
+            return added;
+        })().finally(() => {
+            if (state.historySyncEpoch === epoch) state.historySyncPromise = null;
+        });
+        state.historySyncPromise = running;
+        return running;
     }
 
     async function loadHistory(options = {}) {
         if (!state.token || !state.currentTarget) return;
         const sessionID = buildSessionId(state.currentTarget, state.currentType);
-        const beforeSeq = options.beforeSeq || state.historyCursorBySession.get(sessionID) || 0;
-        const params = new URLSearchParams({ target_id: state.currentTarget });
+        const targetID = state.currentTarget;
+        const beforeSeq = options.latest
+            ? 0
+            : (options.beforeSeq || (options.older ? state.historyCursorBySession.get(sessionID) || 0 : 0));
+        if (options.older && beforeSeq <= 0) return;
+        if (state.historyLoadingSessions.has(sessionID)) return;
+        state.historyLoadingSessions.add(sessionID);
+        updateHistoryButton(sessionID);
+        const requestSerial = ++state.historyRequestSerial;
+        if (options.latest) state.historyCursorBySession.delete(sessionID);
+        const params = new URLSearchParams({ target_id: targetID });
         if (beforeSeq > 0) params.set("before_seq", String(beforeSeq));
         params.set("limit", "50");
         try {
             const payload = await apiFetch(`/api/v1/history?${params.toString()}`);
             const data = Array.isArray(payload.data) ? payload.data : [];
+            const localMessages = await reconcileServerPage(sessionID, data);
+            if (requestSerial !== state.historyRequestSerial
+                || sessionID !== buildSessionId(state.currentTarget, state.currentType)) return;
             if (!beforeSeq) {
-                state.renderedMessageIds.clear();
-                $("messages").innerHTML = "";
+                const display = window.LinkGoHistorySync.mergeLatestPage(data, localMessages);
+                renderMessages(display);
+            } else {
+                const box = $("messages");
+                const oldHeight = box.scrollHeight;
+                const oldTop = box.scrollTop;
+                for (const msg of data) {
+                    renderMessage(msg, {
+                        fromHistory: true,
+                        pending: msg.status === "pending",
+                        preserveScroll: true
+                    });
+                }
+                box.scrollTop = oldTop + (box.scrollHeight - oldHeight);
             }
-            renderMessages(data);
             state.historyHasMoreBySession.set(sessionID, Boolean(payload.has_more));
             if (payload.has_more && payload.next_before_seq) {
                 state.historyCursorBySession.set(sessionID, payload.next_before_seq);
             }
+            updateHistoryButton(sessionID);
             log("ok", beforeSeq ? "历史上一页加载完成" : "历史加载完成", {
-                target_id: state.currentTarget,
+                target_id: targetID,
                 count: data.length,
                 has_more: Boolean(payload.has_more)
             });
         } catch (err) {
+            if (requestSerial !== state.historyRequestSerial
+                || sessionID !== buildSessionId(state.currentTarget, state.currentType)) return;
             log("error", "历史加载失败", err.message);
+            try {
+                await renderLocalHistory(sessionID, err.message);
+            } catch (localError) {
+                log("error", "本地历史读取失败", localError.message);
+            }
+        } finally {
+            state.historyLoadingSessions.delete(sessionID);
+            if (sessionID === buildSessionId(state.currentTarget, state.currentType)) updateHistoryButton(sessionID);
         }
     }
 
@@ -1657,6 +2015,12 @@
         if (!existing) {
             state.pendingMessages.set(wire.client_msg_id, { wire, attempts: 0, timer: null });
         }
+        if (state.localStoreReady) {
+            persist(
+                window.LinkGoStore.putMessage(state.userId, buildSessionId(state.currentTarget, state.currentType), wire, "pending"),
+                "保存本地发送箱"
+            );
+        }
         addConversation(state.currentTarget, state.currentType, {
             title: state.currentType === "group" ? state.currentTarget : displayName(state.currentTarget),
             last_msg: wire.body,
@@ -1669,6 +2033,56 @@
             client_msg_id: wire.client_msg_id
         });
         window.setTimeout(loadHistory, 900);
+    }
+
+    function parseAttachmentBody(body) {
+        try {
+            const value = JSON.parse(body || "");
+            return value && value.kind === "attachment" && value.attachment_id ? value : null;
+        } catch { return null; }
+    }
+
+    function formatBytes(value) {
+        const size = Number(value) || 0;
+        return size < 1024 * 1024 ? `${Math.ceil(size / 1024)} KB` : `${(size / 1024 / 1024).toFixed(1)} MB`;
+    }
+
+    async function openAttachment(id, name, mimeType) {
+        const response = await fetch(`${apiBase()}/api/v1/attachments/${encodeURIComponent(id)}/download`, {
+            headers: { Authorization: `Bearer ${state.token}` }
+        });
+        if (!response.ok) throw new Error("附件暂不可用或当前账号没有群权限");
+        const blob = await response.blob();
+        const url = URL.createObjectURL(new Blob([blob], { type: mimeType || blob.type }));
+        if ((mimeType || blob.type).startsWith("image/")) {
+            const image = window.open(url, "_blank", "noopener");
+            if (!image) log("warn", "浏览器拦截了图片预览，请允许弹窗");
+        } else {
+            const anchor = document.createElement("a");
+            anchor.href = url; anchor.download = name || "download"; anchor.click();
+        }
+        window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+    }
+
+    async function uploadAttachmentForGroup(groupID, file) {
+        if (!file) return;
+        const form = new FormData(); form.append("file", file);
+        const response = await fetch(`${apiBase()}/api/v1/groups/${encodeURIComponent(groupID)}/attachments`, {
+            method: "POST", headers: { Authorization: `Bearer ${state.token}` }, body: form
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || "上传失败");
+        return data;
+    }
+
+    async function uploadGroupAttachment(file) {
+        if (state.currentType !== "group" || !state.currentTarget) throw new Error("附件目前只支持群聊");
+        const data = await uploadAttachmentForGroup(state.currentTarget, file);
+        $("message-input").value = JSON.stringify({
+            kind: "attachment", attachment_id: data.attachment_id,
+            file_name: data.file_name, mime_type: data.mime_type, size: data.size
+        });
+        sendMessage(false);
     }
 
     async function checkReady() {
@@ -1720,11 +2134,30 @@
         $("message-input").value = `你好，这是一条前端联调消息 ${nowText()}`;
     }
 
+    window.LinkGoTasks.init({
+        request: apiFetch,
+        upload: uploadAttachmentForGroup,
+        openAttachment,
+        log: (message) => log("info", message),
+        getUserID: () => state.userId
+    });
     $("login-btn").onclick = login;
     $("connect-btn").onclick = connectWebSocket;
     $("open-peer-btn").onclick = openPeerChat;
     $("open-ai-btn").onclick = openAIChat;
     $("fill-demo-btn").onclick = fillDemoMessage;
+    $("local-data-btn").onclick = async () => {
+        if (!state.userId || !state.localStoreReady) {
+            log("warn", "请先登录并初始化 IndexedDB");
+            return;
+        }
+        try {
+            log("info", "IndexedDB 本地数据统计", await window.LinkGoStore.stats(state.userId));
+        } catch (error) {
+            log("error", "读取本地数据统计失败", error.message);
+        }
+    };
+    $("sync-history-btn").onclick = () => { void syncKnownHistory(); };
     $("ready-btn").onclick = checkReady;
     $("apply-btn").onclick = applyFriend;
     $("friends-btn").onclick = () => Promise.allSettled([refreshFriends(), refreshRequests()]);
@@ -1745,9 +2178,15 @@
         loadHistory();
         if (type === "group") loadGroupMembers(target);
     };
-    $("history-btn").onclick = loadHistory;
+    $("history-btn").onclick = () => { void loadHistory({ older: true }); };
     $("send-btn").onclick = () => sendMessage(false);
     $("resend-btn").onclick = () => sendMessage(true);
+    $("attach-file-btn").onclick = () => $("attach-file-input").click();
+    $("attach-file-input").onchange = (event) => {
+        const file = event.target.files && event.target.files[0];
+        if (file) void uploadGroupAttachment(file).catch((error) => log("error", "附件上传失败", error.message));
+        event.target.value = "";
+    };
     $("message-input").onkeydown = (event) => {
         if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault();

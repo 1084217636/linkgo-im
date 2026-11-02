@@ -1,0 +1,9 @@
+........................................................................ [ 80%]
+..................                                                       [100%]
+=============================== warnings summary ===============================
+api/.venv/lib/python3.12/site-packages/passlib/utils/__init__.py:854
+  /home/xiaobin/myproject/zhiyi-research-next/api/.venv/lib/python3.12/site-packages/passlib/utils/__init__.py:854: DeprecationWarning: 'crypt' is deprecated and slated for removal in Python 3.13
+    from crypt import crypt as _crypt
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+90 passed, 1 warning in 3.06s

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/1084217636/linkgo-im/api"
 	gwmiddleware "github.com/1084217636/linkgo-im/cmd/gateway/internal/middleware"
 	"github.com/1084217636/linkgo-im/cmd/gateway/internal/svc"
 	"github.com/1084217636/linkgo-im/internal/metrics"
@@ -21,6 +22,7 @@ import (
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/rest/httpx"
 	"github.com/zeromicro/go-zero/zrpc"
+	"google.golang.org/protobuf/proto"
 )
 
 func WebSocketHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
@@ -58,6 +60,23 @@ func WebSocketHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 		clientConn := server.NewClientConn(conn, newConnectionID())
+		// Recheck at the final socket boundary, including delayed Kafka jobs,
+		// pending retries and reconnect replay. Leaving one group keeps other
+		// community connections usable.
+		clientConn.AuthorizePayload = func(payload []byte) (bool, error) {
+			var frame api.WireMessage
+			if err := proto.Unmarshal(payload, &frame); err != nil {
+				return false, err
+			}
+			if frame.ToType != "group" {
+				return true, nil
+			}
+			check, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			var n int
+			err := svcCtx.DB.QueryRowContext(check, `SELECT COUNT(*) FROM group_members m JOIN im_groups g ON g.group_id=m.group_id WHERE m.group_id=? AND m.user_id=? AND m.status='active' AND g.status='active'`, frame.To, userID).Scan(&n)
+			return n == 1, err
+		}
 		defer clientConn.Close()
 
 		routeValue := server.BuildRouteValue(svcCtx.GatewayID, clientConn.ConnectionID)

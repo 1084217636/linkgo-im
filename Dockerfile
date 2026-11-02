@@ -14,7 +14,9 @@ RUN go build -o transfer ./cmd/transfer
 FROM ${RUNTIME_IMAGE}
 RUN apk add --no-cache ca-certificates libc6-compat \
     && addgroup -S -g 10001 linkgo \
-    && adduser -S -D -H -u 10001 -G linkgo linkgo
+    && adduser -S -D -H -u 10001 -G linkgo linkgo \
+    && mkdir -p /app/uploads \
+    && chown linkgo:linkgo /app/uploads
 WORKDIR /app
 COPY --from=builder --chown=10001:10001 /app/gateway .
 COPY --from=builder --chown=10001:10001 /app/logic .

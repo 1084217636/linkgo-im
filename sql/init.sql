@@ -2,6 +2,23 @@
 CREATE DATABASE IF NOT EXISTS `linkgo_im` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
 USE `linkgo_im`;
 
+CREATE TABLE IF NOT EXISTS `attachments` (
+    `attachment_id` VARCHAR(64) NOT NULL,
+    `group_id` VARCHAR(64) NOT NULL,
+    `uploader_id` VARCHAR(64) NOT NULL,
+    `file_name` VARCHAR(200) NOT NULL,
+    `mime_type` VARCHAR(128) NOT NULL,
+    `file_size` BIGINT UNSIGNED NOT NULL,
+    `sha256` CHAR(64) NOT NULL,
+    `storage_key` VARCHAR(128) NOT NULL,
+    `status` ENUM('ready','deleted') NOT NULL DEFAULT 'ready',
+    `created_at` BIGINT NOT NULL,
+    PRIMARY KEY (`attachment_id`),
+    UNIQUE KEY `uk_attachment_storage_key` (`storage_key`),
+    KEY `idx_attachment_group` (`group_id`,`status`,`created_at`),
+    KEY `idx_attachment_uploader` (`uploader_id`,`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='群聊附件元数据；文件字节保存在共享文件卷';
+
 -- 2. 用户表：增加索引优化和默认值
 CREATE TABLE IF NOT EXISTS `users` (
     `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '自增主键',
@@ -83,7 +100,25 @@ CREATE TABLE IF NOT EXISTS `conversation_outbox` (
     INDEX `idx_conversation_outbox_ready` (`status`, `available_at`, `id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会话摘要可靠投递 Outbox';
 
--- 7. 好友申请与好友关系：用于单聊权限校验和联系人列表
+-- 7. 消息投递 Outbox：与消息事实同事务提交，Redis/Kafka 失败后异步重试
+CREATE TABLE IF NOT EXISTS `delivery_outbox` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `message_id` VARCHAR(160) NOT NULL,
+    `trace_id` VARCHAR(128) NOT NULL DEFAULT '',
+    `recipients_json` JSON NOT NULL,
+    `status` ENUM('pending', 'processing', 'done', 'dead') NOT NULL DEFAULT 'pending',
+    `attempts` INT NOT NULL DEFAULT 0,
+    `available_at` BIGINT NOT NULL,
+    `last_error` VARCHAR(512) NOT NULL DEFAULT '',
+    `created_at` BIGINT NOT NULL,
+    `updated_at` BIGINT NOT NULL,
+    `processed_at` BIGINT NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_delivery_outbox_message` (`message_id`),
+    INDEX `idx_delivery_outbox_ready` (`status`, `available_at`, `id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='消息外部投递事务 Outbox';
+
+-- 8. 好友申请与好友关系：用于单聊权限校验和联系人列表
 CREATE TABLE IF NOT EXISTS `friend_requests` (
     `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     `from_user_id` VARCHAR(64) NOT NULL COMMENT '申请人',
@@ -129,6 +164,75 @@ CREATE TABLE IF NOT EXISTS `group_members` (
     PRIMARY KEY (`group_id`, `user_id`),
     INDEX `idx_group_member_user` (`user_id`, `status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='群成员关系表';
+
+-- IM-P1 学习群任务。与 20261028_learning_tasks.sql 保持同一结构。
+CREATE TABLE IF NOT EXISTS `group_tasks` (
+  `task_id` VARCHAR(64) NOT NULL,
+  `group_id` VARCHAR(64) NOT NULL,
+  `title` VARCHAR(120) NOT NULL,
+  `description` TEXT NOT NULL,
+  `due_at` BIGINT NULL,
+  `status` ENUM('draft','published','closed') NOT NULL DEFAULT 'draft',
+  `version` BIGINT NOT NULL DEFAULT 1,
+  `created_by` VARCHAR(64) NOT NULL,
+  `published_at` BIGINT NULL,
+  `closed_at` BIGINT NULL,
+  `created_at` BIGINT NOT NULL,
+  `updated_at` BIGINT NOT NULL,
+  PRIMARY KEY (`task_id`),
+  KEY `idx_group_tasks_list` (`group_id`,`status`,`created_at`,`task_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS `task_submissions` (
+  `submission_id` VARCHAR(64) NOT NULL,
+  `task_id` VARCHAR(64) NOT NULL,
+  `user_id` VARCHAR(64) NOT NULL,
+  `content_text` TEXT NOT NULL,
+  `content_link` VARCHAR(2048) NOT NULL DEFAULT '',
+  `attachment_ids` JSON NOT NULL,
+  `status` ENUM('submitted','approved','returned') NOT NULL,
+  `attempt_no` INT NOT NULL DEFAULT 1,
+  `version` BIGINT NOT NULL DEFAULT 1,
+  `reviewer_id` VARCHAR(64) NULL,
+  `review_note` VARCHAR(1000) NOT NULL DEFAULT '',
+  `submitted_at` BIGINT NOT NULL,
+  `reviewed_at` BIGINT NULL,
+  PRIMARY KEY (`submission_id`),
+  UNIQUE KEY `uk_task_submitter` (`task_id`,`user_id`),
+  KEY `idx_task_submission_status` (`task_id`,`status`,`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS `task_events` (
+  `event_id` VARCHAR(64) NOT NULL,
+  `task_id` VARCHAR(64) NOT NULL,
+  `submission_id` VARCHAR(64) NULL,
+  `actor_uid` VARCHAR(64) NOT NULL,
+  `action` VARCHAR(32) NOT NULL,
+  `request_id` VARCHAR(128) NOT NULL,
+  `request_hash` CHAR(64) NOT NULL,
+  `payload_json` JSON NOT NULL,
+  `result_json` JSON NOT NULL,
+  `created_at` BIGINT NOT NULL,
+  PRIMARY KEY (`event_id`),
+  UNIQUE KEY `uk_task_request` (`actor_uid`,`request_id`),
+  KEY `idx_task_events_task` (`task_id`,`created_at`,`event_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS `task_notification_outbox` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `event_id` VARCHAR(64) NOT NULL,
+  `target_type` ENUM('group','user') NOT NULL,
+  `target_id` VARCHAR(64) NOT NULL,
+  `status` ENUM('pending','processing','done','dead','skipped') NOT NULL DEFAULT 'pending',
+  `attempts` INT NOT NULL DEFAULT 0,
+  `available_at` BIGINT NOT NULL,
+  `im_message_id` VARCHAR(160) NULL,
+  `last_error` VARCHAR(512) NOT NULL DEFAULT '',
+  `created_at` BIGINT NOT NULL,
+  `updated_at` BIGINT NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_task_notification` (`event_id`,`target_type`,`target_id`),
+  KEY `idx_task_notification_ready` (`status`,`available_at`,`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+INSERT IGNORE INTO `users` (`user_id`,`username`,`password`,`status`,`created_at`,`updated_at`)
+VALUES ('9002','task_notifier','!disabled',0,0,0);
 
 -- 8. 站内钱包：外部支付只负责充值，红包在站内账本中转账
 CREATE TABLE IF NOT EXISTS `wallet_accounts` (
@@ -303,3 +407,53 @@ ON DUPLICATE KEY UPDATE status = VALUES(status), updated_at = VALUES(updated_at)
 --   PRIMARY KEY (`id`),
 --   KEY `idx_session` (`session_id`)
 -- ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Multi-community additive schema
+-- Additive migration. Existing groups, messages and tasks are preserved.
+USE linkgo_im;
+CREATE TABLE IF NOT EXISTS community_profiles (
+ group_id VARCHAR(64) PRIMARY KEY, description VARCHAR(1000) NOT NULL DEFAULT '',
+ discoverable TINYINT NOT NULL DEFAULT 1,
+ FOREIGN KEY (group_id) REFERENCES im_groups(group_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS community_posts (
+ post_id VARCHAR(64) PRIMARY KEY, group_id VARCHAR(64) NOT NULL, author_id VARCHAR(64) NOT NULL,
+ kind ENUM('question','note','resource','announcement') NOT NULL,
+ title VARCHAR(160) NOT NULL, body TEXT NOT NULL,
+ status ENUM('published','hidden','deleted') NOT NULL DEFAULT 'published',
+ pinned TINYINT NOT NULL DEFAULT 0, featured TINYINT NOT NULL DEFAULT 0,
+ version BIGINT NOT NULL DEFAULT 1, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL,
+ KEY idx_community_feed(group_id,status,pinned,created_at,post_id),
+ FOREIGN KEY (group_id) REFERENCES im_groups(group_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS community_comments (
+ comment_id VARCHAR(64) PRIMARY KEY, post_id VARCHAR(64) NOT NULL, author_id VARCHAR(64) NOT NULL,
+ parent_id VARCHAR(64) NULL, body TEXT NOT NULL, created_at BIGINT NOT NULL,
+ KEY idx_post_comments(post_id,created_at,comment_id), FOREIGN KEY(post_id) REFERENCES community_posts(post_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS community_reactions (
+ post_id VARCHAR(64) NOT NULL, user_id VARCHAR(64) NOT NULL, created_at BIGINT NOT NULL,
+ PRIMARY KEY(post_id,user_id), FOREIGN KEY(post_id) REFERENCES community_posts(post_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS community_post_attachments (
+ post_id VARCHAR(64) NOT NULL, attachment_id VARCHAR(64) NOT NULL,
+ PRIMARY KEY(post_id,attachment_id), FOREIGN KEY(post_id) REFERENCES community_posts(post_id),
+ FOREIGN KEY(attachment_id) REFERENCES attachments(attachment_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS community_requests (
+ actor_id VARCHAR(64) NOT NULL, request_id VARCHAR(128) NOT NULL, request_hash CHAR(64) NOT NULL,
+ result_json JSON NOT NULL, created_at BIGINT NOT NULL, PRIMARY KEY(actor_id,request_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS community_event_outbox (
+ event_id VARCHAR(128) PRIMARY KEY, group_id VARCHAR(64) NOT NULL, actor_id VARCHAR(64) NOT NULL,
+ kind VARCHAR(32) NOT NULL, object_id VARCHAR(64) NOT NULL, recipient_id VARCHAR(64) NOT NULL DEFAULT '',
+ status ENUM('pending','processing','done','dead') NOT NULL DEFAULT 'pending', attempts INT NOT NULL DEFAULT 0,
+ available_at BIGINT NOT NULL, lease_token VARCHAR(64) NOT NULL DEFAULT '', last_error VARCHAR(512) NOT NULL DEFAULT '',
+ created_at BIGINT NOT NULL, KEY idx_community_event_ready(status,available_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS community_notifications (
+ id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, event_id VARCHAR(128) NOT NULL, recipient_id VARCHAR(64) NOT NULL,
+ group_id VARCHAR(64) NOT NULL, kind VARCHAR(32) NOT NULL, object_id VARCHAR(64) NOT NULL,
+ created_at BIGINT NOT NULL, read_at BIGINT NULL, UNIQUE KEY uk_notification(event_id,recipient_id),
+ KEY idx_notification_user(recipient_id,id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

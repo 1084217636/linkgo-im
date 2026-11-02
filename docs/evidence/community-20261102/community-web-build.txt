@@ -1,0 +1,14 @@
+
+> linkgo-community-web@1.0.0 build
+> tsc --noEmit && vite build
+
+vite v6.0.5 building for production...
+<script src="/client-store.js"> in "/index.html" can't be bundled without type="module" attribute
+transforming...
+✓ 27 modules transformed.
+rendering chunks...
+computing gzip size...
+../public/community/index.html                   0.42 kB │ gzip:  0.31 kB
+../public/community/assets/index-C6FEAWL6.css    2.75 kB │ gzip:  1.10 kB
+../public/community/assets/index-CV4fVmfV.js   165.40 kB │ gzip: 53.93 kB
+✓ built in 399ms

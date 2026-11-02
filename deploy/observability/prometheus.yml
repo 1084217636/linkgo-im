@@ -31,3 +31,8 @@ scrape_configs:
           - logic:9002
         labels:
           component: logic
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: [alertmanager:9093]

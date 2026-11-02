@@ -14,7 +14,7 @@ MySQL 保存最终历史消息、会话元信息、群成员关系、红包记�
 
 ## 为什么 Redis Pub/Sub 不能当可靠队列
 
-Redis Pub/Sub 没有持久化和消费确认，订阅者不在线时通知会丢。项目只把 Pub/Sub 用作在线实时通知。当前自动重连回放依赖 `pending_ack + ack_idx` 和单个会话的 `session_timeline + message_payload`；MySQL 历史通过独立 HTTP 接口查询，并没有在 WebSocket 重连时自动扫描所有会话补齐。
+Redis Pub/Sub 没有持久化和消费确认，订阅者不在线时通知会丢。项目只把 Pub/Sub 用作在线实时通知。单次 WebSocket 建连回放依赖 `pending_ack + ack_idx` 和指定会话的 `session_timeline + message_payload`；Gateway 不在这次回放中扫描所有会话。浏览器在登录或重连后另用 HTTP 历史接口逐个补已知会话到 IndexedDB。
 
 ## AI 怎样接入消息系统
 

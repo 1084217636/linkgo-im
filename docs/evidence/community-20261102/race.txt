@@ -1,0 +1,6 @@
+ok  	github.com/1084217636/linkgo-im/internal/community	(cached)
+ok  	github.com/1084217636/linkgo-im/internal/attachment	(cached)
+ok  	github.com/1084217636/linkgo-im/internal/logic	2.722s
+ok  	github.com/1084217636/linkgo-im/internal/server	(cached)
+ok  	github.com/1084217636/linkgo-im/internal/learningtask	(cached)
+ok  	github.com/1084217636/linkgo-im/cmd/gateway/internal/handler	1.054s

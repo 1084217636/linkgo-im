@@ -132,7 +132,7 @@ CI 是 Continuous Integration，持续集成。代码 push 到 GitHub 后，由�
 先认识 GitHub Actions 的五个词：
 
 - workflow：`.github/workflows/ci.yml` 中描述的一整套自动流程。
-- event：触发流程的事件。当前是推送到 `main/master`，或者创建、更新 Pull Request。
+- event：触发流程的事件。当前任意分支 push、Pull Request 会跑检查；在 `main` 上手动触发时才会尝试发布镜像。
 - runner：GitHub 提供的临时执行机器；它不会继承你电脑上偷偷安装的工具和未提交文件。
 - job：一组可以在同一 runner 上执行的步骤。不同 job 通常在不同干净机器上运行。
 - step：job 中的一步，例如拉取代码、安装 Go、运行测试。
@@ -204,7 +204,7 @@ Git commit SHA
 
 这样看到正在运行的镜像标签，就能反查源码 commit、测试结果和变更内容。如果只使用 `latest`，同一个名字会不断指向不同内容，出问题时无法确定运行的代码。
 
-当前 GitHub Actions 的 `docker-build` 使用 `push: false`，只在临时 runner 上验证镜像能构建，并没有登录或推送到真实镜像仓库。`scripts/k8s_release.sh` 要求调用者另外提供一个已可拉取的不可变镜像地址。因此当前链路停在“CI 构建验证 + 发布脚本示例”，不是自动生产 CD。
+日常 push/PR 的 `docker-build` 仍是 `push: false`，只验证镜像能构建。新增 `workflow_dispatch` 的 `deliver-image`：仅允许在 `main` 手动触发，先完成 Go 测试、Docker 构建和清单检查，再用 GitHub Token 把带 commit SHA 的镜像发布到 GHCR。**本地没有执行过 GitHub 托管的工作流，也没有配置生产集群部署或回滚门禁，不能把它说成上线 CD。**`scripts/k8s_release.sh` 仍需操作者提供集群凭据和已可拉取的镜像地址。
 
 ## 为什么镜像标签不能用 latest
 

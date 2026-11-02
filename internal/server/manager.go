@@ -22,13 +22,15 @@ type ClientManager struct {
 const defaultWebSocketWriteTimeout = 5 * time.Second
 
 type ClientConn struct {
-	Conn         *websocket.Conn
-	ConnectionID string
-	WriteTimeout time.Duration
-	writeMu      sync.Mutex
+	Conn             *websocket.Conn
+	ConnectionID     string
+	WriteTimeout     time.Duration
+	AuthorizePayload func([]byte) (bool, error)
+	writeMu          sync.Mutex
 }
 
 type PushEnvelope struct {
+	Kind       string `json:"kind,omitempty"`
 	TargetID   string `json:"target_id"`
 	MessageID  string `json:"message_id"`
 	SessionID  string `json:"session_id"`
@@ -59,6 +61,16 @@ func (c *ClientConn) WriteBinary(payload []byte) error {
 		return errors.New("websocket connection is nil")
 	}
 
+	if c.AuthorizePayload != nil {
+		allowed, err := c.AuthorizePayload(payload)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			metrics.OutboundMessages.WithLabelValues("gateway", "membership_revoked").Inc()
+			return nil
+		}
+	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 	timeout := c.WriteTimeout
@@ -108,6 +120,16 @@ func (m *ClientManager) SubscribeRedis(ctx context.Context, rdb *redis.Client, g
 		var envelope PushEnvelope
 		if err := json.Unmarshal([]byte(msg.Payload), &envelope); err != nil {
 			logx.Errorf("invalid pubsub payload: %v", err)
+			continue
+		}
+
+		if envelope.Kind == "community_notice" {
+			if conn, ok := m.GetConn(envelope.TargetID); ok && RouteMatchesConnection(envelope.RouteValue, gatewayID, conn.ConnectionID) {
+				conn.writeMu.Lock()
+				_ = conn.Conn.SetWriteDeadline(time.Now().Add(defaultWebSocketWriteTimeout))
+				_ = conn.Conn.WriteJSON(map[string]string{"type": "community_notice"})
+				conn.writeMu.Unlock()
+			}
 			continue
 		}
 

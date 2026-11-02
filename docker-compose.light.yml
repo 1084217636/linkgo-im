@@ -1,7 +1,7 @@
 services:
   etcd:
     image: ${ETCD_IMAGE:-quay.io/coreos/etcd:v3.5.15}
-    container_name: linkgo-light-etcd
+    container_name: linkgo-next-light-etcd
     command:
       - /usr/local/bin/etcd
       - --name=etcd0
@@ -12,14 +12,14 @@ services:
 
   redis:
     image: ${REDIS_IMAGE:-redis:7-alpine}
-    container_name: linkgo-light-redis
+    container_name: linkgo-next-light-redis
     ports:
       - "6379:6379"
     command: redis-server --requirepass 123456
 
   mysql:
     image: ${MYSQL_IMAGE:-mysql:8.0}
-    container_name: linkgo-light-mysql
+    container_name: linkgo-next-light-mysql
     ports:
       - "3306:3306"
     environment:
@@ -40,7 +40,7 @@ services:
       args:
         GO_BUILDER_IMAGE: ${GO_BUILDER_IMAGE:-golang:1.25-alpine}
         RUNTIME_IMAGE: ${RUNTIME_IMAGE:-alpine:3.22}
-    container_name: linkgo-light-logic
+    container_name: linkgo-next-light-logic
     command: ./logic
     ports:
       - "9002:9002"
@@ -82,7 +82,7 @@ services:
       args:
         GO_BUILDER_IMAGE: ${GO_BUILDER_IMAGE:-golang:1.25-alpine}
         RUNTIME_IMAGE: ${RUNTIME_IMAGE:-alpine:3.22}
-    container_name: linkgo-light-gateway-a
+    container_name: linkgo-next-light-gateway-a
     command: ./gateway
     ports:
       - "8090:8090"

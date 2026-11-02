@@ -43,7 +43,7 @@ func ParseToken(tokenString string) (*MyClaims, error) {
 
 	token, err := jwt.ParseWithClaims(tokenString, &MyClaims{}, func(t *jwt.Token) (interface{}, error) {
 		return jwtSecret, nil
-	})
+	}, jwt.WithValidMethods([]string{"HS256"}))
 	if err != nil || !token.Valid {
 		return nil, errors.New("invalid or expired token")
 	}

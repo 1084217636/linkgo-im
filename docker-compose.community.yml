@@ -1,0 +1,36 @@
+# Use together with docker-compose.yml. Local credentials, loopback-only UI.
+x-object-env: &object-env
+  S3_ENDPOINT: minio:9000
+  S3_ACCESS_KEY: ${LINKGO_S3_USER:-linkgo-local}
+  S3_SECRET_KEY: ${LINKGO_S3_PASSWORD:-linkgo-local-object-password}
+  S3_BUCKET: linkgo-attachments
+services:
+  gateway-a:
+    environment: *object-env
+  gateway-b:
+    environment: *object-env
+  gateway-c:
+    environment: *object-env
+  minio:
+    image: ${MINIO_IMAGE:-ghcr.io/coollabsio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a4938f37f1be1841b8e7b627ad0207b265345fd0d063e42d7410c78af0e63e68}
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${LINKGO_S3_USER:-linkgo-local}
+      MINIO_ROOT_PASSWORD: ${LINKGO_S3_PASSWORD:-linkgo-local-object-password}
+    volumes:
+      - linkgo-community-objects:/data
+  community-web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-alpine}
+        NGINX_IMAGE: ${NGINX_IMAGE:-nginx:alpine}
+    ports:
+      - "${LINKGO_WEB_BIND:-127.0.0.1}:8443:8443"
+    volumes:
+      - ./.local-tls:/certs:ro
+    depends_on:
+      - gateway-a
+volumes:
+  linkgo-community-objects:

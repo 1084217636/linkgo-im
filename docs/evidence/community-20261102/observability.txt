@@ -1,0 +1,3 @@
+PASS real target outage → alert rule firing → Alertmanager → authenticated local receiver
+PASS recovered target → resolved webhook
+PASS Docker logs → Alloy → Loki; Grafana datasource provisioned

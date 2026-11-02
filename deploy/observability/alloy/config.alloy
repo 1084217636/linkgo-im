@@ -1,0 +1,28 @@
+discovery.docker "linkgo" {
+  host = "unix:///var/run/docker.sock"
+  filter {
+    name = "label"
+    values = ["com.docker.compose.project=linkgo-collab-next"]
+  }
+}
+discovery.relabel "linkgo" {
+  targets = discovery.docker.linkgo.targets
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label = "service"
+  }
+  rule {
+    target_label = "project"
+    replacement = "linkgo"
+  }
+}
+loki.source.docker "linkgo" {
+  host = "unix:///var/run/docker.sock"
+  targets = discovery.relabel.linkgo.output
+  forward_to = [loki.write.local.receiver]
+}
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

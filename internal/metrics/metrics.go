@@ -76,6 +76,11 @@ var (
 		Help: "Conversation summary outbox events by result.",
 	}, []string{"result"})
 
+	DeliveryOutbox = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "linkgo_delivery_outbox_events_total",
+		Help: "Durable message delivery outbox events by result.",
+	}, []string{"result"})
+
 	KafkaOperations = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "linkgo_kafka_operations_total",
 		Help: "Kafka operations by stage and result.",
@@ -112,6 +117,28 @@ var (
 		Help:    "AI provider call latency in seconds by provider and result.",
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30},
 	}, []string{"provider", "result"})
+
+	LearningTaskRequests = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "linkgo_learning_task_requests_total",
+		Help: "Learning task API requests by operation and HTTP status class.",
+	}, []string{"operation", "status_class"})
+
+	LearningTaskLatencySeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "linkgo_learning_task_request_duration_seconds",
+		Help:    "Learning task API duration by operation.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"operation"})
+
+	AttachmentOperations = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "linkgo_attachment_operations_total",
+		Help: "Attachment uploads and downloads by result.",
+	}, []string{"operation", "result"})
+
+	AttachmentUploadBytes = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "linkgo_attachment_upload_bytes",
+		Help:    "Accepted attachment upload sizes in bytes.",
+		Buckets: []float64{1024, 64 * 1024, 1024 * 1024, 5 * 1024 * 1024, 25 * 1024 * 1024},
+	})
 )
 
 func Handler() http.Handler {

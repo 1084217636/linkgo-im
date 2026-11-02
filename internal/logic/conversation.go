@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -55,7 +56,11 @@ func (h *LogicHandler) listConversations(ctx context.Context, uid string, limit 
 			return nil, err
 		}
 		if len(items) > 0 {
-			return h.loadConversationsFromRedis(ctx, uid, items)
+			conversations, err := h.loadConversationsFromRedis(ctx, uid, items)
+			if err != nil {
+				return nil, err
+			}
+			return h.filterCommunityConversations(ctx, uid, conversations)
 		}
 	}
 
@@ -66,7 +71,7 @@ func (h *LogicHandler) listConversations(ctx context.Context, uid string, limit 
 	if h.Rdb != nil && len(conversations) > 0 {
 		h.cacheConversationList(ctx, uid, conversations)
 	}
-	return conversations, nil
+	return h.filterCommunityConversations(ctx, uid, conversations)
 }
 
 func (h *LogicHandler) loadConversationsFromRedis(ctx context.Context, uid string, items []redis.Z) ([]*api.Conversation, error) {
@@ -222,7 +227,7 @@ func (h *LogicHandler) updateConversationState(ctx context.Context, frame *api.W
 			)
 		}
 	}
-	if h.DB != nil {
+	if h.DB != nil && !h.ConversationOutbox {
 		frameCopy, ok := proto.Clone(frame).(*api.WireMessage)
 		if !ok {
 			return
@@ -539,4 +544,46 @@ func valueOrDefault(value, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// Cached summaries and delayed conversation projections cannot authorize access.
+// Filter once per login using current SQL membership, even if an old job has
+// reinserted a departed user's conversation summary after cache invalidation.
+func (h *LogicHandler) filterCommunityConversations(ctx context.Context, uid string, items []*api.Conversation) ([]*api.Conversation, error) {
+	hasGroups := false
+	for _, c := range items {
+		if strings.HasPrefix(c.ConversationId, "group:") {
+			hasGroups = true
+			break
+		}
+	}
+	if !hasGroups {
+		return items, nil
+	}
+	if h.DB == nil {
+		return nil, fmt.Errorf("membership store unavailable")
+	}
+	rows, err := h.DB.QueryContext(ctx, `SELECT m.group_id FROM group_members m JOIN im_groups g ON g.group_id=m.group_id WHERE m.user_id=? AND m.status='active' AND g.status='active'`, uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	active := map[string]bool{}
+	for rows.Next() {
+		var gid string
+		if err = rows.Scan(&gid); err != nil {
+			return nil, err
+		}
+		active[gid] = true
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]*api.Conversation, 0, len(items))
+	for _, c := range items {
+		if !strings.HasPrefix(c.ConversationId, "group:") || active[strings.TrimPrefix(c.ConversationId, "group:")] {
+			out = append(out, c)
+		}
+	}
+	return out, nil
 }

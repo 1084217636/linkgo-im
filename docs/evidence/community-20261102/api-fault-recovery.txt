@@ -1,0 +1,8 @@
+PASS registration, duplicate username, create/join, multi-community isolation
+PASS post idempotency, request payload conflict, concurrent edit, comments and reaction uniqueness
+PASS keyset feed pagination
+PASS task publish → submit → return → resubmit → approve, permissions and progress
+PASS Kafka community projection, task-event reuse and persistent notification read state
+PASS Kafka outage: committed post survives and outbox notification recovers
+PASS leave revokes reads, notifications filtered, owner transfer before leaving
+PASS complete; reproducible fixture: artifacts/community-demo.json

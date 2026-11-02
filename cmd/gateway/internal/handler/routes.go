@@ -18,6 +18,7 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 	// Infrastructure endpoints (not in .api file).
 	server.AddRoutes(
 		[]rest.Route{
+			{Method: http.MethodPost, Path: "/internal/alerts", Handler: AlertHandler},
 			{
 				Method:  http.MethodGet,
 				Path:    "/healthz",
@@ -73,6 +74,11 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Method:  http.MethodGet,
 				Path:    "/history",
 				Handler: HistoryHandler(serverCtx),
+			},
+			rest.Route{
+				Method:  http.MethodPost,
+				Path:    "/ws-ticket",
+				Handler: WebSocketTicketHandler(serverCtx),
 			},
 			rest.Route{
 				Method:  http.MethodPost,
@@ -157,7 +163,7 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 	server.AddRoutes(
 		rest.WithMiddlewares(
 			[]rest.Middleware{
-				gwmiddleware.NewAuthMiddleware().Handle,
+				gwmiddleware.NewWebSocketAuthMiddleware(serverCtx.Rdb).Handle,
 				gwmiddleware.NewRateLimitMiddleware(serverCtx.WsLimiter).Handle,
 			},
 			rest.Route{

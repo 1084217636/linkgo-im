@@ -29,6 +29,7 @@
 | Docker 镜像 | `make docker-build` | 三个服务可进入同一运行镜像 | 服务依赖已联调和持续稳定 |
 | K8s 静态检查 | `make k8s-check` | 关键清单和发布脚本满足项目约束 | 已部署到真实集群 |
 | 故障处理契约 | `make fault-check` | 故障矩阵脚本、依赖探针、替换钩子、观测目标和 runbook 保持一致 | 已停止真实容器并完成全部恢复演练 |
+| 多 Logic 拓扑 | `make cluster-smoke` | 两个 Logic 注册到 Etcd，两个 Logic 与三个 Gateway 均 ready | 请求均匀分配、自动扩缩容和生产 HA |
 
 ## 3. 当前待发布版本的本地结果
 
@@ -100,6 +101,28 @@ docker run --rm --network host \
 
 压测同时发现并修复了 Origin 缺失、压测器错误重读 WebSocket、Etcd 注册/订阅 Key 前导斜杠不一致、benchmark 用户缺少好友关系，以及 Gateway 未等待 Logic ready 的问题。完整机器配置、原始结果和边界见 [`benchmark/bench_report_20260816.md`](../../benchmark/bench_report_20260816.md)。基线 SHA 是 `07fe1df1a36eeff3efa47c909336eeaf5c4e5f70`，以上改动尚未提交，因此正式简历引用前仍应在提交后的 SHA 再跑一次。
 
+### 3.2 2026-09-03 多 Logic 与持久化客户端补充
+
+默认完整 Compose 从 1 个 Logic 调整为 2 个 Logic，并移除 Gateway 的固定 `LOGIC_ADDR`，让三台 Gateway 通过 Etcd 的 `services/logic` 前缀和 go-zero `p2c_ewma` 选择 Logic。为避免与同时运行的知忆 AI 环境端口冲突，本轮仅修改宿主机映射端口，容器网络端口保持不变。
+
+执行 `scripts/verify_cluster_topology.sh` 后，Etcd 返回两个带 lease 的 Logic 注册键，两台 Logic 和三台 Gateway 均通过 readiness；随后执行 `scripts/demo_core_im.sh`，在线单聊与 ACK 清理、离线 pending 回放、Kafka/Transfer 群聊、MySQL 消息落库和 Prometheus 指标全部通过。两台 Logic 日志均出现 `/api.Logic/PushMessage`，说明本轮业务流量实际经过两个实例，而非只完成静态配置。
+
+浏览器调试客户端新增 `client-store.js`：IndexedDB 按用户保存会话、消息、发送状态和 `last_seq/acked_seq`，登录后先恢复本地数据，再与服务端历史页做 ID 对账；历史接口失败时允许显示本地副本。JWT 仍只存在页面内存。`make frontend-static-check` 与 JavaScript 语法检查已通过，但本轮没有把浏览器 E2E 描述为已完成。
+
+### 3.3 2026-09-03 投递 Outbox 与持续负载补充
+
+消息持久化事务新增外部投递 Outbox。单元测试验证消息、会话摘要事件和投递事件原子提交，以及成功完成、失败退避和父上下文取消后的状态恢复。完整 Compose 中停掉 Kafka 后，群消息投递事件保持 pending 并记录连接错误；Kafka 恢复后第 6 次尝试自动完成，无需客户端重发。随后核心协议演示再次通过在线单聊 ACK、离线回放、Kafka 群聊和 MySQL 落库。
+
+新版压测器在 10 Gateway 环境建立 10000 条 WebSocket，119964 次心跳全部成功，心跳 P95 5.368ms、P99 8.491ms；100 对连接按总计 500 msg/s 持续 60 秒发送 30000 条跨节点单聊，服务端接受、接收和 ACK 均为 30000，接收延迟 P95 4.324ms、P99 5.081ms。两台 Logic 分别处理 14876 和 15124 条请求；停掉一台 Logic 后重新发起 5000 条测试也全部闭环。该故障用例是在节点停止后开始发送，不应描述成飞行中 RPC 零影响切换。
+
+### 3.4 2026-10-05 Web 客户端历史补偿口径核对
+
+前端收到任何已知会话的实时消息时，先把正文写入 IndexedDB，再发送业务 ACK；不再仅把当前显示会话的正文落本地。新增独立 `sync_progress` 存储区：登录和 WebSocket 重连后，对页面已知会话逐个调用现有 MySQL 历史接口，沿 `before_seq` 向前翻页直到与上次完成的本地进度重叠，最后在同一 IndexedDB 事务中保存消息和新进度。首次本地同步只建立最新 100 条基线，旧历史仍需手动翻页。页面提供“补齐历史”按钮以便复核与重试。
+
+运行 `node --test scripts/history-sync.test.cjs`，4 个用例通过：初次基线、跨两页补齐 80→250、异常游标阻止错误推进，以及旧 HTTP 历史响应与较新的 WebSocket 消息合并后仍按 seq 显示。网页实时消息也按 seq 插入当前会话，避免回放到达顺序直接决定显示顺序。用真实 Gateway 登录 userB，对 A↔B 历史接口把页大小设为 2、上次进度设为 1，补偿算法实际读取 6 页共 11 条，返回最新 seq=11、新于进度的 10 条。`python3 scripts/validate_frontend.py` 与三份 JavaScript 语法检查通过；`go test ./internal/server ./internal/logic ./cmd/gateway/internal/logic` 通过。当前未进行真实浏览器自动化 E2E，不能把 IndexedDB 跨刷新及页面渲染说成已经由自动化证明。固定 Gateway 端口不具备自动跨端口故障切换；已知会话的 HTTP 补偿仍不保证任意乱序提交后的深层低序号缺口，也不构成多设备同步协议。
+
+2026-10-05 将当前会话历史页改为顶部滚动加载：每次用 `before_seq` 从 MySQL 取更早 50 条，按 seq 插入已有消息前面，并按新增前后的 scrollHeight 保持视口；“加载更早”按钮可手动触发。最新历史页与 IndexedDB 中落在该页范围内或更新的 WebSocket 消息合并，按 `message_id` 去重、按 seq 排序，避免历史响应重画时丢掉同期到达的消息。复跑 `node --test scripts/history-sync.test.cjs`（4/4 通过）和 `python3 scripts/validate_frontend.py`（通过）；尚未做真实浏览器滚动交互 E2E，因此这部分应说明为代码已实现、静态与合并逻辑已验证，浏览器端到端体验尚待手动验收。
+
 ## 4. 关键自动化用例位置
 
 ```text
@@ -111,6 +134,7 @@ internal/delivery/redis_test.go         pending 先写、离线标记、无订�
 cmd/transfer/main_test.go               Kafka 消费与收件人幂等
 internal/ai/*_test.go                   Provider、检索、审计和脱敏
 scripts/validate_frontend.py            浏览器调试页静态契约
+scripts/verify_cluster_topology.sh       两个 Logic 的 Etcd 注册与 3 Gateway readiness
 scripts/validate_docs.py                文档结构与旧路径拦截
 scripts/validate_k8s.sh                 Kubernetes 清单约束
 scripts/validate_fault_handling.py      故障演练脚本、依赖探针和 runbook 静态契约

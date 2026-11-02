@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/1084217636/linkgo-im/api"
+	"github.com/1084217636/linkgo-im/internal/attachment"
 	"github.com/1084217636/linkgo-im/internal/delivery"
 	"github.com/1084217636/linkgo-im/internal/ids"
 	"github.com/1084217636/linkgo-im/internal/metrics"
@@ -57,6 +59,10 @@ type LogicHandler struct {
 	// persistence. It is enabled by the logic service after the migration is
 	// applied; tests and legacy callers can keep the direct fallback.
 	ConversationOutbox bool
+	// DeliveryOutbox makes durable acceptance independent from Redis/Kafka
+	// availability. The message and its delivery event commit atomically; a
+	// worker performs the external side effect with at-least-once semantics.
+	DeliveryOutbox bool
 }
 
 func (h *LogicHandler) PushMessage(ctx context.Context, req *api.PushMsgReq) (*api.PushMsgReply, error) {
@@ -100,7 +106,13 @@ func (h *LogicHandler) PushMessage(ctx context.Context, req *api.PushMsgReq) (*a
 			h.releaseClientMessage(ctx, existing)
 			return nil, err
 		}
-		if err := h.deliverPersistedMessage(ctx, existing); err != nil {
+		if h.DeliveryOutbox {
+			if _, err := h.ProcessDeliveryOutboxMessage(ctx, existing.MessageId); err != nil {
+				logx.Errorw("delivery outbox immediate retry failed",
+					logx.Field("message_id", existing.MessageId),
+					logx.Field("error", err.Error()))
+			}
+		} else if err := h.deliverPersistedMessage(ctx, existing); err != nil {
 			h.releaseClientMessage(ctx, existing)
 			return nil, err
 		}
@@ -115,6 +127,18 @@ func (h *LogicHandler) PushMessage(ctx context.Context, req *api.PushMsgReq) (*a
 	if err := h.validateSendPermission(ctx, &frame); err != nil {
 		h.releaseClientMessage(ctx, &frame)
 		return nil, err
+	}
+	if h.DB != nil {
+		dir := os.Getenv("LINKGO_UPLOAD_DIR")
+		if dir == "" {
+			dir = "./uploads"
+		}
+		canonical, err := (&attachment.Store{DB: h.DB, Dir: dir}).CanonicalizeMessage(ctx, frame.From, frame.To, frame.Body)
+		if err != nil {
+			h.releaseClientMessage(ctx, &frame)
+			return nil, err
+		}
+		frame.Body = canonical
 	}
 	if frame.Seq <= 0 {
 		seq, err := h.nextSequence(ctx, frame.SessionId)
@@ -131,7 +155,12 @@ func (h *LogicHandler) PushMessage(ctx context.Context, req *api.PushMsgReq) (*a
 	}
 	h.commitClientMessageReservation(ctx, &frame)
 
-	persisted, err := h.saveMessage(ctx, &frame)
+	recipients, err := h.resolveRecipients(ctx, &frame)
+	if err != nil {
+		h.releaseClientMessage(ctx, &frame)
+		return nil, err
+	}
+	persisted, err := h.saveMessageWithRecipients(ctx, &frame, recipients)
 	if err != nil {
 		h.releaseClientMessage(ctx, &frame)
 		return nil, err
@@ -145,7 +174,17 @@ func (h *LogicHandler) PushMessage(ctx context.Context, req *api.PushMsgReq) (*a
 			return nil, err
 		}
 	}
-	if err := h.deliverPersistedMessage(ctx, &frame); err != nil {
+	if h.DeliveryOutbox {
+		// The durable message is accepted once the transaction commits. Failure
+		// of the immediate attempt leaves the Outbox event pending for a worker;
+		// returning an error here would make the client retry an accepted fact.
+		if _, err := h.ProcessDeliveryOutboxMessage(ctx, frame.MessageId); err != nil {
+			logx.Errorw("delivery outbox immediate dispatch failed",
+				logx.Field("trace_id", frame.TraceId),
+				logx.Field("message_id", frame.MessageId),
+				logx.Field("error", err.Error()))
+		}
+	} else if err := h.deliverMessageToRecipients(ctx, &frame, recipients); err != nil {
 		h.releaseClientMessage(ctx, &frame)
 		return nil, err
 	}
@@ -172,6 +211,10 @@ func (h *LogicHandler) deliverPersistedMessage(ctx context.Context, frame *api.W
 	if err != nil {
 		return err
 	}
+	return h.deliverMessageToRecipients(ctx, frame, recipients)
+}
+
+func (h *LogicHandler) deliverMessageToRecipients(ctx context.Context, frame *api.WireMessage, recipients []string) error {
 	if frame.ToType == "group" {
 		metrics.GroupDispatchMembers.Observe(float64(len(recipients)))
 	}
@@ -495,8 +538,12 @@ WHERE session_id = ?
 }
 
 func (h *LogicHandler) saveMessage(ctx context.Context, frame *api.WireMessage) (bool, error) {
+	return h.saveMessageWithRecipients(ctx, frame, nil)
+}
+
+func (h *LogicHandler) saveMessageWithRecipients(ctx context.Context, frame *api.WireMessage, recipients []string) (bool, error) {
 	if h.ConversationOutbox && h.DB != nil {
-		persisted, handled, err := h.saveMessageWithOutbox(ctx, frame)
+		persisted, handled, err := h.saveMessageWithOutbox(ctx, frame, recipients)
 		if handled {
 			return persisted, err
 		}
@@ -512,7 +559,7 @@ func (h *LogicHandler) saveMessage(ctx context.Context, frame *api.WireMessage) 
 // saveMessageWithOutbox commits the durable message and the conversation
 // summary event in one InnoDB transaction. handled=false means the deployed
 // schema has not been migrated yet, so the caller may use the legacy path.
-func (h *LogicHandler) saveMessageWithOutbox(ctx context.Context, frame *api.WireMessage) (persisted, handled bool, err error) {
+func (h *LogicHandler) saveMessageWithOutbox(ctx context.Context, frame *api.WireMessage, recipients []string) (persisted, handled bool, err error) {
 	tx, err := h.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return false, true, err
@@ -561,11 +608,34 @@ ON DUPLICATE KEY UPDATE message_id = VALUES(message_id)
 		metrics.MessagePersisted.WithLabelValues("failure").Inc()
 		return false, true, err
 	}
+	if h.DeliveryOutbox {
+		recipientsJSON, marshalErr := json.Marshal(recipients)
+		if marshalErr != nil {
+			rollback()
+			return false, true, marshalErr
+		}
+		_, err = tx.ExecContext(ctx, `
+INSERT INTO delivery_outbox
+  (message_id, trace_id, recipients_json, status, attempts, available_at, last_error, created_at, updated_at)
+VALUES (?, ?, ?, 'pending', 0, ?, '', ?, ?)
+ON DUPLICATE KEY UPDATE message_id = VALUES(message_id)
+`, frame.MessageId, frame.TraceId, string(recipientsJSON), frame.SentAt, frame.SentAt, frame.SentAt)
+		if err != nil {
+			rollback()
+			// DeliveryOutbox is a reliability contract. Do not silently fall
+			// back to a message-only commit when its schema is unavailable.
+			metrics.DeliveryOutbox.WithLabelValues("enqueue_failure").Inc()
+			return false, true, err
+		}
+	}
 	if err = tx.Commit(); err != nil {
 		return false, true, err
 	}
 	metrics.MessagePersisted.WithLabelValues("success").Inc()
 	metrics.ConversationOutbox.WithLabelValues("enqueued").Inc()
+	if h.DeliveryOutbox {
+		metrics.DeliveryOutbox.WithLabelValues("enqueued").Inc()
+	}
 	return true, true, nil
 }
 
@@ -896,7 +966,7 @@ func normalizeGroupID(target string) string {
 }
 
 func targetType(target string) string {
-	if strings.HasPrefix(strings.ToUpper(target), "G") || strings.HasPrefix(target, "group:") {
+	if strings.HasPrefix(strings.ToUpper(target), "G") || strings.HasPrefix(target, "group:") || strings.HasPrefix(target, "c-") {
 		return "group"
 	}
 	return "user"

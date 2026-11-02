@@ -1,0 +1,9 @@
+test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
+go vet ./...
+python3 scripts/validate_frontend.py
+PASS public/index.html: 64 interactive ids
+PASS public/client-store.js: IndexedDB message/cursor persistence
+python3 scripts/validate_docs.py
+PASS documentation layout, 21 ordered chapters plus 2 optional appendices, 9 complete mobile interview chapters, 100 repository links, 3 knowledge sources, in-file chapter answers, and no stale claims
+python3 scripts/validate_fault_handling.py
+PASS fault-handling contract, probes, replacement hooks, observability, and runbook

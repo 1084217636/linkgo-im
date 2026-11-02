@@ -8,6 +8,7 @@ import (
 
 	"github.com/1084217636/linkgo-im/cmd/logic/internal/config"
 	"github.com/1084217636/linkgo-im/internal/ai"
+	"github.com/1084217636/linkgo-im/internal/community"
 	"github.com/1084217636/linkgo-im/internal/delivery"
 	corelogic "github.com/1084217636/linkgo-im/internal/logic"
 	_ "github.com/go-sql-driver/mysql"
@@ -91,6 +92,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		Delivery:           &delivery.RedisDelivery{Rdb: rdb},
 		GroupDispatcher:    &kafkaDispatcher{writer: kafkaWriter},
 		ConversationOutbox: true,
+		DeliveryOutbox:     true,
 		BotResponder: &aiBotResponder{
 			botID: botID,
 			ask:   ai.NewAskService(db, aiProvider, knowledgeBase, c.AI.KnowledgeTopK),
@@ -106,9 +108,57 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		Core:        core,
 		cancel:      cancel,
 	}
-	service.wg.Add(1)
+	service.wg.Add(5)
+	go service.runCommunityPublisher(workerCtx)
+	go service.runCommunityConsumer(workerCtx)
 	go service.runConversationOutbox(workerCtx)
+	go service.runDeliveryOutbox(workerCtx)
+	go service.runTaskNotifications(workerCtx)
 	return service
+}
+
+func (s *ServiceContext) runTaskNotifications(ctx context.Context) {
+	defer s.wg.Done()
+	process := func() {
+		workCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		if _, err := s.Core.ProcessTaskNotifications(workCtx, 50); err != nil {
+			logx.Errorw("task notification worker failed", logx.Field("error", err.Error()))
+		}
+	}
+	process()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			process()
+		}
+	}
+}
+
+func (s *ServiceContext) runDeliveryOutbox(ctx context.Context) {
+	defer s.wg.Done()
+	process := func() {
+		workCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		if _, err := s.Core.ProcessDeliveryOutbox(workCtx, 100); err != nil {
+			logx.Errorw("delivery outbox worker failed", logx.Field("error", err.Error()))
+		}
+	}
+	process()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			process()
+		}
+	}
 }
 
 func (s *ServiceContext) runConversationOutbox(ctx context.Context) {
@@ -150,4 +200,15 @@ func (s *ServiceContext) Close() {
 	if s.Rdb != nil {
 		_ = s.Rdb.Close()
 	}
+}
+
+func (s *ServiceContext) runCommunityPublisher(ctx context.Context) {
+	defer s.wg.Done()
+	writer := &kafka.Writer{Addr: kafka.TCP(s.Config.Kafka.Brokers...), Topic: community.Topic, Balancer: &kafka.Hash{}, RequiredAcks: kafka.RequireAll, AllowAutoTopicCreation: true, BatchTimeout: 10 * time.Millisecond, WriteTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second}
+	defer writer.Close()
+	community.RunPublisher(ctx, &community.Worker{DB: s.DB, Rdb: s.Rdb, Writer: writer})
+}
+func (s *ServiceContext) runCommunityConsumer(ctx context.Context) {
+	defer s.wg.Done()
+	community.RunConsumer(ctx, &community.Worker{DB: s.DB, Rdb: s.Rdb}, s.Config.Kafka.Brokers)
 }

@@ -3,6 +3,7 @@ name: ci
 on:
   push: {}
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -40,6 +41,16 @@ jobs:
       - name: Build services
         run: make build
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build community web client
+        run: npm ci --prefix web && npm run build --prefix web
+
       - name: Validate frontend contracts
         run: make frontend-static-check
 
@@ -57,6 +68,7 @@ jobs:
           make compose-light-cn-config
           make observability-config
           make observability-cn-config
+          docker compose -f docker-compose.yml -f docker-compose.community.yml -f docker-compose.observability.yml config --quiet
 
       - name: Validate Prometheus config and alert rules
         run: make prometheus-check
@@ -103,3 +115,29 @@ jobs:
           grep -q "kind: Deployment" /tmp/linkgo-im-k8s.yaml
           grep -q "kind: HorizontalPodAutoscaler" /tmp/linkgo-im-k8s.yaml
           grep -q "kind: NetworkPolicy" /tmp/linkgo-im-k8s.yaml
+
+  deliver-image:
+    # Manual image publication only. No production cluster is wired to CI.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: [test-build, docker-build, manifest-check]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish reviewed SHA image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository }}/linkgo-im:${{ github.sha }}
+          build-args: |
+            GO_BUILDER_IMAGE=golang:1.25-alpine
+            RUNTIME_IMAGE=alpine:3.22

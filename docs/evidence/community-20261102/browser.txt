@@ -1,0 +1,6 @@
+PASS UI registration, login, create and join
+PASS UI post, object-store attachment, featured and comment
+PASS UI actual websocket group delivery and local persistence
+PASS UI full task publish, submit, return, resubmit, approve and progress
+PASS UI delayed Kafka recipient blocked at live websocket; stale login summaries filtered
+PASS UI persistent state after login, durable inbox, member leave; no page errors
