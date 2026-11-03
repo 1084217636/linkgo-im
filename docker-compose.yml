@@ -20,6 +20,9 @@ services:
   kafka:
     image: ${KAFKA_IMAGE:-confluentinc/cp-kafka:7.6.0}
     container_name: linkgo-next-kafka
+    # A stale ZooKeeper broker session can reject the first startup. Retry
+    # after the session expires; an explicit `docker stop` still stays stopped.
+    restart: unless-stopped
     depends_on:
       - zookeeper
     ports:
