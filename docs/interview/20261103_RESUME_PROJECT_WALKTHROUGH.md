@@ -22,7 +22,7 @@
 2. **内容沉淀（约 1.5 分钟）**：成员发布问答、笔记或资料帖，其他成员评论、点赞。帖子 `version` 用于编辑时拒绝旧版本覆盖；`request_id` 和请求内容指纹处理超时后的同请求重试。帖子、评论、点赞分别是 MySQL 表；附件的二进制存对象存储，MySQL 保存归属、元信息与存储键。下载时再次查当前群成员资格。
 3. **实时沟通（约 2 分钟）**：A 连 Gateway-1，B 连 Gateway-3。A 经 WebSocket 发带 `client_msg_id` 的消息；Gateway 调 Logic，Logic 查好友/群成员关系，分配会话 `seq`，把消息与投递 Outbox 同事务写 MySQL。投递层先在 Redis 给 B 写 `pending_ack`、正文索引和重试状态，再查 `route:B`，向 Gateway-3 专属 Pub/Sub 频道通知。Gateway-3 从本机连接表找到 B，把二进制帧写 WebSocket；B 返回业务 ACK 才清待确认状态。`message_id` 标识同一条持久消息，重推可能重复，客户端按它去重。
 4. **群聊（约 1 分钟）**：群消息先持久化，群投递任务由 Logic 的 Outbox 交 Kafka。Transfer 消费后按收件人逐个处理，成员级租约/完成状态使重复消费能够跳过已处理成员；失败写 retry topic，超过限制转 DLQ，可靠转移后才提交原 Kafka offset。Kafka offset 说明消费者处理进度，不等于成员客户端 ACK。
-5. **学习任务（约 1.5 分钟）**：管理员建草稿并发布；普通成员提交文本/链接/附件；管理员按提交版本审核通过或退回，退回后成员可修改再次提交。`group_tasks` 是任务，`task_submissions` 是每个成员的一份当前提交，`task_events` 记录变更及幂等结果。操作在事务里锁任务与角色，按 `version` 拒绝并发旧请求，并写 `task_notification_outbox`。成员不在群、管理员审核自己的普通成员权限不符等场景都由后端拒绝。
+5. **学习任务（约 1.5 分钟）**：管理员建草稿并发布；普通成员提交文本/链接/附件；管理员按提交版本审核通过或退回，退回后成员可修改再次提交。`group_tasks` 是任务，`task_submissions` 是每个成员的一份当前提交，`task_events` 记录变更及幂等结果。操作在事务里锁任务与角色，按 `version` 拒绝并发旧请求，并写 `task_notification_outbox`。非群成员访问、普通成员审核等越权请求都由后端拒绝。
 6. **持久通知（约 1 分钟）**：后台从任务通知事件投影到 `community_event_outbox`，按租约领取后写 `community.events.v1`。消费者用 event ID 回查可信 MySQL 记录，再写 `community_notifications`，其中 `(event_id,recipient_id)` 唯一；Redis 只发“有新通知”提示，页面再查 MySQL 收件箱。Kafka 停机时任务和通知意向已提交，恢复后 worker 重试。不能说通知和消息传输处于一个跨 MySQL/Kafka 的原子事务。
 7. **工程验证（约 1 分钟）**：Docker 演练真实页面的多用户闭环、Kafka 停机恢复；Go 测试与 race detector 在 CI 跑；Prometheus 采指标，Grafana 展示，Alloy 把结构化日志送 Loki，消息 `trace_id` 帮助关联 Gateway、Logic、Transfer 日志。当前这是日志关联，并非完整 OpenTelemetry span tracing。最后说一条边界：中间件在本地演示仍是单节点，不从本地结果推导海量用户容量。
 
@@ -125,3 +125,23 @@ Kafka 至少要分清两条业务：群消息投递由 `cmd/transfer/main.go` �
 ## 7. 复习与演示
 
 第一遍只背第 1 节两分钟稿和第 3 节前五问；第二遍对照白板图，能用自己的话解释 `group_tasks → task_events → Outbox → notification` 与 `messages → pending → Gateway → ACK`；第三遍打开 `internal/community/service.go`、`internal/learningtask/store.go`、`internal/community/worker.go`，分别找事务、权限、通知一处关键代码。启动和账号见 `scripts/start_community.sh`、`docs/evidence/resume-verification-20261102.md`；测试时先记录当前 commit，再跑 `go test ./...` 和相关演示脚本。
+
+## 8. 高频深入追问：按真实边界回答
+
+**ACK 丢了会怎样？** B 已经处理消息，但服务端还保留 `pending_ack`，超时可能重推同一个 `message_id`。客户端用这个稳定 ID 去重，再回 ACK。不能说传输绝不重复；也不要把 ACK 说成“用户已读”。
+
+**`client_msg_id` 和 `message_id` 为什么不能只用一个？** 前者由发送端在第一次提交前生成，同一次意图重试必须不变，解决“入库了但响应丢了”的重发判定；后者是服务端持久消息身份，供投递、接收、ACK 与去重。`session_id+seq` 标识会话位置，seq 在 Redis 分配后数据库提交失败可有空洞，查询按真实存在的消息游标继续，不等待缺号。
+
+**逻辑节点如何知道用户在哪台 Gateway？** Etcd 告诉 Gateway 可用的 Logic 服务地址；Redis `route:<uid>` 告诉投递端用户连接在哪台 Gateway。前者是服务发现，后者是用户连接路由。WebSocket 连接对象本身只在持有它的 Gateway 内存里。
+
+**Gateway 崩溃、Redis route 未删除怎么办？** route 有 TTL 与连接 owner；新连接写新 owner，旧连接清理只能条件删除自己持有的 route。重连后新 Gateway 持有新 WebSocket；未 ACK 消息可先回放 Redis 短期 pending，已知会话再按 MySQL 历史游标补。稳定负载均衡入口负责把重连送到健康 Gateway；浏览器固定本机端口不等于已经实现自动切换生产入口。
+
+**Outbox worker 抢同一任务会不会重复？** MySQL 条件领取/租约允许多实例抢占，到期后其他 worker 可接手；旧 worker 迟到更新用领取代数或 lease token 栅栏化。外部 Kafka/Redis 副作用仍可能在崩溃窗口重复，靠 event ID、message ID 和接收端唯一约束处理。租约防永久卡住，幂等防重复生效，两者都需要。
+
+**为什么一个群聊成员失败要重试整条 Kafka 记录？** Transfer 当前同一条群任务串行处理收件人；每个成员有处理状态，已完成的成员在重试时跳过。失败任务可靠进入 retry topic 或 DLQ 后才提交原 offset。它保留了简单的恢复语义，但超级大群的单任务扇出吞吐会受串行限制，可以按成员范围拆小任务再扩分区。
+
+**慢查询怎么排？** 先按具体 API 记录延迟和 SQL，结合 `EXPLAIN` 看是否命中索引。帖子动态按 `(group_id,status,pinned,created_at,post_id)` 做有序游标查询，通知按 `(recipient_id,id)` 翻页，任务按 `(group_id,status,created_at,task_id)` 查列表。索引能减少扫描，但会增加写入成本；不要在没跑生产负载时声称已完成全量 SQL 优化。
+
+**内存泄漏/连接堆积怎么排？** 先区分真泄漏、连接本来就增加和消息队列积压。观察活跃 WebSocket、goroutine 数、堆内存、队列长度，结合 Go pprof 的 heap/goroutine 与容器内存；断开测试连接后观察是否回落。重点查连接关闭时是否从本机 map 移除、心跳/重试 goroutine 是否退出、Pub/Sub 订阅是否关闭。仓库有 `tools/leaklab` 和监控指标，但不能说已证明整个系统永无泄漏。
+
+**CI 与监控到底解决什么？** CI 防止可复现的编译、单测、race 与镜像回归进入主线；监控指标告诉我错误率、延迟、连接数和 Kafka/通知积压是否异常；结构化日志按 `trace_id`/`event_id` 找一条具体业务从入口到异步消费者的轨迹。Grafana 是查看入口，Prometheus 存指标，Alloy/Loki 收集和查询日志；本项目没有宣称自动化生产发布或完整分布式 Trace 系统。
