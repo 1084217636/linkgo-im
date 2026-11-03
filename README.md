@@ -1,5 +1,7 @@
 > **2026-11-02 最新多社区版已开发**：注册入群、帖子互动、社区任务、持久通知、S3 附件及日志告警的启动与实测结果见 [本轮实施验收](docs/evidence/community-20261102.md)。下文旧版“仅学习群”“附件只有共享卷”等描述是先前阶段记录，以最新验收为准。
 
+按《肖宾_西电_AI软件开发工程师》当前简历练习项目介绍，请从 [2026-11-03 简历项目讲解](docs/interview/20261103_RESUME_PROJECT_WALKTHROUGH.md) 开始；旧 [IM 讲稿](docs/interview/LINKGO_IM_30_MINUTE_TALK.md) 保留早期阶段的实现说明，项目定位和测试口径以新版讲解及 [验收记录](docs/evidence/resume-verification-20261102.md) 为准。多社区产品页面位于 `web/`，旧的 `public/` 原生页面仍用于协议调试，两者不是同一套前端。
+
 # LinkGo Chat
 
 LinkGo 是一个使用 Go 和 go-zero 实现的 Client-Server 分布式 IM 项目。客户端通过 HTTP 与 WebSocket 接入，服务端按 Gateway 连接层、Logic 业务层和 Transfer 异步投递层拆分，主线覆盖跨 Gateway 单聊、消息持久化、ACK/重连补偿和 Kafka 群聊扩散。钱包红包与 AI 虚拟好友是可选扩展示例，不进入简历主线。
@@ -14,9 +16,9 @@ LinkGo 是一个使用 Go 和 go-zero 实现的 Client-Server 分布式 IM 项�
 
 学习群任务协作、群附件、MySQL 表设计、3 分钟项目讲稿与本轮验证边界见 [项目升级讲解](docs/interview/UPGRADE_INTERVIEW_GUIDE.md)。
 
-## 当前客户端
+## 客户端
 
-`public/index.html` 是零构建的原生 HTML/CSS/JavaScript 调试客户端，不依赖 React、Vue 或 npm。它通过 HTTP 登录和查询业务，通过 Protobuf WebSocket 二进制帧收发实时消息，支持：
+多社区的产品演示页面在 `web/`，覆盖注册、帖子、通知、附件、任务和聊天；`public/index.html` 是保留的零构建原生 HTML/CSS/JavaScript 协议调试客户端。下列能力描述的是 `public/` 调试页：
 
 - 登录、好友、群组和会话列表。
 - 单聊、群聊、历史查询。
