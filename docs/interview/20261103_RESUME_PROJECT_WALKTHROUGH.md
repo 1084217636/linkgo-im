@@ -81,7 +81,18 @@ Docker Compose 在本机启动 Nginx、3 台 Gateway、Logic、Transfer，以及
 
 **第一次自己看监控，按下面五步做：**
 
-1. 在仓库运行 `./scripts/start_community.sh`。打开 `https://localhost:8443/community/` 注册两个账号、加入同一社区，发一条群消息并让接收方收到。页面需要信任本地自签名证书。
+1. **先进入仓库**，再启动；如果当前在 `/home/xiaobin/myproject`，直接执行 `bash ./scripts/start_community.sh` 会找不到脚本。页面需要信任本地自签名证书。
+
+   ```bash
+   cd /home/xiaobin/myproject/linkgo-collab-next
+   bash ./scripts/start_community.sh
+   ```
+
+   然后打开 `https://localhost:8443/community/`，注册两个账号、加入同一社区，发一条群消息并让接收方收到。想先跑自动化业务验收，可在**同一个仓库目录**运行下面这条命令；`SSL_CERT_FILE` 让 Python 信任启动脚本生成的本地证书，测试请求仍通过 HTTPS 加密入口。
+
+   ```bash
+   SSL_CERT_FILE=.local-tls/cert.pem python3 scripts/verify_communities.py --base https://localhost:8443
+   ```
 2. 打开 `http://localhost:9090/targets`。这里是 Prometheus 的采集目标列表；看 `linkgo-gateway`、`linkgo-logic`、`linkgo-transfer` 是否为 UP。UP 只证明 `/metrics` 能抓到，接着要做业务操作看数字变化。
 3. 在 Prometheus 查询框输入 `sum(linkgo_ws_connections)`，连上第二个页面后观察当前 WebSocket 数变化。再查 `sum(rate(linkgo_community_requests_total[1m]))` 看最近一分钟社区 HTTP 请求速率。若一分钟内没请求，速率为 0 是正常的。Grafana `http://localhost:3000`（本地演示账号 `admin/linkgo`）的 Prometheus 数据源把这些查询画成图；看图时先核对时间范围。
 4. 打开 Grafana 的 Explore，数据源选择 Loki。输入 `{project="linkgo"}` 看项目容器日志，再用具体 `event_id` 或 `message_id` 搜对应阶段。如果查不到，先确认 Alloy 容器在运行、Loki 数据源可用、刚才确有新业务流量；“没有日志”不能直接判断业务成功或失败。
