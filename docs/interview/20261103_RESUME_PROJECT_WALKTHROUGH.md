@@ -85,14 +85,16 @@ Docker Compose 在本机启动 Nginx、3 台 Gateway、Logic、Transfer，以及
 
    ```bash
    cd /home/xiaobin/myproject/linkgo-collab-next
-   bash ./scripts/start_community.sh
+   make community-up
    ```
 
    然后打开 `https://localhost:8443/community/`，注册两个账号、加入同一社区，发一条群消息并让接收方收到。想先跑自动化业务验收，可在**同一个仓库目录**运行下面这条命令；`SSL_CERT_FILE` 让 Python 信任启动脚本生成的本地证书，测试请求仍通过 HTTPS 加密入口。
 
    ```bash
-   SSL_CERT_FILE=.local-tls/cert.pem python3 scripts/verify_communities.py --base https://localhost:8443
+   make community-verify
    ```
+
+   这两个 `make` 命令要在 **WSL 终端**执行。被测的 Go 服务和数据库在 Docker 中，验收脚本使用 WSL 的 `/usr/bin/python3`（只用标准库，不需要 pip）。VS Code 如果弹出 `C:\Users\...\Python313\python.exe` 无法解析，那是 IDE 保存了旧 Windows 解释器，不是这个脚本需要 Python 3.13；在 VS Code 里用“在 WSL 中重新打开文件夹”，然后运行“Python: Select Interpreter”，选择 `/usr/bin/python3`。也可以只在 WSL 终端用 `make community-verify`，它不会经过 VS Code 的解释器选择。
 
    看到 `WAIT notification ...` 表示脚本正在等 Kafka 消费者把通知写入 MySQL；不要在这一行立即按 `Ctrl+C`。脚本每 5 秒报告进度，45 秒仍未收到时会报出缺失的事件类型和最近收件箱内容。`KeyboardInterrupt` 只表示操作者按了 `Ctrl+C`，不是 Python 版本错误。若确实超时，先看 `docker compose ... ps` 中 Kafka、Logic 的状态，再查 `community_event_outbox` 与 Logic 日志。
 2. 打开 `http://localhost:9090/targets`。这里是 Prometheus 的采集目标列表；看 `linkgo-gateway`、`linkgo-logic`、`linkgo-transfer` 是否为 UP。UP 只证明 `/metrics` 能抓到，接着要做业务操作看数字变化。

@@ -1,6 +1,6 @@
 APP_NAME := linkgo-im
 
-.PHONY: test test-race vet fmt-check build docker-build compose-config compose-cn-config compose-light-config compose-light-cn-config observability-config observability-cn-config prometheus-check observability-up observability-cn-up observability-down observability-cn-down local-up docker-up docker-cn-up docker-cn-reset docker-light-up docker-light-cn-up docker-down docker-cn-down docker-light-down docker-light-cn-down k8s-render k8s-check k8s-dry-run k8s-apply k8s-release k8s-delete ci-local bench ops-smoke cluster-smoke fault-injection fault-check frontend-static-check docs-check core-im-demo frontend-smoke group-transfer-demo ai-demo ai-ask-demo im-ai-final-demo
+.PHONY: test test-race vet fmt-check build docker-build compose-config compose-cn-config compose-light-config compose-light-cn-config observability-config observability-cn-config prometheus-check observability-up observability-cn-up observability-down observability-cn-down local-up docker-up docker-cn-up docker-cn-reset docker-light-up docker-light-cn-up docker-down docker-cn-down docker-light-down docker-light-cn-down k8s-render k8s-check k8s-dry-run k8s-apply k8s-release k8s-delete ci-local bench ops-smoke cluster-smoke fault-injection fault-check frontend-static-check docs-check core-im-demo frontend-smoke group-transfer-demo ai-demo ai-ask-demo im-ai-final-demo community-up community-verify
 
 test:
 	go test ./...
@@ -24,6 +24,15 @@ docker-build:
 
 local-up:
 	./scripts/start_local.sh
+
+community-up:
+	bash ./scripts/start_community.sh
+
+# Run the API acceptance from WSL/Linux, independently of VS Code's Python picker.
+# This script uses only the Python standard library; pip and a virtualenv are unnecessary.
+community-verify:
+	test -f .local-tls/cert.pem || { echo 'Start the community first: make community-up' >&2; exit 1; }
+	SSL_CERT_FILE="$(CURDIR)/.local-tls/cert.pem" /usr/bin/python3 scripts/verify_communities.py --base https://localhost:8443
 
 compose-config:
 	docker compose config
