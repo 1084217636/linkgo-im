@@ -16,6 +16,7 @@ import (
 	"github.com/zeromicro/go-zero/core/conf"
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/rest"
+	"github.com/zeromicro/go-zero/zrpc"
 )
 
 var configFile = flag.String("f", "cmd/gateway/etc/gateway-api.yaml", "the config file")
@@ -27,6 +28,13 @@ func main() {
 	conf.MustLoad(*configFile, &c)
 	overrideConfigFromEnv(&c)
 	authutil.SetJWTSecret(c.Auth.AccessSecret)
+	// On failed or slow RPCs the default client interceptor prints request
+	// bodies. LoginReq contains a password, so suppress it on every Gateway.
+	zrpc.DontLogClientContentForMethod("/api.Logic/Login")
+	// go-zero's default HTTP logger dumps the raw request body on 5xx. That
+	// would expose passwords from failed login requests and other private data.
+	// Application routes emit structured, content-free operation logs instead.
+	c.Middlewares.Log = false
 
 	svcCtx := svc.NewServiceContext(c)
 	defer svcCtx.Close()

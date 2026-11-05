@@ -5,11 +5,12 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"errors"
-	"fmt"
 	"github.com/1084217636/linkgo-im/api"
 	"github.com/1084217636/linkgo-im/internal/middleware"
 	"github.com/zeromicro/go-zero/core/logx"
 	"golang.org/x/crypto/bcrypt"
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 	"strings"
 )
 
@@ -23,12 +24,12 @@ func (h *LogicHandler) Login(ctx context.Context, req *api.LoginReq) (*api.Login
 		if !errors.Is(err, sql.ErrNoRows) {
 			logx.Errorw("login query failed", logx.Field("error", err.Error()))
 		}
-		return nil, fmt.Errorf("invalid credentials")
+		return nil, grpcstatus.Error(codes.Unauthenticated, "invalid credentials")
 	}
 
 	valid, legacy := verifyPassword(pwdInDB, req.Password)
 	if status != 1 || !valid {
-		return nil, fmt.Errorf("invalid credentials")
+		return nil, grpcstatus.Error(codes.Unauthenticated, "invalid credentials")
 	}
 	if legacy {
 		h.upgradeLegacyPassword(ctx, uid, pwdInDB, req.Password)

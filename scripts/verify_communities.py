@@ -61,12 +61,18 @@ def main():
  print('PASS task publish → submit → return → resubmit → approve, permissions and progress')
  def wait_notification(token,object_id,kind=None,seconds=45,count=1):
   end=time.monotonic()+seconds
+  started=time.monotonic();next_report=started+5;last=[]
   while time.monotonic()<end:
    result=call('/notifications',token)['notifications']
+   last=result
    found=[x for x in result if x['object_id']==object_id and(not kind or x['kind']==kind)]
    if len(found)>=count:return found
+   if time.monotonic()>=next_report:
+    print(f'WAIT notification kind={kind or "any"} object={object_id} found={len(found)}/{count} elapsed={int(time.monotonic()-started)}s',flush=True)
+    next_report=time.monotonic()+5
    time.sleep(.5)
-  raise AssertionError('notification did not recover '+object_id)
+  recent=[{'kind':x['kind'],'object_id':x['object_id']} for x in last[-5:]]
+  raise AssertionError(f'notification missing after {seconds}s: kind={kind}, object={object_id}, found={len(found)}/{count}; recent inbox entries={recent}. Check Kafka, Logic logs, and community_event_outbox.')
  found=wait_notification(b,post,'comment_created');call(f"/notifications/{found[0]['id']}/read",b,'POST')
  assert next(x for x in call('/notifications',b)['notifications'] if x['id']==found[0]['id'])['read_at']>0
  assert len(wait_notification(b,tid,'task_review',count=2))==2
@@ -90,4 +96,8 @@ def main():
  evidence={'group_id':g,'second_group_id':g2,'post_id':post,'task_id':tid,'users':{k:{'username':v['username'],'user_id':v['user_id']}for k,v in users.items()},'password':'Test-Pass-2026!'}
  target=pathlib.Path('artifacts/community-demo.json');target.parent.mkdir(exist_ok=True);target.write_text(json.dumps(evidence,ensure_ascii=False,indent=2))
  print('PASS complete; reproducible fixture:',target)
-if __name__=='__main__':main()
+if __name__=='__main__':
+ try:main()
+ except KeyboardInterrupt:
+  print('\nTest interrupted by Ctrl+C while waiting. This is not a Python version error.',flush=True)
+  raise SystemExit(130)

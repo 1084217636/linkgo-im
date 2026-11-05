@@ -93,6 +93,8 @@ Docker Compose 在本机启动 Nginx、3 台 Gateway、Logic、Transfer，以及
    ```bash
    SSL_CERT_FILE=.local-tls/cert.pem python3 scripts/verify_communities.py --base https://localhost:8443
    ```
+
+   看到 `WAIT notification ...` 表示脚本正在等 Kafka 消费者把通知写入 MySQL；不要在这一行立即按 `Ctrl+C`。脚本每 5 秒报告进度，45 秒仍未收到时会报出缺失的事件类型和最近收件箱内容。`KeyboardInterrupt` 只表示操作者按了 `Ctrl+C`，不是 Python 版本错误。若确实超时，先看 `docker compose ... ps` 中 Kafka、Logic 的状态，再查 `community_event_outbox` 与 Logic 日志。
 2. 打开 `http://localhost:9090/targets`。这里是 Prometheus 的采集目标列表；看 `linkgo-gateway`、`linkgo-logic`、`linkgo-transfer` 是否为 UP。UP 只证明 `/metrics` 能抓到，接着要做业务操作看数字变化。
 3. 在 Prometheus 查询框输入 `sum(linkgo_ws_connections)`，连上第二个页面后观察当前 WebSocket 数变化。再查 `sum(rate(linkgo_community_requests_total[1m]))` 看最近一分钟社区 HTTP 请求速率。若一分钟内没请求，速率为 0 是正常的。Grafana `http://localhost:3000`（本地演示账号 `admin/linkgo`）的 Prometheus 数据源把这些查询画成图；看图时先核对时间范围。
 4. 打开 Grafana 的 Explore，数据源选择 Loki。输入 `{project="linkgo"}` 看项目容器日志，再用具体 `event_id` 或 `message_id` 搜对应阶段。如果查不到，先确认 Alloy 容器在运行、Loki 数据源可用、刚才确有新业务流量；“没有日志”不能直接判断业务成功或失败。

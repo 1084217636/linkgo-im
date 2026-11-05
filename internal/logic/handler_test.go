@@ -14,6 +14,8 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/go-sql-driver/mysql"
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -56,8 +58,8 @@ func TestLoginUsesGenericCredentialError(t *testing.T) {
 
 			h := &LogicHandler{DB: db}
 			_, err = h.Login(context.Background(), &api.LoginReq{Username: tc.username, Password: "wrong"})
-			if err == nil || err.Error() != "invalid credentials" {
-				t.Fatalf("Login error = %v, want invalid credentials", err)
+			if status.Code(err) != codes.Unauthenticated || status.Convert(err).Message() != "invalid credentials" {
+				t.Fatalf("Login error = %v, want generic Unauthenticated", err)
 			}
 			if err := mock.ExpectationsWereMet(); err != nil {
 				t.Fatalf("sql expectations: %v", err)

@@ -34,6 +34,9 @@ func main() {
 	conf.MustLoad(*configFile, &c)
 	overrideConfigFromEnv(&c)
 	authutil.SetJWTSecret(c.JWT.AccessSecret)
+	// LoginReq contains a password. Keep RPC timing metrics, but never log its
+	// request body through go-zero's server stat interceptor.
+	c.Middlewares.StatConf.IgnoreContentMethods = append(c.Middlewares.StatConf.IgnoreContentMethods, "/api.Logic/Login")
 
 	ctx := svc.NewServiceContext(c)
 	defer ctx.Close()
