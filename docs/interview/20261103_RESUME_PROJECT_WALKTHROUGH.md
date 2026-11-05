@@ -14,26 +14,89 @@
 
 如果只给 30 秒，讲第一段第一、二句，第三段第一句，然后停下。不要主动报不熟悉的吞吐数字。
 
-### 十分钟版的叙述顺序
+### 按真实操作串起来讲：先理解，再练十分钟口述
 
-按一个人的完整操作讲，顺序为：**注册并进入社区 → 发帖及附件 → 群聊/私聊 → 布置并审核任务 → 通知 → 故障恢复与验证**。每走一步，再说明负责的服务和存储。这样比先背十几个中间件更容易让面试官听懂。
+主线只有一条：**浏览器打开 HTTPS 页面 → 注册登录 → 创建或加入社区 → 上传资料并发帖 → 私聊/群聊 → 发布、提交、审核任务 → 收到通知 → 断线恢复与排障**。以下“浏览器”指仓库 `web/` 的社区页面。每一步可以用“输入、传输、校验、存储、返回、失败处理”六个词复述。
 
-1. **注册/进入社区（约 1 分钟）**：用户提交用户名和密码。服务端用 bcrypt 保存哈希，登录后发 JWT。生产形态应经 TLS 入口；仓库提供本机 HTTPS/WSS 演示，HTTP 端口只用于本机调试。社区创建者是 owner；成员加入后在 `group_members` 中有 active 状态和角色。HTTP 请求带身份，服务端按用户和社区核对权限，不能靠前端隐藏按钮。
-2. **内容沉淀（约 1.5 分钟）**：成员发布问答、笔记或资料帖，其他成员评论、点赞。帖子 `version` 用于编辑时拒绝旧版本覆盖；`request_id` 和请求内容指纹处理超时后的同请求重试。帖子、评论、点赞分别是 MySQL 表；附件的二进制存对象存储，MySQL 保存归属、元信息与存储键。下载时再次查当前群成员资格。
-3. **实时沟通（约 2 分钟）**：A 连 Gateway-1，B 连 Gateway-3。A 经 WebSocket 发带 `client_msg_id` 的消息；Gateway 调 Logic，Logic 查好友/群成员关系，分配会话 `seq`，把消息与投递 Outbox 同事务写 MySQL。投递层先在 Redis 给 B 写 `pending_ack`、正文索引和重试状态，再查 `route:B`，向 Gateway-3 专属 Pub/Sub 频道通知。Gateway-3 从本机连接表找到 B，把二进制帧写 WebSocket；B 返回业务 ACK 才清待确认状态。`message_id` 标识同一条持久消息，重推可能重复，客户端按它去重。
-4. **群聊（约 1 分钟）**：群消息先持久化，群投递任务由 Logic 的 Outbox 交 Kafka。Transfer 消费后按收件人逐个处理，成员级租约/完成状态使重复消费能够跳过已处理成员；失败写 retry topic，超过限制转 DLQ，可靠转移后才提交原 Kafka offset。Kafka offset 说明消费者处理进度，不等于成员客户端 ACK。
-5. **学习任务（约 1.5 分钟）**：管理员建草稿并发布；普通成员提交文本/链接/附件；管理员按提交版本审核通过或退回，退回后成员可修改再次提交。`group_tasks` 是任务，`task_submissions` 是每个成员的一份当前提交，`task_events` 记录变更及幂等结果。操作在事务里锁任务与角色，按 `version` 拒绝并发旧请求，并写 `task_notification_outbox`。非群成员访问、普通成员审核等越权请求都由后端拒绝。
-6. **持久通知（约 1 分钟）**：后台从任务通知事件投影到 `community_event_outbox`，按租约领取后写 `community.events.v1`。消费者用 event ID 回查可信 MySQL 记录，再写 `community_notifications`，其中 `(event_id,recipient_id)` 唯一；Redis 只发“有新通知”提示，页面再查 MySQL 收件箱。Kafka 停机时任务和通知意向已提交，恢复后 worker 重试。不能说通知和消息传输处于一个跨 MySQL/Kafka 的原子事务。
-7. **工程验证（约 1 分钟）**：Docker 演练真实页面的多用户闭环、Kafka 停机恢复；Go 测试与 race detector 在 CI 跑；Prometheus 采指标，Grafana 展示，Alloy 把结构化日志送 Loki，消息 `trace_id` 帮助关联 Gateway、Logic、Transfer 日志。当前这是日志关联，并非完整 OpenTelemetry span tracing。最后说一条边界：中间件在本地演示仍是单节点，不从本地结果推导海量用户容量。
+#### 1. 从浏览器打开页面到登录成功
+
+1. 用户访问 `https://localhost:8443/community/`。浏览器先与本机 Nginx 建立 TCP 连接，再进行 TLS 握手：检查证书、协商加密参数，之后 HTTP 请求及响应就在加密连接中传输。本地脚本生成的是自签名证书，需要在浏览器中信任；正式对外部署必须换成受信任的证书。Nginx 提供页面，把 `/api/v1/` 反向代理到容器网络中的 Gateway。**这里保护的是浏览器到 Nginx 的外部传输；容器内 Nginx→Gateway 和 Gateway→Logic 目前没有声称全链路 TLS。**[Nginx 配置](../../deploy/community/nginx.conf)、[启动脚本](../../scripts/start_community.sh)
+2. 点“注册”时，页面通过 HTTPS 发 `POST /api/v1/register`，请求体是 JSON 的用户名和密码。TLS 负责在网络上传输时加密；**不是浏览器先用 bcrypt 加密再发送**。Gateway 对 JSON、长度和请求频率做检查，`community.Service.Register` 校验用户名 3–32 字、密码 8–72 字节，用 bcrypt 加盐计算单向哈希，向 MySQL `users` 写 `user_id、username、password(哈希)、status`。用户名重复由数据库唯一约束挡住。数据库里没有可解密的明文密码。[注册逻辑](../../internal/community/service.go)
+3. 页面接着通过 HTTPS 发 `POST /api/v1/login`。Gateway 通过 Etcd 发现可用 Logic，并用 gRPC 把登录请求交给 Logic。Logic 按用户名查 `users`，用 `bcrypt.CompareHashAndPassword` 比对用户输入和库里的哈希，并核对账号状态。成功后用服务器密钥做 HS256 签名，生成含 `user_id、签发时间、24 小时过期时间` 的 JWT；Gateway 把它作为 JSON 响应返回给浏览器。JWT 是**带签名的身份凭证，不是密码，也不负责加密内容**。页面把 token 放在当前 React 状态，后续 HTTP 请求放 `Authorization: Bearer <JWT>`；Gateway 验签、检查过期时间，从 token 取用户 ID 写入请求上下文。业务代码从上下文取身份，不能相信客户端提交的 `user_id`。[登录实现](../../internal/logic/handler_auth.go)、[JWT](../../internal/middleware/auth.go)、[页面请求](../../web/src/main.tsx)
+4. 聊天需要长连接。页面先带 JWT 通过 HTTPS 请求 `POST /api/v1/ws-ticket`，Gateway 随机生成 32 字节一次性 ticket，只把其 SHA-256 摘要作为 Redis key 保存，值是用户 ID，TTL 30 秒。页面再发 `wss://localhost:8443/ws?ticket=...`；Nginx 转发 HTTP Upgrade，Gateway 原子 `GETDEL` 消费 ticket、检查浏览器 `Origin`，通过才返回 101 并建立 WebSocket。一个 ticket 不能重放，长期 JWT 也不必放在 WebSocket URL。Gateway 给这个 socket 生成 `connection_id`，保存在本机连接表，并把 `route:<uid>` 写到 Redis；之后页面每 20 秒发心跳。这里的 WSS 也是 TLS 加密的 WebSocket。[ticket](../../cmd/gateway/internal/middleware/wsticket.go)、[建连](../../cmd/gateway/internal/handler/websockethandler.go)、[前端连接](../../web/src/main.tsx)
+
+**面试口述：**“用户到入口统一走 HTTPS/WSS。密码只在 TLS 内的登录请求里传到服务端，注册时数据库存 bcrypt 哈希，登录时比对哈希后签发 JWT。HTTP 接口验 JWT；WebSocket 先用 JWT 换 30 秒的一次性 ticket，再升级连接。进入具体社区时服务端继续查成员表，所以有 token 也不能访问任意社区。”
+
+**容易追问：为什么还要 JWT，TLS 不是已经加密了吗？** TLS 保护传输中的字节，不能说明这次请求属于哪个登录用户；JWT 提供可校验的身份声明。bcrypt 解决数据库泄露时密码明文暴露问题。三者负责的环节不同。
+
+#### 2. 创建或加入社区：哪些身份能做哪些事
+
+用户登录后页面请求 `GET /api/v1/communities`，看到可发现的社区；点击创建会 `POST /api/v1/communities`。Gateway 验 JWT，取上下文中的用户 ID，再把请求交给社区业务服务。一次创建事务内写 `im_groups`（社区本体）、`community_profiles`（简介等）、`group_members`（创建者 role=`owner`、status=`active`）、`conversation_members`（群聊会话成员）。四项同时提交，避免有群却没有创建者。加入社区时先锁群记录，确认社区允许加入、用户未被移除，再写或恢复 active 成员；退出/移除会同步撤销会话成员资格，并让相关 Redis 成员缓存失效。[社区服务](../../internal/community/service.go)、[HTTP 路由](../../cmd/gateway/internal/handler/communityroutes.go)
+
+后面的发帖、任务、附件、群聊都以 `group_id` 为权限边界：只要是 active 成员才能访问相应数据；公告、任务创建和审核还要检查 owner/admin 角色。页面隐藏管理员按钮仅是交互提示，后端在数据库查询时仍检查角色。举例：B 手改请求中的 `group_id` 指向未加入的 C 社区，服务端查不到 `(C,B,active)` 就拒绝；登录成功不代表拥有所有社区权限。
+
+#### 3. 发帖、评论、点赞和附件：长期内容怎么存
+
+成员在页面选问答/笔记/资料，填标题正文并点击发布。页面用 HTTPS JSON 调社区帖子接口，带随机 `request_id`。Gateway 验身份、解析有大小限制的请求体；业务层在 MySQL 事务内先锁操作者行，查询 `(actor_id, request_id)` 是否已经处理：同一请求和相同内容返回上次结果；同一 ID 换了内容返回冲突。随后查 active 群成员，写 `community_posts`，必要时校验附件归属并关联 `community_post_attachments`，再写社区事件 Outbox，最后提交事务。发帖成功返回 `post_id、version`。别人刷新动态时，按群和状态查询，最多取 20 条，使用游标继续翻页；评论在 `community_comments`，点赞在 `community_reactions`。编辑帖时必须带看到的 `expected_version`，事务锁帖并比较版本，成功加一；两个编辑者都拿版本 1，先提交者变 2，后一个收到冲突，需要刷新，防止静默覆盖。[帖子实现](../../internal/community/service.go)
+
+附件不是把文件字节放进 MySQL。页面通过 HTTPS multipart 上传，Gateway 先核对本人是该群 active 成员，限制 25 MiB、文件名和可接受类型，读取内容计算 SHA-256；对象字节放 MinIO，MySQL `attachments` 保存附件 ID、群 ID、上传人、文件名、类型、大小、哈希和存储键。发帖只引用附件 ID，服务端还检查它确属该群且是本人上传。下载必须再次校验当前成员身份，再由存储键打开对象。对象存储与 MySQL 不能共用事务：如果对象已存而数据库登记失败，代码尝试删除对象作为补偿，失败仍可能留孤儿对象，不能宣称强一致。[附件实现](../../internal/attachment/store.go)
+
+**面试口述：**“帖子是可检索的长期内容，保存在 MySQL；聊天消息是实时会话流。我的发帖接口用 `request_id` 防请求重放、用版本号防并发覆盖，附件字节交 MinIO，数据库仅存可校验的元数据与归属。读、写和下载都会查社区成员资格。”
+
+#### 4. 私聊与群聊：消息从 A 的页面到 B 的页面
+
+以 A 给 B 发私聊为例。页面先生成 `client_msg_id`，把待发送消息记到本机 IndexedDB，再将消息字段编码成 Protobuf 二进制帧，经已有 WSS 发给持有 A 连接的 Gateway。Gateway 从**已经认证的连接**取得 A 的身份，调用 Logic 的 gRPC 消息接口；Logic 验证私聊关系、检查 `client_msg_id` 重试，确定规范化的双方 `session_id`，从 Redis 给该会话分配 `seq`，形成持久 `message_id`。Logic 在 MySQL 同一事务写 `messages` 和 `delivery_outbox`。事务提交成功后给 A 返回“服务端已接受/入库”结果：它**不是 B 已收到**。如果 A 刚发完断线但数据库已提交，带原 `client_msg_id` 重试会查到同一条持久消息，不应生成两条。[消息入口](../../internal/logic/handler.go)、[保存](../../internal/logic/handler_store.go)
+
+后台投递时，对接收人 B 先在 Redis 记短期待确认状态：`pending_ack:B` 是按投递时间排序的 ZSet，member 是 `message_id`；`ack_idx:B` Hash 用 message ID 找编码后的消息正文；`ack_retry:B` Hash 记重试次数。然后查 `route:B`，其值指出哪台 Gateway 和当前连接 owner。若 B 在 Gateway-3，Logic 向 **Gateway-3 专属** Redis Pub/Sub 频道发通知；其他 Gateway 不会为了这条消息逐个处理广播。Gateway-3 在本机用户连接表找到 B 的 socket，把二进制帧写入该 WebSocket；它不是调用浏览器的 HTTP 接口。B 的页面按 `message_id` 写 IndexedDB/更新 UI，再发业务 ACK。Gateway 收到 ACK 后清 Redis 待确认状态并更新确认进度；“收到”不等于用户点开“已读”。若 ACK 丢失，超时重推的还是同一 `message_id`，页面写入同一条记录并再 ACK。[Redis 投递](../../internal/delivery/redis.go)、[页面接收](../../web/src/main.tsx)
+
+群聊的前半段类似，但 Logic 验证群成员并持久化收件人快照后，将**一条群消息扩散任务**通过 Outbox 交给 Kafka。`Transfer` 作为 Kafka 消费者取任务，当前对收件人逐个处理，给每位成员使用 Redis 租约与 `done` 状态；已完成成员在任务重试时跳过。投递失败写 retry topic，超过上限写 DLQ；成功处理或已可靠转移任务后才提交 Kafka offset。Kafka offset 是服务端消费进度，**不证明每个客户端已 ACK**。群成员的在线推送最终也复用上面的 pending、路由、WebSocket、业务 ACK 链路。[群扩散](../../cmd/transfer/main.go)
+
+离线 B 没有可用 socket，Pub/Sub 无法替代持久存储。B 重连时 Gateway 自动回放 Redis 中该用户尚未 ACK 的短期消息；页面打开会话或 WSS 重连后还通过 HTTP 按会话查 MySQL 历史，页面按稳定 `message_id` 合并并按 `seq` 排序。Redis pending 有 TTL，MySQL `messages` 是长期事实；当前补偿依赖已知会话和历史查询，并不承诺全新设备自动扫完所有会话。新连接写新 `route:B`；旧连接退出时只在 Redis 值仍等于自己 owner 时删除，避免旧连接清理误删新路由。[重连同步](../../internal/server/sync.go)、[页面历史](../../web/src/main.tsx)
+
+#### 5. 学习任务：管理员发布、成员提交、管理员审核
+
+管理员在社区“学习任务”页点击创建，页面 HTTPS 调 `POST /groups/{group_id}/tasks`，后端先验证 owner/admin，再在 `group_tasks` 写一条 `draft` 任务。点击发布时请求携带 `request_id` 和当前 `expected_version`，服务端在事务内锁任务、复核角色和版本，改为 `published`、版本加一，并写 `task_events` 和 `task_notification_outbox`；提交后成员列表才可见该任务。任务状态是草稿→已发布→关闭，关闭前代码还会检查是否有待审核提交。[任务服务](../../internal/learningtask/store.go)
+
+成员打开任务，后端会重新查该成员是不是本群 active 成员；成员提交文本、链接或附件时，后端核对任务已发布、附件是本人在本群上传。`task_submissions` 的 `(task_id,user_id)` 唯一约束表示每人一份当前提交：首次提交插入 `submitted、attempt_no=1、version=1`；管理员退回后，成员带当前版本再次提交，在原行更新内容、尝试次数和版本。管理员点通过或退回时带 `expected_version`，事务锁住任务和该提交，要求当前状态确为 `submitted`，改 `approved` 或 `returned`，并把审核人、理由、时间和待通知事件一起提交。两名管理员同时审核，后到者会看到状态/版本不符而收到冲突，不会覆盖先到者。管理员的“完成情况”接口按 active 普通成员统计未提交、待审核、退回和通过数量，数据直接来自 MySQL。[提交与审核](../../internal/learningtask/submission.go)、[页面任务操作](../../web/src/main.tsx)
+
+这里要分清三种保护：`request_id` 解决网络超时后**同一个操作重复请求**；唯一键解决**一个成员不能产生两份当前提交**；`expected_version` 解决**两个人拿旧页面并发修改**。这三种不是一回事。
+
+#### 6. 状态通知：审核成功后用户怎么知道
+
+审核事务成功时，业务状态、`task_events` 和 `task_notification_outbox` 已经一起进入 MySQL；即使 Kafka 此时停机，审核结果本身也可在任务页查到。Logic 后台 goroutine 每秒扫描到期的社区 Outbox，事务内用 `FOR UPDATE SKIP LOCKED` 领取一条，设置 30 秒租约和 token，事务外发送到 Kafka `community.events.v1`。发送成功标 `done`；失败退避重试，达到上限标 `dead` 供排查。租约到期允许别的 worker 接手，因此可能重复发布。[通知 worker](../../internal/community/worker.go)
+
+Logic 内的另一个 Kafka 消费循环属于消费组 `community-notifications-v1`。它取到事件 ID 后**重新从 MySQL 读可信事件**，按当前 active 成员投影到 `community_notifications`；`(event_id,recipient_id)` 唯一键使重复消费不会生成两条通知。MySQL 提交后才提交 Kafka offset。Redis Pub/Sub 只给在线页面发一条“通知有变化”的提示，不带正文；页面收到提示就调通知 HTTP 接口重新查 MySQL，另外每 10 秒轮询一次。B 离线时提示会错过，但收件箱行仍在；重新登录后可查询。[通知投影](../../internal/community/worker.go)、[页面收件箱](../../web/src/main.tsx)
+
+**面试口述：**“审核结果与通知意向在一个 MySQL 事务里。后台领取待办、发 Kafka，消费者幂等写 MySQL 收件箱，Redis 只负责在线唤醒。这样 Kafka 挂了最多导致通知延迟，不会把已经通过的审核回滚；也不能说 MySQL 与 Kafka 构成一个跨系统事务。”
+
+#### 7. 故障、测试与监控：软件分别干什么
+
+Docker Compose 在本机启动 Nginx、3 台 Gateway、Logic、Transfer，以及 MySQL、Redis、Kafka、Etcd、MinIO 和观测组件。它让多进程链路可重复启动，**不是生产多机房部署**。`./scripts/start_community.sh` 会生成本地 TLS 证书、应用 SQL 迁移并启动服务。页面 `https://localhost:8443/community/` 是实际操作入口。[启动脚本](../../scripts/start_community.sh)
+
+监控要按“程序产出数字 → 定期采集 → 展示/告警”理解。Go 代码在 `/metrics` 暴露指标，比如当前 WebSocket 数 `linkgo_ws_connections`，社区 HTTP 请求数与耗时、社区事件发布成功/重试/死亡数。**Prometheus** 每 5 秒主动抓 Gateway、Logic、Transfer 的 `/metrics`，把随时间变化的数字存下来；其 `up` 只能说明抓取成功。**Grafana** 查询 Prometheus 并展示曲线，自己不是采集器。Prometheus 规则连续发现 Transfer 抓取失败或社区 Outbox 重试，会把告警发给 **Alertmanager**；本地 Alertmanager 把告警送到 Gateway 的内部审计入口，不能说已经接入真实值班通知。[指标](../../internal/metrics/metrics.go)、[抓取](../../deploy/observability/prometheus.yml)、[告警规则](../../deploy/observability/rules/community.yml)
+
+日志是另一条线。Gateway、Logic、Transfer 输出带时间、阶段、`trace_id`/`message_id`/`event_id` 的结构化日志；**Alloy** 发现本项目 Docker 容器并收集 stdout 日志，送到 **Loki**；**Grafana** 再查询 Loki。指标告诉我“什么时候开始失败、影响多大”，日志告诉我“一条具体任务在哪一步失败”。`trace_id` 是跨日志关联字段，当前没有 OpenTelemetry Span 全链路追踪。排障例子：收不到通知时先看任务状态和 Outbox 行，再看 `linkgo_community_events_total{operation="publish",result="retry"}` 是否增加，最后在 Loki 中按 event ID 查发布/消费日志，判断卡在 Kafka 发布还是收件箱投影。[Alloy](../../deploy/observability/alloy/config.alloy)、[告警演练](../../scripts/verify_community_observability.py)
+
+项目确有运行过的验证：`go test ./...`；`verify_communities.py --faults` 验证权限、并发、任务流转和暂停 Kafka 后恢复；浏览器脚本真点注册、发帖、附件、聊天和审核；`verify_community_observability.py` 暂停 Transfer，观察 Prometheus 告警、Alertmanager 收到 firing 与 resolved，并查询 Loki 日志。CI 的 GitHub Actions 自动做 Go 单测、race 检测、构建、前端构建和配置检查；CI 是提交时自动检查，不是生产自动发布。100 帖/8 并发只是本地业务正确性与限流实验，不代表平台能支撑海量用户。[核验证据](../evidence/resume-verification-20261102.md)、[CI](../../.github/workflows/ci.yml)
+
+**第一次自己看监控，按下面五步做：**
+
+1. 在仓库运行 `./scripts/start_community.sh`。打开 `https://localhost:8443/community/` 注册两个账号、加入同一社区，发一条群消息并让接收方收到。页面需要信任本地自签名证书。
+2. 打开 `http://localhost:9090/targets`。这里是 Prometheus 的采集目标列表；看 `linkgo-gateway`、`linkgo-logic`、`linkgo-transfer` 是否为 UP。UP 只证明 `/metrics` 能抓到，接着要做业务操作看数字变化。
+3. 在 Prometheus 查询框输入 `sum(linkgo_ws_connections)`，连上第二个页面后观察当前 WebSocket 数变化。再查 `sum(rate(linkgo_community_requests_total[1m]))` 看最近一分钟社区 HTTP 请求速率。若一分钟内没请求，速率为 0 是正常的。Grafana `http://localhost:3000`（本地演示账号 `admin/linkgo`）的 Prometheus 数据源把这些查询画成图；看图时先核对时间范围。
+4. 打开 Grafana 的 Explore，数据源选择 Loki。输入 `{project="linkgo"}` 看项目容器日志，再用具体 `event_id` 或 `message_id` 搜对应阶段。如果查不到，先确认 Alloy 容器在运行、Loki 数据源可用、刚才确有新业务流量；“没有日志”不能直接判断业务成功或失败。
+5. 跑 `python3 scripts/verify_community_observability.py`。脚本会暂停本地 Transfer，等待 `up{job="linkgo-transfer"}` 触发告警，再恢复 Transfer，核对 Alertmanager 的 firing/resolved 审计和 Loki 中的相关日志。**这是受控故障演练，不是线上故障经验。**如果本机尚未启动 Docker 环境，先不要把历史证据写成自己这次亲手重跑的结果。
+
+面试官若问“你用 Grafana 排查过什么”，就用上面这个实例说：先看采集目标与告警定位服务，接着看请求或事件指标判断时间和范围，再按 event ID 找日志确定是发布失败还是消费失败，恢复组件后重复业务烟测。**Prometheus 存数字、Grafana 看数字和日志、Alloy 搬日志、Loki 存并查日志、Alertmanager 管告警通知**，这是最需要记住的对应关系。
 
 ## 2. 白板图与四条简历的代码对应
 
 ```text
-浏览器 ─ HTTPS/WSS ─ Gateway ─ gRPC/Etcd ─ Logic ─ MySQL（业务事实、消息、Outbox）
-                         │                  │
-                         │                  ├─ Redis（route、pending、近期回放）
-                         │                  └─ Kafka（群投递任务）→ Transfer → Redis/目标 Gateway
-                         └─ HTTP 社区/任务/附件接口 → MySQL / MinIO
+浏览器 ─ HTTPS/WSS ─ Nginx(TLS入口) ─ HTTP/WS ─ Gateway ─ gRPC/Etcd ─ Logic ─ MySQL（业务事实、消息、Outbox）
+                                                 │                  │
+                                                 │                  ├─ Redis（route、pending、近期回放）
+                                                 │                  └─ Kafka（群投递任务）→ Transfer → Redis/目标 Gateway
+                                                 └─ HTTP 社区/任务/附件接口 → MySQL / MinIO
 业务事件：MySQL 同事务写业务表+Outbox → publisher → Kafka → consumer → MySQL 通知收件箱
 ```
 
@@ -78,7 +141,7 @@
 
 **Q：用户名和密码走 HTTP 是明文吗？JWT 能加密吗？**
 
-> HTTP 本身不加密，JWT 签名也不加密请求体。仓库的本地安全演示用 HTTPS/WSS 入口，浏览器通过 HTTPS 登录；服务端用 bcrypt 存密码哈希，JWT 用来表示之后的登录身份。WebSocket 先通过 HTTPS 申请一次性、30 秒有效的 ticket，避免把长期 JWT 直接放在 URL。正式部署需要可信证书与 TLS 终止配置；直接访问本机 HTTP 调试端口不具有传输保密性。见 `scripts/start_secure_demo.sh`、`cmd/gateway/internal/middleware/wsticket.go`。
+> 社区页面的用户入口是 `https://localhost:8443/community/`，浏览器的注册、登录和后续 HTTP 请求都走 TLS；WebSocket 走 WSS。密码到服务端后，注册时存 bcrypt 哈希，登录时比对哈希；JWT 是签名的身份凭证，不负责传输加密。建立 WebSocket 前先用 JWT 经 HTTPS 换取 30 秒一次性 ticket，避免长期 JWT 出现在 URL。项目当前由 Nginx 终止 TLS，容器内服务间调用尚未配置双向 TLS；对外部署还要换受信任证书。见 `scripts/start_community.sh`、`deploy/community/nginx.conf`、`cmd/gateway/internal/middleware/wsticket.go`。
 
 **Q：文件能放 MySQL 吗，为什么 MinIO？**
 
