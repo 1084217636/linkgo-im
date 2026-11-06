@@ -75,17 +75,17 @@ func TestGroupMembersAllowsActiveMember(t *testing.T) {
 
 	mock.ExpectQuery("SELECT status").WithArgs("group-1", "1001").
 		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("active"))
-	mock.ExpectQuery("SELECT user_id, role, status, mute_until, joined_at").WithArgs("group-1").
-		WillReturnRows(sqlmock.NewRows([]string{"user_id", "role", "status", "mute_until", "joined_at"}).
-			AddRow("1001", "owner", "active", int64(0), int64(1)).
-			AddRow("1002", "member", "active", int64(0), int64(2)))
+	mock.ExpectQuery("SELECT gm.user_id").WithArgs("group-1").
+		WillReturnRows(sqlmock.NewRows([]string{"user_id", "username", "role", "status", "mute_until", "joined_at"}).
+			AddRow("1001", "alice", "owner", "active", int64(0), int64(1)).
+			AddRow("1002", "bob", "member", "active", int64(0), int64(2)))
 
 	logic := NewGroupMembersLogic(authenticatedContext(t, "1001"), &svc.ServiceContext{DB: db})
 	resp, err := logic.List(&types.GroupMembersReq{GroupID: "group-1"})
 	if err != nil {
 		t.Fatalf("List error = %v", err)
 	}
-	if len(resp.Members) != 2 || resp.Members[1].UserID != "1002" {
+	if len(resp.Members) != 2 || resp.Members[1].UserID != "1002" || resp.Members[1].Username != "bob" {
 		t.Fatalf("List response = %#v", resp)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

@@ -68,6 +68,7 @@ func main() {
 	handler.RegisterLearningTaskRoutes(restServer, svcCtx)
 	handler.RegisterAttachmentRoutes(restServer, svcCtx)
 	handler.RegisterCommunityRoutes(restServer, svcCtx)
+	handler.RegisterPrivateInboxRoutes(restServer, svcCtx)
 
 	logx.Infof("Starting gateway server at %s:%d", c.Host, c.Port)
 	restServer.Start()

@@ -72,15 +72,19 @@ function App() {
     [older, setOlder] = useState<number | undefined>();
   const [friends, setFriends] = useState<Friend[]>([]),
     [friendRequests, setFriendRequests] = useState<FriendRequest[]>([]),
-    [peer, setPeer] = useState<Friend | null>(null);
+    [peer, setPeer] = useState<Friend | null>(null),
+    [privateUnread, setPrivateUnread] = useState<Record<string, number>>({}),
+    [memberNames, setMemberNames] = useState<Record<string, string>>({});
   const ws = useRef<WebSocket>(),
     current = useRef<Group | null>(group),
     currentPeer = useRef<Friend | null>(peer),
+    currentTab = useRef(tab),
     generation = useRef(0),
     pending = useRef(new Map<string, string>()),
     historySeq = useRef(new Map<string, number>());
   current.current = group;
   currentPeer.current = peer;
+  currentTab.current = tab;
   function privateSession(a: string, b: string) {
     return "c2c:" + [a, b].sort().join(":");
   }
@@ -139,11 +143,21 @@ function App() {
     setFriends(f.friends || []);
     setFriendRequests(r.requests || []);
   }
+  async function loadPrivateUnread() {
+    const data = await api("/private/unread");
+    setPrivateUnread(data.unread || {});
+  }
   useEffect(() => {
     if (token) list().catch((e) => setNotice(e.message));
   }, [token, mine]);
   useEffect(() => {
     if (token) loadFriends().catch((e) => setNotice(e.message));
+  }, [token]);
+  useEffect(() => {
+    if (!token) return;
+    loadPrivateUnread().catch((e) => setNotice(e.message));
+    const timer = setInterval(() => loadPrivateUnread().catch(() => {}), 8000);
+    return () => clearInterval(timer);
   }, [token]);
   async function auth(register = false) {
     if (register) {
@@ -163,6 +177,8 @@ function App() {
     setPeer(null);
     setFriends([]);
     setFriendRequests([]);
+    setPrivateUnread({});
+    setMemberNames({});
     setNotifications([]);
     pending.current.clear();
     historySeq.current.clear();
@@ -332,10 +348,16 @@ function App() {
               );
             if (m.to_type === "group" && m.to === current.current?.group_id)
               mergeMessages([m]);
-            if (m.to_type !== "group" && currentPeer.current &&
+            if (m.to_type !== "group" && currentTab.current === "私聊" && currentPeer.current &&
                 (m.from === currentPeer.current.user_id ||
                   (m.from === user && m.to === currentPeer.current.user_id)))
               mergeMessages([m]);
+            if (m.to_type !== "group" && m.from !== user) {
+              if (currentTab.current === "私聊" && currentPeer.current?.user_id === m.from && m.seq)
+                await markDirectRead(currentPeer.current, m.seq);
+              else
+                await loadPrivateUnread();
+            }
           } catch (e) {
             setNotice("接收消息失败：" + e.message);
           }
@@ -417,7 +439,28 @@ function App() {
       await window.LinkGoStore.putMessage(user, sid, m, "received");
     mergeMessages(items);
     setOlder(data.has_more ? data.next_before_seq : undefined);
+    if (!previous && currentTab.current === "私聊" && items.length) {
+      const latest = Math.max(...items.map((m) => m.seq || 0));
+      if (latest > 0) await markDirectRead(f, latest);
+    }
   }
+  async function markDirectRead(f: Friend, throughSeq: number) {
+    if (throughSeq <= 0) return;
+    await api("/private/read", "POST", { peer_user_id: f.user_id, through_seq: throughSeq });
+    await loadPrivateUnread();
+  }
+  useEffect(() => {
+    if (!group || tab !== "聊天") return;
+    let cancelled = false;
+    setMemberNames({});
+    api("/group/members?group_id=" + encodeURIComponent(group.group_id))
+      .then((data) => {
+        if (!cancelled)
+          setMemberNames(Object.fromEntries((data.members || []).map((m: any) => [m.user_id, m.username])));
+      })
+      .catch((e) => setNotice(e.message));
+    return () => { cancelled = true; };
+  }, [group, tab]);
   useEffect(() => {
     if (!group || tab !== "聊天") return;
     const gen = generation.current;
@@ -464,6 +507,8 @@ function App() {
     if (direct) await loadDirectHistory(peer, false);
     else await loadHistory(group!, false);
   }
+  const privateUnreadTotal = Object.values(privateUnread).reduce((sum, count) => sum + count, 0);
+  const notificationUnreadTotal = notifications.filter((n) => !n.read_at).length;
   const isManager = group?.role === "owner" || group?.role === "admin";
   if (!token)
     return (
@@ -507,7 +552,7 @@ function App() {
           <small>记录 · 讨论 · 协作</small>
         </div>
         <span>
-          {username} · {wsState}
+          {username} {privateUnreadTotal > 0 && <span className="badge">私聊 {privateUnreadTotal}</span>} · {wsState}
         </span>
         <button
           onClick={() => {
@@ -518,7 +563,7 @@ function App() {
             loadFriends().catch((e) => setNotice(e.message));
           }}
         >
-          好友私聊 {friendRequests.length ? `(${friendRequests.length} 条申请)` : ""}
+          好友私聊 {privateUnreadTotal > 0 && <span className="badge">{privateUnreadTotal}</span>} {friendRequests.length ? `(${friendRequests.length} 条申请)` : ""}
         </button>
         <button
           onClick={() => {
@@ -526,7 +571,7 @@ function App() {
             loadNotices().catch((e) => setNotice(e.message));
           }}
         >
-          通知 {notifications.filter((n) => !n.read_at).length}
+          通知 {notificationUnreadTotal > 0 && <span className="badge">{notificationUnreadTotal}</span>}
         </button>
         <button onClick={logout}>退出登录</button>
       </header>
@@ -621,7 +666,7 @@ function App() {
                     setPeer(f);
                     setMessages([]);
                     setOlder(undefined);
-                  }}>{f.username || f.user_id}</button>)}
+                  }}>{f.username || f.user_id} {(privateUnread[f.user_id] || 0) > 0 && <span className="badge">{privateUnread[f.user_id]}</span>}</button>)}
               </div>
               {peer ? <>
                 <h3>与 {peer.username || peer.user_id} 对话</h3>
@@ -1073,7 +1118,7 @@ function App() {
                         key={m.message_id || i}
                       >
                         <small>
-                          {m.from === user ? "我" : m.from?.slice(0, 8)} · #
+                          {m.from === user ? "我" : memberNames[m.from || ""] || "已离开成员"} · #
                           {m.seq}
                         </small>
                         <p>
@@ -1184,7 +1229,7 @@ function Members({ group, api, write, run, user, refresh, leave, onFriend }: any
       <h2>社区成员</h2>
       {items.map((m) => (
         <article key={m.user_id}>
-          <strong>{m.user_id === user ? "我" : m.user_id}</strong> · {m.role}
+          <strong>{m.user_id === user ? "我" : m.username || m.user_id}</strong> · {m.role}
           {m.user_id !== user && <button onClick={() => onFriend(m.user_id)}>加为好友</button>}
           {group.role === "owner" && m.user_id !== user && (
             <>

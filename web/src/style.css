@@ -29,6 +29,18 @@ button:disabled {
   opacity: 0.55;
   cursor: wait;
 }
+.badge {
+  display: inline-block;
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 12px;
+  background: #d62739;
+  color: white;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  vertical-align: middle;
+}
 .selected,
 form > button {
   background: #237b70;

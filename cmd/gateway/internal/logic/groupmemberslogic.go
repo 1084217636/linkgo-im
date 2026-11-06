@@ -54,10 +54,11 @@ LIMIT 1
 	}
 
 	rows, err := l.svcCtx.DB.QueryContext(l.ctx, `
-SELECT user_id, role, status, mute_until, joined_at
-FROM group_members
-WHERE group_id = ? AND status = 'active'
-ORDER BY role, joined_at
+SELECT gm.user_id, COALESCE(u.username, ''), gm.role, gm.status, gm.mute_until, gm.joined_at
+FROM group_members gm
+LEFT JOIN users u ON u.user_id = gm.user_id
+WHERE gm.group_id = ? AND gm.status = 'active'
+ORDER BY gm.role, gm.joined_at
 `, groupID)
 	if err != nil {
 		return nil, err
@@ -67,7 +68,7 @@ ORDER BY role, joined_at
 	resp := &types.GroupMembersResp{GroupID: groupID, Members: make([]types.GroupMemberInfo, 0)}
 	for rows.Next() {
 		var item types.GroupMemberInfo
-		if err := rows.Scan(&item.UserID, &item.Role, &item.Status, &item.MuteUntil, &item.JoinedAt); err != nil {
+		if err := rows.Scan(&item.UserID, &item.Username, &item.Role, &item.Status, &item.MuteUntil, &item.JoinedAt); err != nil {
 			return nil, err
 		}
 		resp.Members = append(resp.Members, item)

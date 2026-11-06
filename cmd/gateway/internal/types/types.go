@@ -97,6 +97,7 @@ type FriendRequestsResp struct {
 
 type GroupMemberInfo struct {
 	UserID    string `json:"user_id"`
+	Username  string `json:"username"`
 	Role      string `json:"role"`
 	Status    string `json:"status"`
 	MuteUntil int64  `json:"mute_until"`
