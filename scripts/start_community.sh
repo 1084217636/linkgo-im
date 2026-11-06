@@ -12,6 +12,10 @@ if ! docker info >/dev/null 2>&1; then
 fi
 COMPOSE=(docker compose --env-file "$ENV_FILE" -f docker-compose.yml -f docker-compose.community.yml -f docker-compose.observability.yml)
 mkdir -p .local-tls
+if [[ -f .local-tls/windows-host-proxy.enabled ]]; then
+ export LINKGO_WEB_BIND=127.0.0.1
+ export LINKGO_WEB_PORT=8444
+fi
 if [[ ! -s .local-tls/cert.pem || ! -s .local-tls/key.pem ]]; then
  openssl req -x509 -newkey rsa:3072 -sha256 -nodes -days 30 \
   -keyout .local-tls/key.pem -out .local-tls/cert.pem \
@@ -43,5 +47,8 @@ if [[ "$ready" != 1 ]]; then
  printf 'Services did not become ready within 120 seconds. Current status:\n' >&2
  "${COMPOSE[@]}" ps >&2
  exit 1
+fi
+if [[ -f .local-tls/windows-host-proxy.enabled ]]; then
+ bash scripts/start_windows_host_proxy.sh
 fi
 printf '%s\n' 'Community: https://localhost:8443/community/' 'Grafana: http://localhost:3000 (admin / linkgo)' 'Local self-signed TLS certificate requires browser trust for this demo.'

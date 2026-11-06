@@ -94,7 +94,9 @@ Docker Compose 在本机启动 Nginx、3 台 Gateway、Logic、Transfer，以及
    make community-verify
    ```
 
-   这两个 `make` 命令要在 **WSL 终端**执行。被测的 Go 服务和数据库在 Docker 中，验收脚本使用 WSL 的 `/usr/bin/python3`（只用标准库，不需要 pip）。VS Code 如果弹出 `C:\Users\...\Python313\python.exe` 无法解析，那是 IDE 保存了旧 Windows 解释器，不是这个脚本需要 Python 3.13；在 VS Code 里用“在 WSL 中重新打开文件夹”，然后运行“Python: Select Interpreter”，选择 `/usr/bin/python3`。也可以只在 WSL 终端用 `make community-verify`，它不会经过 VS Code 的解释器选择。
+   这两个 `make` 命令要在 **WSL 终端**执行。被测的 Go 服务和数据库在 Docker 中，验收脚本固定使用 WSL 的 `/usr/bin/python3`（只用标准库，不需要 pip）。当前开发机的 Windows 与 WSL `localhost` 转发失效，已在 `.local-tls/windows-host-proxy.enabled` 启用本机桥接：Windows 浏览器仍访问 8443，WSL 内的验收脚本访问 8444；`make` 会自动选择。若换电脑后无需桥接，删除该本机标记并重新执行 `make community-up`。
+
+   **自己点页面验收：**普通浏览器注册账号 A 并登录，在左侧“创建社区”输入名称；另开无痕窗口注册账号 B，点“发现社区”并点击该社区加入。A 在“动态”发一条帖子，B 点进帖子评论，A 到“通知”刷新查看。A 再进入“任务”，创建任务草稿并点“发布任务”；B 在“任务”中打开它、填学习成果并提交；A 打开任务看待审人数，点“退回”并填写理由，B 修改后重交，A 点“通过”。B 的任务详情显示审核意见和最终状态；两边可在通知页刷新查看通知。此流程直接验证实际页面和权限，不依赖自动脚本。浏览器首次见自签名证书提示时，确认地址是本机 `localhost` 后选择继续访问。
 
    看到 `WAIT notification ...` 表示脚本正在等 Kafka 消费者把通知写入 MySQL；不要在这一行立即按 `Ctrl+C`。脚本每 5 秒报告进度，45 秒仍未收到时会报出缺失的事件类型和最近收件箱内容。`KeyboardInterrupt` 只表示操作者按了 `Ctrl+C`，不是 Python 版本错误。若确实超时，先看 `docker compose ... ps` 中 Kafka、Logic 的状态，再查 `community_event_outbox` 与 Logic 日志。
 2. 打开 `http://localhost:9090/targets`。这里是 Prometheus 的采集目标列表；看 `linkgo-gateway`、`linkgo-logic`、`linkgo-transfer` 是否为 UP。UP 只证明 `/metrics` 能抓到，接着要做业务操作看数字变化。

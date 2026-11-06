@@ -97,6 +97,8 @@ make docker-up
 
 打开 <https://127.0.0.1:8443/>。浏览器会提示自签名证书未受信任；确认是本机生成的证书后可在本机演示中继续。正式部署必须换用受信任证书和 TLS 入口，不能把这个自签名入口当生产配置。安全页面同源代理 API 和 WebSocket：登录走 HTTPS，连接走 WSS，浏览器先通过带 JWT 的 HTTPS 请求领取 30 秒、一次性 WebSocket ticket，URL 不再放长期 JWT。Gateway 在当前 Compose 中只映射到 `127.0.0.1`；旧 JWT 查询参数仍供本机协议压测兼容，安全入口拒绝它。
 
+完整社区演示使用 `make community-up`，然后在浏览器打开 <https://localhost:8443/community/>。如果 Windows 浏览器访问 WSL 内的 `localhost` 超时，可在仓库目录执行 `touch .local-tls/windows-host-proxy.enabled`，再运行 `make community-up`。该本机标记让 Docker 页面绑定到 WSL `127.0.0.1:8444`，并启动仅监听 Windows `127.0.0.1:8443` 的开发桥接程序；浏览器地址保持不变。`make community-verify` 会自动选择 WSL 实际端口。桥接程序只转发加密的 TCP 字节，TLS 仍由容器中的 Nginx 终止。此配置仅用于 WSL 镜像网络无法转发本机端口的开发机。
+
 旧的本机 HTTP 调试方式仍可使用：
 
 ```bash

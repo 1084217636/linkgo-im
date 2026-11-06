@@ -32,7 +32,8 @@ community-up:
 # This script uses only the Python standard library; pip and a virtualenv are unnecessary.
 community-verify:
 	test -f .local-tls/cert.pem || { echo 'Start the community first: make community-up' >&2; exit 1; }
-	SSL_CERT_FILE="$(CURDIR)/.local-tls/cert.pem" /usr/bin/python3 scripts/verify_communities.py --base https://localhost:8443
+	@port=8443; if test -f .local-tls/windows-host-proxy.enabled; then port=8444; fi; \
+	 SSL_CERT_FILE="$(CURDIR)/.local-tls/cert.pem" /usr/bin/python3 scripts/verify_communities.py --base "https://localhost:$$port"
 
 compose-config:
 	docker compose config

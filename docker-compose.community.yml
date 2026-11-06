@@ -27,7 +27,7 @@ services:
         NODE_IMAGE: ${NODE_IMAGE:-node:22-alpine}
         NGINX_IMAGE: ${NGINX_IMAGE:-nginx:alpine}
     ports:
-      - "${LINKGO_WEB_BIND:-127.0.0.1}:8443:8443"
+      - "${LINKGO_WEB_BIND:-127.0.0.1}:${LINKGO_WEB_PORT:-8443}:8443"
     volumes:
       - ./.local-tls:/certs:ro
     depends_on:
